@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# scripts/release-check: plugin version-drift guard (task 0022).
+#
+# Fails when tracked plugin-payload files changed since the last plain-semver
+# release tag but .claude-plugin/plugin.json version was not bumped strictly
+# above that tag.
+#
+# Usage:
+#   ./scripts/release-check
+#   RELEASE_CHECK_ROOT=/path/to/repo ./scripts/release-check
+#
+# Exit 0 = pass; non-zero = fail; reason on stderr.
+#
+# Payload prefixes (changes require a bump):
+#   skills/  agents/  commands/  hooks/  .claude-plugin/
+# Payload files:
+#   AGENTS.md  README.md
+# Excluded (changes do NOT require a bump):
+#   .jeff/  tests/  .github/  docs/  Makefile  dotfiles
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+die() { printf 'release-check: %s\n' "$*" >&2; exit 1; }
+
+semver_gt() {
+  # Returns 0 (true) if $1 is strictly greater than $2 via sort -V.
+  local a="$1" b="$2"
+  [ "$a" != "$b" ] && [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -1)" = "$a" ]
+}
+
+semver_lt() {
+  # Returns 0 (true) if $1 is strictly less than $2 via sort -V.
+  semver_gt "$2" "$1"
+}
+
+# ---------------------------------------------------------------------------
+# Resolve root
+# ---------------------------------------------------------------------------
+
+root="${RELEASE_CHECK_ROOT:-$(git rev-parse --show-toplevel)}"
+
+# ---------------------------------------------------------------------------
+# Find last plain-semver tag
+# ---------------------------------------------------------------------------
+
+last_tag="$(git -C "$root" tag --list \
+  | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+  | sort -V \
+  | tail -1 || true)"
+
+if [ -z "$last_tag" ]; then
+  # No plain-semver tag yet: pre-release, nothing to compare against.
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Read version from plugin.json
+# ---------------------------------------------------------------------------
+
+plugin_json="$root/.claude-plugin/plugin.json"
+if [ ! -f "$plugin_json" ]; then
+  die "no .claude-plugin/plugin.json found at $root"
+fi
+
+version="$(jq -r .version "$plugin_json")"
+if [ -z "$version" ] || [ "$version" = "null" ]; then
+  die "version field missing or null in $plugin_json"
+fi
+
+# ---------------------------------------------------------------------------
+# Regression check: version must not go backwards
+# ---------------------------------------------------------------------------
+
+if semver_lt "$version" "$last_tag"; then
+  die "version ($version) is below the last release tag ($last_tag): version must not go backwards"
+fi
+
+# ---------------------------------------------------------------------------
+# Collect payload changes since last tag (NUL-delimited)
+# ---------------------------------------------------------------------------
+
+# Payload prefixes and exact filenames.
+# We match: paths starting with these prefixes, or exact top-level files.
+payload_prefixes=(
+  "skills/"
+  "agents/"
+  "commands/"
+  "hooks/"
+  ".claude-plugin/"
+)
+
+changed_payload=()
+
+while IFS= read -r -d '' path; do
+  [ -z "$path" ] && continue
+
+  # Check payload prefixes.
+  matched=0
+  for prefix in "${payload_prefixes[@]}"; do
+    if [[ "$path" == "$prefix"* ]]; then
+      matched=1
+      break
+    fi
+  done
+
+  # Check payload files (literal match; git is case-sensitive and the tracked
+  # files are exactly AGENTS.md and README.md).
+  if [ "$matched" -eq 0 ]; then
+    if [ "$path" = "AGENTS.md" ] || [ "$path" = "README.md" ]; then
+      matched=1
+    fi
+  fi
+
+  if [ "$matched" -eq 1 ]; then
+    changed_payload+=("$path")
+  fi
+done < <(git -C "$root" diff --name-only -z "${last_tag}..HEAD")
+
+# ---------------------------------------------------------------------------
+# Verdict
+# ---------------------------------------------------------------------------
+
+if [ "${#changed_payload[@]}" -eq 0 ]; then
+  # No payload changes: nothing to enforce.
+  exit 0
+fi
+
+# Payload changed: version must be strictly greater than last_tag.
+if semver_gt "$version" "$last_tag"; then
+  exit 0
+fi
+
+# Fail: payload changed but version is not above the last tag.
+{
+  printf 'release-check: payload changed since %s but version (%s) is not above the last release tag (%s)\n' \
+    "$last_tag" "$version" "$last_tag"
+  printf 'release-check: changed payload paths:\n'
+  for p in "${changed_payload[@]}"; do
+    printf '  %s\n' "$p"
+  done
+} >&2
+
+exit 1
