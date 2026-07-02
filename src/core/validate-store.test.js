@@ -18,10 +18,19 @@ async function makeRoot() {
   return root;
 }
 
+/**
+ * @param {string} root
+ * @param {object} config
+ */
 async function writeConfig(root, config) {
   await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify(config), 'utf8');
 }
 
+/**
+ * @param {string} root
+ * @param {string} dirName
+ * @param {object} task
+ */
 async function writeTaskDir(root, dirName, task) {
   const dir = join(root, '.jeff', 'tasks', dirName);
   await mkdir(dir, { recursive: true });

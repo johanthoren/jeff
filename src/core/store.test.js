@@ -8,6 +8,7 @@ import { readTask, writeTask } from './store.js';
 test('writeTask then readTask round-trips a task object unchanged', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'jeff-store-test-'));
   try {
+    /** @type {import('./types.js').TaskJson} */
     const task = {
       schemaVersion: 1,
       id: 3,
