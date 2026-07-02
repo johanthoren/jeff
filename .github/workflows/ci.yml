@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, pi-shell]
   pull_request:
-    branches: [main]
+    branches: [main, pi-shell]
 
 permissions:
   contents: read
@@ -24,6 +24,18 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q jq bats parallel
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: make typecheck
 
       - name: Validate
         run: make validate
