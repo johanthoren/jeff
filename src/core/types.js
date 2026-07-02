@@ -46,7 +46,7 @@
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]
  * @property {string | null} branch
- * @property {Record<TaskStage, Brain>} [brains]
+ * @property {Partial<Record<TaskStage, Brain>>} [brains]
  * @property {Object} [agents]
  * @property {Object} [tests]
  * @property {Object} [review]
