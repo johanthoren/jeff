@@ -25,6 +25,26 @@ import { gatePreflight, runInvariants } from './invariants.js';
  */
 
 /**
+ * The two verdict shapes every branch below returns: a failure carries only
+ * stderr (code 1), a pass carries only stdout (code 0). Centralized so the
+ * shape lives in one place instead of six repeated object literals.
+ *
+ * @param {string[]} stderr
+ * @returns {Verdict}
+ */
+function fail(stderr) {
+  return { ok: false, code: 1, stdout: [], stderr };
+}
+
+/**
+ * @param {string[]} stdout
+ * @returns {Verdict}
+ */
+function pass(stdout) {
+  return { ok: true, code: 0, stdout, stderr: [] };
+}
+
+/**
  * @param {string} root - repository root (COOK_ROOT-resolved)
  * @returns {Promise<Verdict>}
  */
@@ -40,7 +60,7 @@ export async function validateStore(root) {
     const dir = err && /** @type {any} */ (err).dir;
     if (dir) stderr.push(`cook: validation FAILED: unparseable task.json at ${dir}`);
     stderr.push('cook: validation FAILED: could not parse the task store (unreadable or malformed task path/JSON under .jeff/tasks/).');
-    return { ok: false, code: 1, stdout: [], stderr };
+    return fail(stderr);
   }
 
   // 2. [gate] done-gate pre-flight — short-circuits the whole pass on violation.
@@ -48,30 +68,15 @@ export async function validateStore(root) {
   try {
     gateViolations = gatePreflight(tasks);
   } catch {
-    return {
-      ok: false,
-      code: 1,
-      stdout: [],
-      stderr: ['cook: validation FAILED: could not evaluate the [gate] done-gate pre-flight (malformed tests.gate JSON?).'],
-    };
+    return fail(['cook: validation FAILED: could not evaluate the [gate] done-gate pre-flight (malformed tests.gate JSON?).']);
   }
   if (gateViolations.length > 0) {
-    return {
-      ok: false,
-      code: 1,
-      stdout: [],
-      stderr: [...gateViolations, `cook: validation FAILED (${gateViolations.length} issue(s))`],
-    };
+    return fail([...gateViolations, `cook: validation FAILED (${gateViolations.length} issue(s))`]);
   }
 
   // 3. Full mode over an empty store: nothing to validate. (Lite runs even empty.)
   if (!lite && tasks.length === 0) {
-    return {
-      ok: true,
-      code: 0,
-      stdout: ['cook: no tasks under .jeff/tasks/: nothing to validate.'],
-      stderr: [],
-    };
+    return pass(['cook: no tasks under .jeff/tasks/: nothing to validate.']);
   }
 
   // 4. Main invariant pass — fail CLOSED if it could not evaluate.
@@ -79,20 +84,10 @@ export async function validateStore(root) {
   try {
     violations = runInvariants(tasks, { lite });
   } catch {
-    return {
-      ok: false,
-      code: 1,
-      stdout: [],
-      stderr: ['cook: validation FAILED: the invariant pass could not evaluate the task store.'],
-    };
+    return fail(['cook: validation FAILED: the invariant pass could not evaluate the task store.']);
   }
   if (violations.length > 0) {
-    return {
-      ok: false,
-      code: 1,
-      stdout: [],
-      stderr: [...violations, `cook: validation FAILED (${violations.length} issue(s))`],
-    };
+    return fail([...violations, `cook: validation FAILED (${violations.length} issue(s))`]);
   }
 
   // 5. Profile conformance — present-means-conform; absent is fine.
@@ -105,22 +100,12 @@ export async function validateStore(root) {
   if (profileText !== null) {
     const message = checkProfile(profileText);
     if (message !== null) {
-      return {
-        ok: false,
-        code: 1,
-        stdout: [],
-        stderr: [message, 'cook: validation FAILED: .jeff/profile.md does not conform (fix it or remove it)'],
-      };
+      return fail([message, 'cook: validation FAILED: .jeff/profile.md does not conform (fix it or remove it)']);
     }
   }
 
   // 6. OK.
-  return {
-    ok: true,
-    code: 0,
-    stdout: [`cook: validation OK (${tasks.length} task(s))`],
-    stderr: [],
-  };
+  return pass([`cook: validation OK (${tasks.length} task(s))`]);
 }
 
 /**
