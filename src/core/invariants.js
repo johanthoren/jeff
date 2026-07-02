@@ -1,0 +1,335 @@
+// @ts-check
+
+/**
+ * Pure per-check invariant functions: the 1:1 JS port of `cook.sh`'s jq
+ * validation passes (`cmd_validate`, skills/cook/scripts/cook.sh:308-632).
+ *
+ * No I/O. Every function is a deterministic function of the collected task
+ * objects and returns the exact violation strings `cook.sh` emits (parity is
+ * over exit code + failing-check identity, so message wording is load-bearing).
+ * Task input is treated as UNTRUSTED: a malformed shape that would make jq abort
+ * (fail CLOSED → die) throws here, so the orchestrator can never fall through to
+ * a "validation OK" on a store it could not evaluate.
+ */
+
+import { isType } from './validate.js';
+
+/**
+ * jq's `a // b`: yield `b` when `a` is null, false, or absent.
+ * @param {any} v
+ * @param {any} d
+ * @returns {any}
+ */
+function jqOr(v, d) {
+  return (v === null || v === undefined || v === false) ? d : v;
+}
+
+/**
+ * jq string interpolation `\(v)`: null/absent renders empty, else `String(v)`.
+ * @param {any} v
+ * @returns {string}
+ */
+function jqStr(v) {
+  return (v === null || v === undefined) ? '' : String(v);
+}
+
+const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
+const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'audit', 'done'];
+const PRIOS = ['p0', 'p1', 'p2', 'p3', 'p4'];
+
+/**
+ * `[gate]` done-gate pre-flight (cook.sh:338-346). Over `done` tasks only, and
+ * null-tolerant: a done task without `tests.gate` (legacy) and any non-done task
+ * are skipped. Fails CLOSED (throws) if a present `tests.gate` is not an object.
+ *
+ * @param {any[]} tasks
+ * @returns {string[]}
+ */
+export function gatePreflight(tasks) {
+  const out = [];
+  for (const t of tasks) {
+    if (t.status !== 'done') continue;
+    const g = (t.tests === null || t.tests === undefined) ? null : t.tests.gate;
+    if (g === null || g === undefined) continue;
+    if (!isType(g, 'object')) throw new Error('malformed tests.gate');
+    const id = jqStr(t.id);
+    if (g.green !== true) {
+      out.push(`task ${id}: done but tests.gate.green != true (tests.green not backed by a green full-suite gate) [gate]`);
+    }
+    if (g.clean !== true) {
+      out.push(`task ${id}: done but tests.gate.clean != true (gate ran on a dirty tree) [gate]`);
+    }
+    if (typeof g.hash !== 'string' || g.hash === '') {
+      out.push(`task ${id}: done but tests.gate.hash is missing/empty (a recorded gate must carry the gated hash) [gate]`);
+    }
+    if (t.tests.green === true && g.green !== true) {
+      out.push(`task ${id}: tests.green == true but not backed by tests.gate.green == true [gate]`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Main invariant pass (cook.sh:382-605): per-task field/registry checks,
+ * inv1/inv2/plan-sep, inv4 done-gate, inv5a dep-exists, `[prune]`, the inv7-11
+ * convergence block, status-conditional fields, plus the cross-task duplicate-id
+ * and inv5b dependency-cycle (Kahn) checks. `lite` drops the registry-only
+ * checks (id-type, inv5, duplicate-id, `[prune]`).
+ *
+ * @param {any[]} tasks
+ * @param {{ lite: boolean }} opts
+ * @returns {string[]}
+ */
+export function runInvariants(tasks, { lite }) {
+  const out = [];
+  const ids = tasks.map((t) => t.id);
+
+  for (const t of tasks) {
+    const id = jqStr(t.id);
+    const agents = t.agents || {};
+    const ta = (t.tests && t.tests.authored_by_agent_id != null) ? t.tests.authored_by_agent_id : null;
+    const im = agents.implementer_agent_id != null ? agents.implementer_agent_id : null;
+    const rv = agents.reviewer_agent_id != null ? agents.reviewer_agent_id : null;
+    const pl = agents.plan_agent_id != null ? agents.plan_agent_id : null;
+
+    // id-type: registry invariant (full only). Lite ledgers may carry a string id.
+    if (!lite && typeof t.id !== 'number') {
+      out.push(`${jqStr(t._dir)}: id must be a number`);
+    }
+    // slug required
+    const slug = jqOr(t.slug, '');
+    if (typeof slug !== 'string' || slug === '') {
+      out.push(`task ${id}: slug is required`);
+    }
+    // title required
+    if (jqOr(t.title, '') === '') {
+      out.push(`task ${id}: title is required`);
+    }
+    // status / stage / priority enums
+    if (!STATUSES.includes(t.status)) out.push(`task ${id}: invalid status "${jqStr(t.status)}"`);
+    if (!STAGES.includes(t.stage)) out.push(`task ${id}: invalid stage "${jqStr(t.stage)}"`);
+    if (!PRIOS.includes(t.priority)) out.push(`task ${id}: invalid priority "${jqStr(t.priority)}"`);
+
+    // inv1: test author != implementer
+    if (ta !== null && im !== null && ta === im) {
+      out.push(`task ${id}: test author == implementer (${jqStr(ta)}) [inv1]`);
+    }
+    // inv2: implementer != reviewer
+    if (im !== null && rv !== null && im === rv) {
+      out.push(`task ${id}: implementer == reviewer (${jqStr(im)}) [inv2]`);
+    }
+    // plan-sep: plan agent != implementer
+    if (pl !== null && im !== null && pl === im) {
+      out.push(`task ${id}: plan agent == implementer (${jqStr(pl)}) [plan-sep]`);
+    }
+
+    // inv4: done-gate quality invariant
+    if (t.status === 'done') {
+      const tests = t.tests || {};
+      const g = tests.green;
+      const evidence = jqOr(tests.evidence, []);
+      const evLen = Array.isArray(evidence) ? evidence.length : String(evidence).length;
+      const reviewVerdict = (t.review && t.review.verdict != null) ? t.review.verdict : null;
+      if (g !== true && (g !== 'na' || evLen === 0 || reviewVerdict !== 'pass')) {
+        out.push(`task ${id}: done but tests.green != true (and not a justified "na" no-test state: needs tests.green=="na" + non-empty tests.evidence + review.verdict=="pass") [inv4]`);
+      }
+      if (g === true && (ta === null || ta === im)) {
+        out.push(`task ${id}: done but tests not authored by a non-implementer [inv4]`);
+      }
+      if (reviewVerdict !== 'pass') {
+        out.push(`task ${id}: done but review.verdict != pass [inv4]`);
+      }
+      const av = jqOr(t.audit && t.audit.verdict, 'na');
+      if (av !== 'pass' && av !== 'na') {
+        out.push(`task ${id}: done but audit.verdict not pass|na [inv4]`);
+      }
+    }
+
+    // inv5a: deps exist (registry invariant, full only)
+    if (!lite) {
+      for (const d of jqOr(t.deps, [])) {
+        if (!ids.includes(d)) out.push(`task ${id}: dep ${jqStr(d)} does not exist [inv5]`);
+      }
+    }
+
+    // prune: a done/abandoned dir must not rest in the store (full only)
+    if (!lite && (t.status === 'done' || t.status === 'abandoned')) {
+      out.push(`task ${id}: status "${jqStr(t.status)}" task dir must not rest in the store; prune at completion: remove dir, strip deps, commit removal (archive is git history/tags) [prune]`);
+    }
+
+    // convergence block (inv7-11); absent ⇒ skipped
+    convergenceChecks(t, id, ids, rv, im, out);
+
+    // status-conditional required fields
+    if (t.status === 'blocked' && jqOr(t.blockedReason, '') === '') {
+      out.push(`task ${id}: blocked requires blockedReason`);
+    }
+    if (t.status === 'abandoned' && jqOr(t.abandonReason, '') === '') {
+      out.push(`task ${id}: abandoned requires abandonReason`);
+    }
+  }
+
+  // duplicate ids (registry invariant, full only): one line per duplicated id
+  if (!lite) {
+    const counts = new Map();
+    for (const i of ids) counts.set(i, (counts.get(i) || 0) + 1);
+    for (const [i, c] of counts) {
+      if (c > 1) out.push(`duplicate task id ${jqStr(i)}`);
+    }
+  }
+
+  // inv5b: dependency cycle via Kahn (registry invariant, full only)
+  if (!lite) {
+    let remaining = tasks.map((t) => ({
+      id: t.id,
+      deps: jqOr(t.deps, []).filter((/** @type {any} */ d) => ids.includes(d)),
+    }));
+    /** @type {any[]} */
+    let removed = [];
+    for (;;) {
+      const ready = remaining
+        .filter((n) => n.deps.every((/** @type {any} */ d) => removed.includes(d)))
+        .map((n) => n.id);
+      if (ready.length === 0) {
+        if (remaining.length > 0) {
+          out.push(`dependency cycle among tasks ${JSON.stringify(remaining.map((n) => n.id))} [inv5]`);
+        }
+        break;
+      }
+      remaining = remaining.filter((n) => !ready.includes(n.id));
+      removed = removed.concat(ready);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Convergence invariants inv7-11 (cook.sh:464-584). Absent `convergence` ⇒ no
+ * checks. Present ⇒ asserted over the recorded state, fail-closed on bad shape.
+ *
+ * @param {any} t - the task object
+ * @param {string} id - jq-rendered `t.id`
+ * @param {any[]} ids - all task ids (for followupTaskId existence)
+ * @param {any} rv - reviewer_agent_id (null if absent)
+ * @param {any} im - implementer_agent_id (null if absent)
+ * @param {string[]} out - violation accumulator
+ * @returns {void}
+ */
+function convergenceChecks(t, id, ids, rv, im, out) {
+  const c = t.convergence;
+  if (c === null || c === undefined) return;
+  const cl = c.council;
+  const conv = (cl !== null && cl !== undefined && cl.convened === true);
+
+  // inv7: cap integer ≥1; each of review/audit blockingKickbacks int in 0..cap.
+  const cap = c.cap;
+  if (typeof cap !== 'number' || cap < 1 || Math.floor(cap) !== cap) {
+    out.push(`task ${id}: convergence.cap must be an integer ≥ 1 [inv7]`);
+  } else {
+    for (const st of ['review', 'audit']) {
+      const bk = (c.stages && c.stages[st]) ? c.stages[st].blockingKickbacks : undefined;
+      if (typeof bk !== 'number' || bk < 0 || bk > cap || Math.floor(bk) !== bk) {
+        out.push(`task ${id}: convergence.stages.${st}.blockingKickbacks must be an integer in 0..${cap} [inv7]`);
+      }
+    }
+  }
+
+  // inv8 (F5): convergence present ⇒ council must be a non-null object.
+  if (!isType(cl, 'object')) {
+    out.push(`task ${id}: convergence present requires a non-null council object [inv8]`);
+  }
+
+  // inv8 (F4): closed enums on a non-null council object.
+  if (isType(cl, 'object')) {
+    const vd = cl.verdict != null ? cl.verdict : null;
+    if (![null, 'ship', 'block'].includes(vd)) {
+      out.push(`task ${id}: council.verdict must be one of null, ship, block [inv8]`);
+    }
+    const oc = cl.outcome != null ? cl.outcome : null;
+    if (![null, 'shipped', 'scoped-fix-shipped', 'blocked-to-operator'].includes(oc)) {
+      out.push(`task ${id}: council.outcome must be one of null, shipped, scoped-fix-shipped, blocked-to-operator [inv8]`);
+    }
+  }
+
+  // inv8: council.convened must be a proper boolean (fail CLOSED on coercion).
+  if (isType(cl, 'object') && typeof cl.convened !== 'boolean') {
+    out.push(`task ${id}: council.convened must be a boolean [inv8]`);
+  }
+
+  // inv8: a non-convened council may not carry verdict == block.
+  if (isType(cl, 'object') && !conv && cl.verdict === 'block') {
+    out.push(`task ${id}: a non-convened council must not carry verdict == block [inv8]`);
+  }
+
+  // inv8: council distinctness (only when convened).
+  if (conv) {
+    const mem = jqOr(cl.members, []);
+    const mids = mem.map((/** @type {any} */ m) => (m == null ? null : m.agent_id));
+    const lenses = mem.map((/** @type {any} */ m) => (m == null ? null : m.lens));
+    if (mem.length !== 3) out.push(`task ${id}: convened council must have exactly 3 members [inv8]`);
+    if (new Set(mids).size !== mids.length) {
+      out.push(`task ${id}: council member agent_ids must be mutually distinct [inv8]`);
+    }
+    for (const mid of mids) {
+      if (mid === rv || mid === im) {
+        out.push(`task ${id}: council member ${jqStr(mid)} overlaps reviewer/implementer [inv8]`);
+      }
+    }
+    if (JSON.stringify([...lenses].sort()) !== JSON.stringify(['integrity', 'pragmatist', 'security'])) {
+      out.push(`task ${id}: council lenses must be exactly integrity, security, pragmatist [inv8]`);
+    }
+    if (!['review', 'audit'].includes(cl.stage)) {
+      out.push(`task ${id}: convened council.stage must be review or audit [inv8]`);
+    }
+  }
+
+  // inv9: per-finding determinism (only when convened).
+  if (conv) {
+    const fs = jqOr(cl.findings, []);
+    if (fs.length < 1) out.push(`task ${id}: convened council must record at least one finding [inv9]`);
+    for (const f of fs) {
+      const bv = f == null ? undefined : f.blockingVotes;
+      if (typeof bv !== 'number' || bv < 0 || bv > 3 || Math.floor(bv) !== bv) {
+        out.push(`task ${id}: finding ${jqStr(f == null ? null : f.id)} blockingVotes must be an integer in 0..3 [inv9]`);
+      }
+    }
+    for (const f of fs) {
+      const expected = jqOr(f == null ? undefined : f.blockingVotes, -1) >= 2;
+      const survived = f == null ? undefined : f.survived;
+      if (survived !== expected) {
+        out.push(`task ${id}: finding ${jqStr(f == null ? null : f.id)} survived must equal (blockingVotes ≥ 2) [inv9]`);
+      }
+    }
+    const anySurvived = fs.some((/** @type {any} */ f) => f != null && f.survived === true);
+    const expectedVerdict = anySurvived ? 'block' : 'ship';
+    if (cl.verdict !== expectedVerdict) {
+      out.push(`task ${id}: council verdict must be "${expectedVerdict}" given the per-finding survivals [inv9]`);
+    }
+  }
+
+  // inv10: follow-up tracking (only when convened).
+  if (conv) {
+    const fs = jqOr(cl.findings, []);
+    for (const f of fs) {
+      const fid = jqStr(f == null ? null : f.id);
+      const fut = (f == null || f.followupTaskId == null) ? null : f.followupTaskId;
+      const survived = f == null ? undefined : f.survived;
+      if (survived === true) {
+        if (fut !== null) out.push(`task ${id}: surviving finding ${fid} must have followupTaskId == null [inv10]`);
+      } else if (fut === null) {
+        out.push(`task ${id}: follow-up finding ${fid} must record a followupTaskId [inv10]`);
+      } else if (!ids.includes(fut)) {
+        out.push(`task ${id}: finding ${fid} followupTaskId ${jqStr(fut)} does not reference an existing task [inv10]`);
+      }
+    }
+  }
+
+  // inv11: block resolution / done-gate.
+  if (conv && cl.verdict === 'block' && cl.outcome === 'blocked-to-operator' && t.status !== 'blocked') {
+    out.push(`task ${id}: council blocked-to-operator requires status == blocked [inv11]`);
+  }
+  if (t.status === 'done' && conv && cl.verdict === 'block' && cl.outcome !== 'scoped-fix-shipped') {
+    out.push(`task ${id}: done with an unresolved council block (outcome != scoped-fix-shipped) [inv11]`);
+  }
+}
