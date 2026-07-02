@@ -99,21 +99,46 @@ Stage -> semantic tier + effort (one definition):
 | review | judge | xhigh |
 | audit | judge | xhigh |
 
-Tier x provider -> concrete model (the only provider-specific part):
+Tier x provider -> concrete model. jeff ships an `anthropic` and an `openai` column
+natively; other providers get an effort-only fallback until a column is added.
 
-| tier | anthropic (Claude Code default) | openai (pi default) |
-| --- | --- | --- |
-| judge | opus | gpt-5.5 (TBD, bench) |
-| build | opus | gpt-5.5 (TBD, bench) |
-| tidy | sonnet | gpt-5.x mid (TBD, bench) |
-| encode | sonnet | gpt-5.x small (TBD, bench) |
+| tier | anthropic | openai | fallback (untuned provider) |
+| --- | --- | --- | --- |
+| judge | opus · xhigh | gpt-5.5 · xhigh (TBD, bench) | session model · xhigh |
+| build | opus · high | gpt-5.5 · high (TBD, bench) | session model · high |
+| tidy | sonnet · high | gpt-5.x mid · high (TBD, bench) | session model · high |
+| encode | sonnet · medium | gpt-5.x small · medium (TBD, bench) | session model · low |
 
 Effort is one shared axis: Claude `effort` and pi `thinkingLevel` use the same ladder
-(`low/medium/high/xhigh`). The concrete openai model per tier is a tuning follow-up
-with bench data, not a structural blocker. `[[pin-tuning-kickback-economics]]` becomes
-a per-provider judgement.
+(`low/medium/high/xhigh`). The openai column's concrete models are a bench follow-up,
+not a structural blocker. The **anthropic column is the current jeff values reused
+verbatim**, so running pi on an Anthropic key gives brains identical to Claude Code
+(zero new tuning). `[[pin-tuning-kickback-economics]]` becomes a per-provider judgement.
 
 "Judge >= builder" still holds by construction within each provider column.
+
+### 5.1 Resolution: provider is a runtime property, model is best-available
+
+A pi user may have several providers authed at once (Anthropic + OpenAI + other), and
+may not have every model within a column. So:
+
+- **`tier -> effort` is the durable invariant** (always applies, provider-agnostic).
+  **Model is a best-available lookup**, never a hard pin.
+- **Which column: the session's active provider.** This respects the user's explicit
+  provider choice (pi `defaultProvider` or a per-session switch) and matches Claude
+  Code (Anthropic-locked). jeff does not silently reach across providers. Resolution is
+  `(sessionProvider, tier) -> model`, `tier -> effort`.
+- **Availability fallback within a column:** if a tier's model is not authed, degrade to
+  the nearest available model in that provider (else the session model), effort
+  preserved. A dispatch never hard-fails on availability; effort never silently flattens.
+- **Record the resolved `{provider, model, effort}` actually used** per stage in the
+  existing informational `brains.<stage>` record (point 3). This is the audit trail the
+  no-regression gate (§7) checks, and it matters more now that provider is runtime-variable.
+
+Cross-provider best-of-breed selection (e.g. opus for judge + a cheap OpenAI model for
+encode in one task, ignoring the session provider) is deferred (§9). The resolver
+signature stays clean so it becomes an additive `(providers[], tier) -> model` later,
+not a rewrite.
 
 ### 5.1 Source of truth and generation
 
@@ -148,7 +173,12 @@ Mechanical substitution of the current `cook.sh` invocations:
 
 - SKILL.md: `node "<skill-base-dir>/dist/cli/cook.js" <verb>`, cwd in the target repo
   (the CLI keeps deriving repo root from cwd/git).
-- `hooks.json`: `node "${CLAUDE_PLUGIN_ROOT}/dist/cli/cook.js" <gate-verb>`.
+- `hooks.json`: adopt ponytail's guarded-direct-node pattern (no wrapper file):
+  `command`: `command -v node >/dev/null 2>&1 && node "${CLAUDE_PLUGIN_ROOT}/dist/cli/cook.js" <gate-verb> || exit 0`,
+  a `commandWindows` PowerShell variant, and a `timeout`. This **fails open** on a
+  missing node (exit 0 = allow): if node is absent the whole CLI is dead and no jeff
+  task is running, so blocking every commit would be hostile; `cook doctor` reports the
+  real problem.
 
 pi calls the same file as the package `bin` (`#!/usr/bin/env node`) and imports the
 same core in-process from the extension.
@@ -157,10 +187,12 @@ same core in-process from the extension.
 
 Turn "if it works" into machine-checkable gates, not a promise:
 
-- **Resolution test:** for every stage x every supported provider, the resolved brain
-  equals the table. Claude Code side asserts generated frontmatter carries the right
-  `model` + `effort` per stage; pi side asserts `createAgentSession` receives the right
-  `model` + `thinkingLevel`. No stage falls back to a session default.
+- **Resolution test:** with a fully-authed provider column, every stage resolves to the
+  exact table cell (`model` + `effort`). Claude Code side asserts generated frontmatter
+  carries the right `model` + `effort` per stage; pi side asserts `createAgentSession`
+  receives the right `model` + `thinkingLevel`. Effort always matches the tier regardless
+  of model availability (it never flattens); model falls back to nearest-available only
+  when the tier's model is not authed, and that fallback is itself recorded (§5.1).
 - **Drift check:** generated `agents/cook-*.md` must match what the table produces or CI
   fails.
 - **Parity check:** the TS validator reproduces the current Bash+jq validator's verdicts
@@ -192,17 +224,22 @@ process required.
 
 - Arbitrary model/effort override config (swap any stage to any model). Revisit only
   if the fixed table proves insufficient.
+- Cross-provider best-of-breed dispatch (picking each tier's model across all authed
+  providers, overriding the session provider). Resolver is structured for it (§5.1);
+  behavior deferred, adjacent to the override config above.
 - Per-OS compiled binary.
 - Instruction-tier adapters for other shells (Cursor, Windsurf, ...). Out of scope;
   this initiative is pi as a first-class shell, not a portability sweep.
 
 ## 10. Open decisions
 
-1. Concrete openai model per tier (§5). Needs the Chef's call + bench data.
-2. Whether the pre-commit gate hook shells to node directly or via a small wrapper
-   script (portability of the hook invocation).
-3. Whether `.jeff/` schema needs any change for pi role-runs, or the existing task.json
-   + notes.md shape covers it.
+1. Sequencing only: which provider to bench first. Anthropic needs none (§5 column is
+   reused verbatim); the openai column's concrete `tidy`/`encode` models need bench data
+   and confirmation that a low-effort frontier model stays a faithful encoder.
+
+Settled: gate hook uses ponytail's guarded-direct-node pattern (§6); `.jeff/` needs no
+new structure, only the resolved-`{provider, model, effort}` field on the existing
+`brains.<stage>` record (§5.1), and no `role-runs/` directories.
 
 ## 11. Decomposition sketch (into jeff tasks)
 
