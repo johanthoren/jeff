@@ -236,3 +236,75 @@ test('validateStore: a malformed .jeff/profile.md (missing a required key) fails
     await rm(rootValid, { recursive: true, force: true });
   }
 });
+
+/**
+ * Test design addendum (.jeff/tasks/lite-6-438678379/notes.md, "Test design
+ * addendum (cycle 2: review B1 / audit F1+F2 kickback)"): the validator must
+ * fail closed on type-confused store shapes rather than fail open. Assert the
+ * fail-closed outcome only (never message sentences), except A3's [inv4]
+ * marker which the finding names explicitly.
+ */
+
+test('validateStore: A1 — tests as an array instead of an object fails closed', async () => {
+  const root = await makeRoot();
+  try {
+    await writeTaskDir(root, '0001-task-one', validTask({ tests: [] }));
+
+    const result = await validateStore(root);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('validateStore: A2 — agents as a number instead of an object fails closed', async () => {
+  const root = await makeRoot();
+  try {
+    await writeTaskDir(root, '0001-task-one', validTask({ agents: 42 }));
+
+    const result = await validateStore(root);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('validateStore: A3 — na-justification gate rejects a numeric (non-array) evidence under lite', async () => {
+  const root = await makeRoot();
+  try {
+    await writeConfig(root, { mode: 'lite' });
+    await writeTaskDir(
+      root,
+      '0001-task-one',
+      validTask({
+        id: 'JIRA-42',
+        status: 'done',
+        stage: 'done',
+        tests: { authored_by_agent_id: 'agent-a', green: 'na', evidence: 0 },
+        review: { verdict: 'pass' },
+      }),
+    );
+
+    const result = await validateStore(root);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 1);
+    assert.ok(result.stderr.some((line) => line.includes('[inv4]')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('validateStore: A4 — deps as a string instead of an array fails closed', async () => {
+  const root = await makeRoot();
+  try {
+    await writeTaskDir(root, '0001-task-one', validTask({ deps: 'abc' }));
+
+    const result = await validateStore(root);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
