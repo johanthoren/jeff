@@ -9,10 +9,31 @@ test('writeTask then readTask round-trips a task object unchanged', async () => 
   const dir = await mkdtemp(join(tmpdir(), 'jeff-store-test-'));
   try {
     const task = {
-      id: 'lite-3',
-      status: 'in-progress',
+      schemaVersion: 1,
+      id: 3,
+      slug: 'lite-3',
+      title: 'Lite 3',
+      status: 'in_progress',
       stage: 'test',
       priority: 'p2',
+      deps: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      branch: null,
+      agents: {
+        plan_agent_id: null,
+        test_author_agent_id: null,
+        implementer_agent_id: null,
+        reviewer_agent_id: null,
+        audit_agent_id: null,
+      },
+      tests: { authored_by_agent_id: null, green: false, evidence: [] },
+      review: { verdict: null, reviewer_agent_id: null, evidence: [] },
+      audit: { required: false, verdict: 'na', audit_agent_id: null, evidence: [] },
+      commits: [],
+      kickbacks: [],
+      blockedReason: null,
+      abandonReason: null,
     };
 
     await writeTask(dir, task);

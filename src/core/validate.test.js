@@ -27,6 +27,12 @@ test('isType array check is not fooled by typeof', () => {
   assert.equal(isType({}, 'array'), false);
 });
 
+test('isType object check treats a plain object as an object but excludes arrays and null', () => {
+  assert.equal(isType({}, 'object'), true);
+  assert.equal(isType([], 'object'), false);
+  assert.equal(isType(null, 'object'), false);
+});
+
 test('isOneOf returns true for a value in allowed', () => {
   assert.equal(isOneOf('open', ['open', 'closed']), true);
 });
