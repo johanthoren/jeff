@@ -33,6 +33,38 @@ function jqStr(v) {
   return (v === null || v === undefined) ? '' : String(v);
 }
 
+/**
+ * jq's `length` (cook.sh inv4 na-justification, skills/cook/scripts/cook.sh:431:
+ * `(($t.tests.evidence // []) | length)`): array → element count, string →
+ * codepoint count, number → absolute value, object → key count, null → 0. A jq
+ * boolean has no length (`true | length` aborts), so this throws — the caller's
+ * fail-CLOSED trap then renders the verdict. Replaces `String(v).length`, which
+ * diverged (e.g. numeric `0` → "0".length == 1 instead of jq's 0).
+ * @param {any} v
+ * @returns {number}
+ */
+function jqLength(v) {
+  if (v === null || v === undefined) return 0;
+  if (Array.isArray(v)) return v.length;
+  if (typeof v === 'string') return [...v].length;
+  if (typeof v === 'number') return Math.abs(v);
+  if (typeof v === 'boolean') throw new Error('jq length: boolean has no length');
+  if (typeof v === 'object') return Object.keys(v).length;
+  throw new Error('jq length: unsupported type');
+}
+
+/**
+ * jq aborts when it indexes a present value of the wrong container type
+ * (`42 | .k`, `[] | .k`). Mirror that: a field that is present (non-null) but
+ * not a non-null object throws, so `validateStore`'s catch renders the
+ * fail-CLOSED verdict instead of JS silently reading `undefined` (fail OPEN).
+ * @param {any} v
+ * @returns {boolean} true iff v is present and NOT a non-null object
+ */
+function presentNonObject(v) {
+  return v !== null && v !== undefined && !isType(v, 'object');
+}
+
 const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
 const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'audit', 'done'];
 const PRIOS = ['p0', 'p1', 'p2', 'p3', 'p4'];
@@ -49,6 +81,9 @@ export function gatePreflight(tasks) {
   const out = [];
   for (const t of tasks) {
     if (t.status !== 'done') continue;
+    // jq reads `$t.tests.gate` for this done task; a present non-object `tests`
+    // would abort jq (index a non-object) → fail CLOSED. Mirror it.
+    if (presentNonObject(t.tests)) throw new Error('malformed tests');
     const g = (t.tests === null || t.tests === undefined) ? null : t.tests.gate;
     if (g === null || g === undefined) continue;
     if (!isType(g, 'object')) throw new Error('malformed tests.gate');
@@ -85,6 +120,21 @@ export function runInvariants(tasks, { lite }) {
   const ids = tasks.map((t) => t.id);
 
   for (const t of tasks) {
+    // Fail CLOSED on type-confused containers (mirrors jq abort-on-index),
+    // scoped to exactly where the jq pass indexes each field: tests/agents
+    // (inv1/2) and convergence (.council) for every task; review/audit only
+    // inside the done block; deps only under full mode (inv5a/inv5b iterate it).
+    if (presentNonObject(t.tests)) throw new Error('malformed tests');
+    if (presentNonObject(t.agents)) throw new Error('malformed agents');
+    if (presentNonObject(t.convergence)) throw new Error('malformed convergence');
+    if (t.status === 'done') {
+      if (presentNonObject(t.review)) throw new Error('malformed review');
+      if (presentNonObject(t.audit)) throw new Error('malformed audit');
+    }
+    if (!lite && t.deps !== null && t.deps !== undefined && !Array.isArray(t.deps)) {
+      throw new Error('malformed deps');
+    }
+
     const id = jqStr(t.id);
     const agents = t.agents || {};
     const ta = (t.tests && t.tests.authored_by_agent_id != null) ? t.tests.authored_by_agent_id : null;
@@ -128,7 +178,7 @@ export function runInvariants(tasks, { lite }) {
       const tests = t.tests || {};
       const g = tests.green;
       const evidence = jqOr(tests.evidence, []);
-      const evLen = Array.isArray(evidence) ? evidence.length : String(evidence).length;
+      const evLen = jqLength(evidence);
       const reviewVerdict = (t.review && t.review.verdict != null) ? t.review.verdict : null;
       if (g !== true && (g !== 'na' || evLen === 0 || reviewVerdict !== 'pass')) {
         out.push(`task ${id}: done but tests.green != true (and not a justified "na" no-test state: needs tests.green=="na" + non-empty tests.evidence + review.verdict=="pass") [inv4]`);
