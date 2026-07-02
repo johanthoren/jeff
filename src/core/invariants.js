@@ -49,20 +49,26 @@ function jqLength(v) {
   if (typeof v === 'string') return [...v].length;
   if (typeof v === 'number') return Math.abs(v);
   if (typeof v === 'boolean') throw new Error('jq length: boolean has no length');
-  if (typeof v === 'object') return Object.keys(v).length;
+  if (isType(v, 'object')) return Object.keys(v).length;
   throw new Error('jq length: unsupported type');
 }
 
 /**
- * jq aborts when it indexes a present value of the wrong container type
- * (`42 | .k`, `[] | .k`). Mirror that: a field that is present (non-null) but
- * not a non-null object throws, so `validateStore`'s catch renders the
- * fail-CLOSED verdict instead of JS silently reading `undefined` (fail OPEN).
+ * jq aborts when it indexes or iterates a present value of the wrong
+ * container type (`42 | .k`, `[] | .k`, `42 | .[]`). Mirror that: throw when
+ * a field is present (non-null) but not of the expected container `type`
+ * ('object' for tests/agents/convergence/review/audit, 'array' for deps), so
+ * the caller's fail-CLOSED catch renders the verdict instead of JS silently
+ * reading `undefined`/iterating nothing (fail OPEN).
  * @param {any} v
- * @returns {boolean} true iff v is present and NOT a non-null object
+ * @param {'object' | 'array'} type
+ * @param {string} name - field name, for the "malformed <name>" message
+ * @returns {void}
  */
-function presentNonObject(v) {
-  return v !== null && v !== undefined && !isType(v, 'object');
+function assertContainerType(v, type, name) {
+  if (v !== null && v !== undefined && !isType(v, type)) {
+    throw new Error(`malformed ${name}`);
+  }
 }
 
 const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
@@ -83,7 +89,7 @@ export function gatePreflight(tasks) {
     if (t.status !== 'done') continue;
     // jq reads `$t.tests.gate` for this done task; a present non-object `tests`
     // would abort jq (index a non-object) → fail CLOSED. Mirror it.
-    if (presentNonObject(t.tests)) throw new Error('malformed tests');
+    assertContainerType(t.tests, 'object', 'tests');
     const g = (t.tests === null || t.tests === undefined) ? null : t.tests.gate;
     if (g === null || g === undefined) continue;
     if (!isType(g, 'object')) throw new Error('malformed tests.gate');
@@ -124,16 +130,14 @@ export function runInvariants(tasks, { lite }) {
     // scoped to exactly where the jq pass indexes each field: tests/agents
     // (inv1/2) and convergence (.council) for every task; review/audit only
     // inside the done block; deps only under full mode (inv5a/inv5b iterate it).
-    if (presentNonObject(t.tests)) throw new Error('malformed tests');
-    if (presentNonObject(t.agents)) throw new Error('malformed agents');
-    if (presentNonObject(t.convergence)) throw new Error('malformed convergence');
+    assertContainerType(t.tests, 'object', 'tests');
+    assertContainerType(t.agents, 'object', 'agents');
+    assertContainerType(t.convergence, 'object', 'convergence');
     if (t.status === 'done') {
-      if (presentNonObject(t.review)) throw new Error('malformed review');
-      if (presentNonObject(t.audit)) throw new Error('malformed audit');
+      assertContainerType(t.review, 'object', 'review');
+      assertContainerType(t.audit, 'object', 'audit');
     }
-    if (!lite && t.deps !== null && t.deps !== undefined && !Array.isArray(t.deps)) {
-      throw new Error('malformed deps');
-    }
+    if (!lite) assertContainerType(t.deps, 'array', 'deps');
 
     const id = jqStr(t.id);
     const agents = t.agents || {};
