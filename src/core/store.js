@@ -10,6 +10,19 @@ import { isType } from './validate.js';
 const TASK_FILE = 'task.json';
 
 /**
+ * Build the "unparseable task.json" error `collectTasks` throws for a corrupt
+ * or non-object task file, tagged with `.dir` = its root-relative path.
+ *
+ * @param {string} rel - root-relative path (`.jeff/tasks/<dir>/task.json`)
+ * @returns {Error}
+ */
+function unparseableTaskError(rel) {
+  const err = new Error(`unparseable task.json at ${rel}`);
+  /** @type {any} */ (err).dir = rel;
+  return err;
+}
+
+/**
  * Read and parse `<taskDir>/task.json`.
  *
  * Fails **closed**: a missing or unparseable file rejects rather than resolving
@@ -89,9 +102,7 @@ export async function collectTasks(root) {
     try {
       obj = JSON.parse(cand.raw);
     } catch {
-      const err = new Error(`unparseable task.json at ${cand.rel}`);
-      /** @type {any} */ (err).dir = cand.rel;
-      throw err;
+      throw unparseableTaskError(cand.rel);
     }
     // Reject a non-object whole-task value (42/[]/true/"str"/null) the same way,
     // BEFORE `obj._dir = …`. cook.sh's `jq '. + {_dir:$dir}'` aborts on such a
@@ -106,9 +117,7 @@ export async function collectTasks(root) {
     // (non-deterministic), so full merged-stream parity on this shape is
     // unreachable; no fixture exercises it and the test asserts JS's own line.
     if (!isType(obj, 'object')) {
-      const err = new Error(`unparseable task.json at ${cand.rel}`);
-      /** @type {any} */ (err).dir = cand.rel;
-      throw err;
+      throw unparseableTaskError(cand.rel);
     }
     obj._dir = cand.rel;
     tasks.push(obj);
