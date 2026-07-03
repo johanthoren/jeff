@@ -296,7 +296,7 @@ test('validateStore: A3 — na-justification gate rejects a numeric (non-array) 
   }
 });
 
-test('validateStore: A4 — deps as a string instead of an array fails closed', async () => {
+test('validateStore: A4 — deps as a string instead of an array fails closed via the container guard, not spurious inv5', async () => {
   const root = await makeRoot();
   try {
     await writeTaskDir(root, '0001-task-one', validTask({ deps: 'abc' }));
@@ -304,7 +304,68 @@ test('validateStore: A4 — deps as a string instead of an array fails closed', 
     const result = await validateStore(root);
     assert.equal(result.ok, false);
     assert.equal(result.code, 1);
+    assert.ok(
+      result.stderr.some((line) => line.includes('the invariant pass could not evaluate the task store')),
+    );
+    assert.ok(!result.stderr.some((line) => line.includes('[inv5]')));
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Test design (.jeff/tasks/lite-8-1975209887/notes.md, "Test design
+ * (2026-07-03)"): items 3 and 4 (AC2) — crash-path message alignment on
+ * non-fixture store shapes.
+ */
+
+test('validateStore: item 3 — a whole-task non-object task.json emits the per-file "unparseable task.json at DIR" line', async () => {
+  const root = await makeRoot();
+  try {
+    const dir = join(root, '.jeff', 'tasks', '0001-broken');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'task.json'), '[]', 'utf8');
+
+    const result = await validateStore(root);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 1);
+    assert.ok(
+      result.stderr.some((line) => line.includes('unparseable task.json at') && line.includes('0001-broken')),
+    );
+    assert.ok(!result.stderr.some((line) => line.includes('id must be a number')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('validateStore: item 4 — array/scalar profile front-matter is reported unparseable; null front-matter stays a conformance failure', async () => {
+  const arrayProfile = ['```json', '[1,2,3]', '```', ''].join('\n');
+  const nullProfile = ['```json', 'null', '```', ''].join('\n');
+
+  const rootArray = await makeRoot();
+  const rootNull = await makeRoot();
+  try {
+    await writeTaskDir(rootArray, '0001-task-one', validTask());
+    await writeFile(join(rootArray, '.jeff', 'profile.md'), arrayProfile, 'utf8');
+
+    const arrayResult = await validateStore(rootArray);
+    assert.equal(arrayResult.ok, false);
+    assert.ok(arrayResult.stderr.some((line) => line.includes('front-matter JSON is unparseable')));
+    assert.ok(!arrayResult.stderr.some((line) => line.includes('missing or invalid key: mode')));
+
+    await writeTaskDir(rootNull, '0001-task-one', validTask());
+    await writeFile(join(rootNull, '.jeff', 'profile.md'), nullProfile, 'utf8');
+
+    const nullResult = await validateStore(rootNull);
+    assert.equal(nullResult.ok, false);
+    assert.ok(
+      nullResult.stderr.some(
+        (line) => line.includes('conformance failure') || line.includes('missing or invalid key: mode'),
+      ),
+    );
+    assert.ok(!nullResult.stderr.some((line) => line.includes('front-matter JSON is unparseable')));
+  } finally {
+    await rm(rootArray, { recursive: true, force: true });
+    await rm(rootNull, { recursive: true, force: true });
   }
 });
