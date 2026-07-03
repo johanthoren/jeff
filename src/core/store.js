@@ -3,6 +3,7 @@
 import { readFile, writeFile, rename, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { isType } from './validate.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 
@@ -88,6 +89,23 @@ export async function collectTasks(root) {
     try {
       obj = JSON.parse(cand.raw);
     } catch {
+      const err = new Error(`unparseable task.json at ${cand.rel}`);
+      /** @type {any} */ (err).dir = cand.rel;
+      throw err;
+    }
+    // Reject a non-object whole-task value (42/[]/true/"str"/null) the same way,
+    // BEFORE `obj._dir = …`. cook.sh's `jq '. + {_dir:$dir}'` aborts on such a
+    // value ("… and object cannot be added") → its per-file "unparseable task.json
+    // at DIR" line, so throwing here reproduces that line. Without this guard JS
+    // diverges: 42/true/"str" TypeError on the `_dir` assignment (generic line
+    // only), and `[]` silently flows into the invariant pass emitting misleading
+    // spurious violations. `null` is rejected too — stricter than cook.sh, which
+    // quirkily degrades `null` into a `{_dir}`-only object; deliberate fail-closed
+    // strictness on untrusted input (Chef call 2026-07-03). Ceiling: cook.sh also
+    // leaks a raw `jq: error (… absolute tmp path …)` line we do NOT replicate
+    // (non-deterministic), so full merged-stream parity on this shape is
+    // unreachable; no fixture exercises it and the test asserts JS's own line.
+    if (!isType(obj, 'object')) {
       const err = new Error(`unparseable task.json at ${cand.rel}`);
       /** @type {any} */ (err).dir = cand.rel;
       throw err;

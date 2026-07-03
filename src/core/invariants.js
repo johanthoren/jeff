@@ -137,6 +137,13 @@ export function runInvariants(tasks, { lite }) {
       assertContainerType(t.review, 'object', 'review');
       assertContainerType(t.audit, 'object', 'audit');
     }
+    // Item 2 (documented strictness, Chef call 2026-07-03). cook.sh iterates
+    // `($t.deps // [])[]`, which tolerates `deps:{}` (iterates an object's values →
+    // empty → no deps) and `deps:false` (`false // []` → `[]` → no deps), both exit
+    // 0. We assert `deps` is an array, so any present non-array `deps`
+    // ({}/false/"abc"/number) throws → fail CLOSED (exit 1). Deliberate: treating an
+    // object's values as "dependencies" is nonsense on untrusted input; we refuse.
+    // (This seam is pinned by strengthened A4 in validate-store.test.js.)
     if (!lite) assertContainerType(t.deps, 'array', 'deps');
 
     const id = jqStr(t.id);
@@ -182,6 +189,14 @@ export function runInvariants(tasks, { lite }) {
       const tests = t.tests || {};
       const g = tests.green;
       const evidence = jqOr(tests.evidence, []);
+      // Item 1 (documented strictness, Chef call 2026-07-03). cook.sh's jq is
+      // `$g != true and ((evidence // []) | length) == 0 …`; the `and`
+      // short-circuits, so when tests.green == true the `length` is never
+      // evaluated and a `done` task with green:true + a boolean (non-lengthable)
+      // evidence stays exit 0. We evaluate jqLength(evidence) EAGERLY, so a boolean
+      // evidence throws → fail CLOSED (exit 1). Deliberate: an unlengthable evidence
+      // is malformed; we refuse rather than silently pass. (Bug-for-bug would gate
+      // this call behind `g !== true`; we deliberately don't.)
       const evLen = jqLength(evidence);
       const reviewVerdict = (t.review && t.review.verdict != null) ? t.review.verdict : null;
       if (g !== true && (g !== 'na' || evLen === 0 || reviewVerdict !== 'pass')) {

@@ -22,7 +22,7 @@ typecheck:
 	@npx tsc -p tsconfig.json
 
 parity:
-	@COOK_OVERRIDE=$(CURDIR)/tests/parity-cook.sh $(BATS) --jobs $(JOBS) tests/prune.bats tests/convergence.bats tests/validate-scale.bats tests/gate.bats tests/disposition.bats tests/backlog.bats tests/lite.bats tests/lite-pipeline.bats tests/profile.bats
+	@COOK_OVERRIDE="$(CURDIR)/tests/parity-cook.sh" $(BATS) --jobs $(JOBS) tests/prune.bats tests/convergence.bats tests/validate-scale.bats tests/gate.bats tests/disposition.bats tests/backlog.bats tests/lite.bats tests/lite-pipeline.bats tests/profile.bats
 
 validate:
 	@$(COOK) validate

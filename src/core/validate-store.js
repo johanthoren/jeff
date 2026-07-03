@@ -15,6 +15,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { collectTasks, readMode } from './store.js';
 import { gatePreflight, runInvariants } from './invariants.js';
+import { isType } from './validate.js';
 
 /**
  * @typedef {Object} Verdict
@@ -150,6 +151,17 @@ export function checkProfile(text) {
   try {
     parsed = JSON.parse(fm.join('\n'));
   } catch {
+    return 'cook: profile.md: front-matter JSON is unparseable';
+  }
+  // Array/scalar front-matter is "unparseable" too: cook.sh's `profile_conformance`
+  // jq indexes `.["mode"]`, which aborts on an array/number ("Cannot index …") with
+  // jq's stderr swallowed by `2>/dev/null`, so cook.sh emits exactly this line. JS
+  // would otherwise parse `[1,2,3]`/`42` fine and mis-report `missing or invalid key:
+  // mode`. Reaches true byte-parity here (no jq-noise leak). The `parsed !== null`
+  // clause is load-bearing and the OPPOSITE boundary from store.js's item-3 guard:
+  // `null` front-matter must keep falling through to the conformance path (which
+  // already matches cook.sh's null behavior — free parity). Do not drop it.
+  if (parsed !== null && !isType(parsed, 'object')) {
     return 'cook: profile.md: front-matter JSON is unparseable';
   }
 
