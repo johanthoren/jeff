@@ -12,6 +12,7 @@
 
 /** @typedef {'pending' | 'in_progress' | 'blocked' | 'done' | 'abandoned'} TaskStatus */
 /** @typedef {'capture' | 'plan' | 'test' | 'implement' | 'refactor' | 'review' | 'audit' | 'done'} TaskStage */
+/** @typedef {Exclude<TaskStage, 'done'>} BrainStage */
 /** @typedef {'p0' | 'p1' | 'p2' | 'p3' | 'p4'} TaskPriority */
 /** @typedef {'simple' | 'complex'} TaskComplexity */
 /** @typedef {'haiku' | 'sonnet' | 'opus' | 'fable'} BrainModel */
@@ -25,6 +26,23 @@
  * @typedef {Object} Brain
  * @property {BrainModel} model
  * @property {BrainEffort} effort
+ */
+
+/**
+ * The `review` stage outcome record.
+ * @typedef {Object} Review
+ * @property {ReviewVerdict} verdict
+ * @property {string | null} reviewer_agent_id
+ * @property {Array<unknown>} evidence
+ */
+
+/**
+ * The `audit` stage outcome record.
+ * @typedef {Object} Audit
+ * @property {boolean} required
+ * @property {AuditVerdict} verdict
+ * @property {string | null} audit_agent_id
+ * @property {Array<unknown>} evidence
  */
 
 /**
@@ -46,11 +64,11 @@
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]
  * @property {string | null} branch
- * @property {Partial<Record<TaskStage, Brain>>} [brains]
+ * @property {Partial<Record<BrainStage, Brain>>} [brains]
  * @property {Object} [agents]
  * @property {Object} [tests]
- * @property {Object} [review]
- * @property {Object} [audit]
+ * @property {Review} [review]
+ * @property {Audit} [audit]
  * @property {Array<unknown>} [commits]
  * @property {Array<unknown>} [kickbacks]
  * @property {string | null} [blockedReason]
