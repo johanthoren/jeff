@@ -38,6 +38,7 @@ const COOK_JS = join(REPO_ROOT, 'src', 'cli', 'cook.js');
  * @returns {NodeJS.ProcessEnv}
  */
 function buildEnv(root, flavorEnv) {
+  /** @type {NodeJS.ProcessEnv} */
   const env = { ...process.env, COOK_ROOT: root };
   if (flavorEnv === undefined) {
     delete env.JEFF_FLAVOR;
