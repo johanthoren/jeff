@@ -2,19 +2,21 @@
 // @ts-check
 
 /**
- * `cook.js`: the JS CLI entry for the `validate` verb (spec item 4). Resolves
- * the store root like cook.sh (skills/cook/scripts/cook.sh:44) — `COOK_ROOT`,
- * else `git rev-parse --show-toplevel`, else cwd — runs `validateStore`, prints
- * its streams, and exits with the verdict code. Imports only node stdlib +
- * `src/core/*` (no pi SDK): the §6 boundary.
+ * `cook.js`: the JS CLI entry for the ported verbs. Resolves the store root like
+ * cook.sh (skills/cook/scripts/cook.sh:44) — `COOK_ROOT`, else
+ * `git rev-parse --show-toplevel`, else cwd — dispatches to the pure verdict
+ * function for the verb, prints its streams, and exits with the verdict code.
+ * Imports only node stdlib + `src/core/*` (no pi SDK): the §6 boundary.
  *
- * Only `validate` is ported this slice; every other verb stays on cook.sh (the
- * parity wrapper delegates them there), so this entry rejects them with a
- * usage error rather than pretending to handle them.
+ * Ported so far: `validate` (item 4) and the read-only reporters `ls` / `status`
+ * / `show` (item 3, slice a). Every other verb stays on cook.sh (the parity
+ * wrapper delegates them there), so this entry rejects an unknown subcommand
+ * with a usage error rather than pretending to handle it.
  */
 
 import { execFileSync } from 'node:child_process';
 import { validateStore } from '../core/validate-store.js';
+import { lsReport, statusReport, showReport } from '../core/reporters.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -28,31 +30,69 @@ function gitTopLevel() {
   }
 }
 
-async function main() {
-  const argv = process.argv.slice(2);
-  const sub = argv[0];
-
-  if (sub !== 'validate') {
-    process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports only \`validate\`)\n`);
-    process.exit(1);
-    return;
-  }
-
-  // Reject unknown args fail-closed (parity with cook.sh's reject_unknown_args).
-  const rest = argv.slice(1);
-  if (rest.length > 0) {
-    const first = rest[0];
-    if (first.startsWith('-')) process.stderr.write(`cook: validate: unknown option '${first}'\n`);
-    else process.stderr.write(`cook: validate: unexpected argument '${first}'\n`);
-    process.exit(1);
-    return;
-  }
-
-  const root = process.env.COOK_ROOT || gitTopLevel() || process.cwd();
-  const verdict = await validateStore(root);
+/**
+ * Print a verdict's streams and exit with its code (uniform across every verb).
+ *
+ * @param {{ code: number, stdout: string[], stderr: string[] }} verdict
+ * @returns {never}
+ */
+function emit(verdict) {
   for (const line of verdict.stdout) process.stdout.write(`${line}\n`);
   for (const line of verdict.stderr) process.stderr.write(`${line}\n`);
   process.exit(verdict.code);
+}
+
+/**
+ * Reject a leftover argument fail-closed (parity with cook.sh's
+ * `reject_unknown_args`): dash-prefixed → "unknown option", else "unexpected
+ * argument". Returns true (and prints) iff an argument was rejected.
+ *
+ * @param {string} label - the verb name for the message
+ * @param {string[]} rest - args after the subcommand
+ * @returns {boolean}
+ */
+function rejectUnknownArgs(label, rest) {
+  if (rest.length === 0) return false;
+  const first = rest[0];
+  if (first.startsWith('-')) process.stderr.write(`cook: ${label}: unknown option '${first}'\n`);
+  else process.stderr.write(`cook: ${label}: unexpected argument '${first}'\n`);
+  return true;
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const sub = argv[0];
+  const rest = argv.slice(1);
+  const root = process.env.COOK_ROOT || gitTopLevel() || process.cwd();
+
+  switch (sub) {
+    case 'validate':
+      if (rejectUnknownArgs('validate', rest)) return process.exit(1);
+      return emit(await validateStore(root));
+
+    case 'ls':
+      if (rejectUnknownArgs('ls', rest)) return process.exit(1);
+      return emit(await lsReport(root));
+
+    case 'status':
+      if (rejectUnknownArgs('status', rest)) return process.exit(1);
+      return emit(await statusReport(root));
+
+    case 'show': {
+      // `show` does NOT reject_unknown_args (N5): a leading-dash arg is an id.
+      // cook.sh order: empty-id first (usage), then the extra-arg guard.
+      const id = rest[0];
+      if (id && rest.length > 1) {
+        process.stderr.write(`cook: show: unexpected argument '${rest[1]}'\n`);
+        return process.exit(1);
+      }
+      return emit(await showReport(root, id ?? ''));
+    }
+
+    default:
+      process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`)\n`);
+      return process.exit(1);
+  }
 }
 
 main();
