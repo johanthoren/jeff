@@ -48,6 +48,19 @@ async function resolveCommand(root, mode) {
 }
 
 /**
+ * `git -C root ...args`, captured as utf8 and never throwing on a non-zero
+ * exit (callers below read `.status`/`.stdout`). Centralizes the `-C root` +
+ * `encoding` pair shared by every git call this module makes.
+ *
+ * @param {string} root
+ * @param {string[]} args
+ * @returns {import('node:child_process').SpawnSyncReturns<string>}
+ */
+function git(root, args) {
+  return spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+}
+
+/**
  * Whether the working tree is dirty OUTSIDE `.jeff/`, at parity with cook.sh's
  * `tree_dirty` (skills/cook/scripts/cook.sh:163): `git status --porcelain --
  * ':(exclude).jeff'` non-empty.
@@ -56,9 +69,7 @@ async function resolveCommand(root, mode) {
  * @returns {boolean}
  */
 function treeDirty(root) {
-  const res = spawnSync('git', ['-C', root, 'status', '--porcelain', '--', ':(exclude).jeff'], {
-    encoding: 'utf8',
-  });
+  const res = git(root, ['status', '--porcelain', '--', ':(exclude).jeff']);
   return (res.stdout ?? '').length > 0;
 }
 
@@ -91,6 +102,28 @@ function utcSecond() {
 }
 
 /**
+ * Full-mode run log: append one HEAD-keyed jsonl line to
+ * `.jeff/test-runs.jsonl` and git-exclude it, but only in a git repo with a
+ * resolvable HEAD. Side-effecting; kept separate from the pure verdict build
+ * in `runVerify` (lite mode never calls this — its `.jeff/` is already
+ * git-excluded).
+ *
+ * @param {string} root
+ * @param {string} cmd
+ * @param {'green' | 'red'} result
+ */
+function logTestRun(root, cmd, result) {
+  const top = git(root, ['rev-parse', '--show-toplevel']);
+  if (top.status !== 0) return;
+  const head = git(root, ['rev-parse', 'HEAD']);
+  const hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
+  if (!hash) return;
+  const line = JSON.stringify({ hash, dirty: treeDirty(root), result, suite: cmd, at: utcSecond() });
+  appendFileSync(join(root, '.jeff', 'test-runs.jsonl'), `${line}\n`);
+  appendLineOnce(join(root, '.git', 'info', 'exclude'), '.jeff/test-runs.jsonl');
+}
+
+/**
  * `cook verify`: run the configured test command and report the verdict; in
  * full mode + a git repo, append one HEAD-keyed line to `.jeff/test-runs.jsonl`
  * and git-exclude it. Port of cook.sh's `cmd_verify`
@@ -120,33 +153,14 @@ export async function runVerify(root) {
   // capture-and-reprint, which would inject a newline and lose interleaving).
   const res = spawnSync('sh', ['-c', cmd], { stdio: 'inherit' });
   const rc = res.status ?? 1;
-  const result = rc === 0 ? 'green' : 'red';
 
   /** @type {Verdict} */
   const verdict = rc === 0
     ? { code: rc, stdout: [`cook: verify green (${cmd})`], stderr: [] }
     : { code: rc, stdout: [], stderr: [`cook: verify red (exit ${rc}): ${cmd}`] };
 
-  // Full-mode run log: one jsonl line keyed by HEAD, only in a git repo with a
-  // resolvable HEAD. Lite mode appends NOTHING (its .jeff/ is git-excluded).
-  if (mode !== 'lite') {
-    const top = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
-    if (top.status === 0) {
-      const head = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
-      const hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
-      if (hash) {
-        const line = JSON.stringify({
-          hash,
-          dirty: treeDirty(root),
-          result,
-          suite: cmd,
-          at: utcSecond(),
-        });
-        appendFileSync(join(root, '.jeff', 'test-runs.jsonl'), `${line}\n`);
-        appendLineOnce(join(root, '.git', 'info', 'exclude'), '.jeff/test-runs.jsonl');
-      }
-    }
-  }
+  // Lite mode appends NOTHING (its .jeff/ is git-excluded).
+  if (mode !== 'lite') logTestRun(root, cmd, rc === 0 ? 'green' : 'red');
 
   return verdict;
 }
