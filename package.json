@@ -1,6 +1,6 @@
 {
   "name": "jeff",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "jeff: a quality brigade for coding agents (pi shell core)",
   "type": "module",
   "private": true,
