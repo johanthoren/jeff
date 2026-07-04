@@ -102,9 +102,8 @@ export function resolveBrain(sessionProvider, stage, opts = {}) {
   }
 
   if (opts.availableModels !== undefined) {
-    const avail = opts.availableModels instanceof Set
-      ? opts.availableModels
-      : new Set(opts.availableModels);
+    // `new Set` copy-constructs fine from an existing Set, so no instanceof branch.
+    const avail = new Set(opts.availableModels);
     if (model === undefined || !avail.has(model)) {
       // Effort is NEVER changed by the availability step (spec §5.1: effort never
       // silently flattens); only the model degrades.

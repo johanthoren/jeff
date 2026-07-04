@@ -69,7 +69,15 @@ function rejectUnknownArgs(label, rest) {
  *
  * @type {Record<string, (root: string) => Promise<{ code: number, stdout: string[], stderr: string[] }>>}
  */
-const VERBS = { validate: validateStore, ls: lsReport, status: statusReport, verify: runVerify, doctor: doctorReport, init: initProject, topbrain: topbrainReport };
+const VERBS = {
+  validate: validateStore,
+  ls: lsReport,
+  status: statusReport,
+  verify: runVerify,
+  doctor: doctorReport,
+  init: initProject,
+  topbrain: topbrainReport,
+};
 
 /** @type {Record<string, (root: string, ...args: string[]) => Promise<{ code: number, stdout: string[], stderr: string[] }>>} */
 const PLAN_VERBS = { section: planSection, check: planCheck, append: planAppend };
