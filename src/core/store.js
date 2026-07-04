@@ -136,6 +136,29 @@ export async function collectTasks(root) {
 }
 
 /**
+ * Read and parse `<root>/.jeff/config.json`, or `null` on a missing or
+ * unparseable file (never throws). The shared degrade-to-null primitive
+ * every soft config reader builds on: `readMode` below, `verify`'s
+ * test-command resolver, `doctor`'s active check, `topbrain`, and `flavor`
+ * all read+parse this same file and fall back to their own per-caller
+ * default when it's absent or corrupt. `init`'s read-modify-write is
+ * deliberately NOT one of these callers: it must tell "absent" (fresh
+ * scaffold) apart from "present but corrupt" (fail closed rather than
+ * clobber a user's project), so it keeps its own bespoke read.
+ *
+ * @param {string} root
+ * @returns {Promise<Record<string, unknown> | null>}
+ */
+export async function readConfig(root) {
+  try {
+    const raw = await readFile(join(root, '.jeff', 'config.json'), 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Echo the active mode: `"lite"` iff `.jeff/config.json` carries `.mode ==
  * "lite"`, else `"full"`. Port of cook.sh's `bake_mode`
  * (skills/cook/scripts/cook.sh:71-78): degrade to `"full"` on a missing or
@@ -145,11 +168,6 @@ export async function collectTasks(root) {
  * @returns {Promise<'lite' | 'full'>}
  */
 export async function readMode(root) {
-  try {
-    const raw = await readFile(join(root, '.jeff', 'config.json'), 'utf8');
-    const cfg = JSON.parse(raw);
-    return (cfg && cfg.mode === 'lite') ? 'lite' : 'full';
-  } catch {
-    return 'full';
-  }
+  const cfg = await readConfig(root);
+  return cfg && cfg.mode === 'lite' ? 'lite' : 'full';
 }

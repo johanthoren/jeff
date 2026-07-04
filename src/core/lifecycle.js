@@ -5,7 +5,7 @@ import { statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { readMode } from './store.js';
+import { readMode, readConfig } from './store.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -48,7 +48,6 @@ function jqVersion() {
  * @returns {Promise<Verdict>}
  */
 export async function doctorReport(root) {
-  const configPath = join(root, '.jeff', 'config.json');
   const ver = jqVersion();
 
   /** @type {string[]} */
@@ -66,12 +65,8 @@ export async function doctorReport(root) {
 
   let active = false;
   if (ver !== null) {
-    try {
-      const cfg = JSON.parse(await readFile(configPath, 'utf8'));
-      active = String(cfg.active ?? false) === 'true';
-    } catch {
-      active = false;
-    }
+    const cfg = await readConfig(root);
+    active = String(cfg?.active ?? false) === 'true';
   }
   stdout.push(active ? '  jeff: ACTIVE' : '  jeff: inactive (run `cook init` to activate)');
 

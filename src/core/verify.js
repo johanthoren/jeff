@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { readMode } from './store.js';
+import { readMode, readConfig } from './store.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -35,13 +35,9 @@ async function resolveCommand(root, mode) {
     return '';
   }
   // full: `jq -r '.testCommand // empty' .jeff/config.json` (absent/unparseable → '').
-  let cfg;
-  try {
-    cfg = JSON.parse(await readFile(join(root, '.jeff', 'config.json'), 'utf8'));
-  } catch {
-    return '';
-  }
-  const tc = cfg?.testCommand;
+  const cfg = await readConfig(root);
+  if (!cfg) return '';
+  const tc = cfg.testCommand;
   // jq `// empty` treats null/false as empty; anything else stringifies.
   if (tc == null || tc === false) return '';
   return typeof tc === 'string' ? tc : String(tc);

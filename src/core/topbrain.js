@@ -7,8 +7,7 @@
  * verb. Item 7's dispatch reuses `readTopBrain`; nothing else here is for item 7.
  */
 
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readConfig } from './store.js';
 
 /**
  * The effective top-brain token: `'fable'` iff the resolved setting is the literal
@@ -21,17 +20,15 @@ import { join } from 'node:path';
  * @returns {Promise<'fable' | 'default'>}
  */
 export async function readTopBrain(root) {
+  /** @type {unknown} */
   let effective = process.env.JEFF_TOP_BRAIN;
-  try {
-    const raw = await readFile(join(root, '.jeff', 'config.json'), 'utf8');
-    const cfg = JSON.parse(raw);
-    if (cfg && typeof cfg === 'object' && 'topBrain' in cfg) {
-      // Config present with the key → config wins outright; env not consulted.
-      effective = cfg.topBrain;
-    }
-  } catch {
-    // Missing/unparseable config → keep the env value (degrade, never hard-fail).
+  const cfg = await readConfig(root);
+  if (cfg && 'topBrain' in cfg) {
+    // Config present with the key → config wins outright; env not consulted.
+    effective = cfg.topBrain;
   }
+  // Missing/unparseable config (readConfig → null) → keep the env value
+  // (degrade, never hard-fail).
   return effective === 'fable' ? 'fable' : 'default';
 }
 

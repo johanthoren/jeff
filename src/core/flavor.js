@@ -7,8 +7,7 @@
  * the structural twin of `topbrain.js`, mirroring the oracle `cook.sh cmd_flavor`.
  */
 
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readConfig } from './store.js';
 
 /**
  * The effective flavor token: `'kitchen'` iff the resolved value collapses to a
@@ -24,15 +23,13 @@ import { join } from 'node:path';
 export async function readFlavor(root) {
   /** @type {unknown} */
   let raw = process.env.JEFF_FLAVOR || 'kitchen';
-  try {
-    const cfg = JSON.parse(await readFile(join(root, '.jeff', 'config.json'), 'utf8'));
-    // Config wins unless it is absent, JSON null, or empty string (oracle's
-    // null-only jq guard + `[ -n "$raw" ]` emptiness check → fall through to env).
-    if (cfg && typeof cfg === 'object' && cfg.flavor != null && cfg.flavor !== '') {
-      raw = cfg.flavor;
-    }
-  } catch {
-    // Missing/unparseable config → keep the env value (degrade, never hard-fail).
+  const cfg = await readConfig(root);
+  // Config wins unless it is absent, JSON null, or empty string (oracle's
+  // null-only jq guard + `[ -n "$raw" ]` emptiness check → fall through to env).
+  // (A missing/unparseable config also lands here as `cfg === null`, which
+  // fails the truthy check the same way — degrade, never hard-fail.)
+  if (cfg && cfg.flavor != null && cfg.flavor !== '') {
+    raw = cfg.flavor;
   }
   return raw === true || raw === 'true' || raw === 'kitchen' ? 'kitchen' : 'plain';
 }
