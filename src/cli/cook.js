@@ -19,6 +19,7 @@ import { validateStore } from '../core/validate-store.js';
 import { lsReport, statusReport, showReport } from '../core/reporters.js';
 import { runVerify } from '../core/verify.js';
 import { doctorReport, initProject } from '../core/lifecycle.js';
+import { planSection, planCheck, planAppend } from '../core/plan.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -91,7 +92,28 @@ async function main() {
     return emit(await showReport(root, id ?? ''));
   }
 
-  process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`, \`verify\`, \`doctor\`, \`init\`)\n`);
+  if (sub === 'plan') {
+    // `plan <sub> <target> …` (like `show`, NOT a VERBS entry): validate the
+    // subcommand FIRST — parity with cook.sh's cmd_plan (:1024) — then dispatch
+    // to the core verb, which does its own arg-count usage check. 3d1 is the
+    // markdown path only: no is_issue_ref routing (that is slice 3d2), so an
+    // issue-shaped ref falls through to the markdown containment error.
+    const psub = rest[0];
+    const pargs = rest.slice(1);
+    if (psub === undefined || psub === '') {
+      process.stderr.write('cook: usage: cook plan <section|check|append> …\n');
+      return process.exit(1);
+    }
+    if (psub !== 'section' && psub !== 'check' && psub !== 'append') {
+      process.stderr.write(`cook: unknown plan subcommand: ${psub} (try section|check|append)\n`);
+      return process.exit(1);
+    }
+    if (psub === 'section') return emit(await planSection(root, ...pargs));
+    if (psub === 'check') return emit(await planCheck(root, ...pargs));
+    return emit(await planAppend(root, ...pargs));
+  }
+
+  process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`, \`verify\`, \`doctor\`, \`init\`, \`plan\`)\n`);
   return process.exit(1);
 }
 

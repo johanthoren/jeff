@@ -110,7 +110,7 @@ function isGitRepo(root) {
  * @param {string} json
  * @returns {Promise<void>}
  */
-async function writeFileAtomic(target, json) {
+export async function writeFileAtomic(target, json) {
   const tmp = join(dirname(target), `.${basename(target)}.${randomBytes(6).toString('hex')}.tmp`);
   await writeFile(tmp, json, { flag: 'wx', encoding: 'utf8' });
   try {
