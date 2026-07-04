@@ -3,7 +3,7 @@
 import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { readMode } from './store.js';
 
@@ -111,8 +111,7 @@ function isGitRepo(root) {
  * @returns {Promise<void>}
  */
 async function writeFileAtomic(target, json) {
-  const dir = join(target, '..');
-  const tmp = join(dir, `.config.json.${randomBytes(6).toString('hex')}.tmp`);
+  const tmp = join(dirname(target), `.${basename(target)}.${randomBytes(6).toString('hex')}.tmp`);
   await writeFile(tmp, json, { flag: 'wx', encoding: 'utf8' });
   try {
     await rename(tmp, target);
