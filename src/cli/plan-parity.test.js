@@ -487,3 +487,39 @@ test('plan dispatch/usage strings match the oracle for missing sub, unknown sub,
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// =====================================================================
+// Prototype-key dispatch bug pins (`in` walks the prototype chain) — new
+// rows added by the coordinator's re-fire, review-found, test-first.
+// `sub in VERBS` / `psub in PLAN_VERBS` treat Object.prototype own-property
+// names (constructor, toString, __proto__, hasOwnProperty) as known verbs,
+// so the port calls a non-verdict-shaped handler and crashes. The oracle
+// cleanly dies with the unknown-(plan-)subcommand message. RED until the
+// implementer swaps `in` for `Object.hasOwn`.
+// =====================================================================
+
+// --- plan <protokey>: unknown plan subcommand, byte-exact vs the oracle ---
+for (const protokey of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+  test(`plan ${protokey} is refused as an unknown plan subcommand, matching the oracle (not dispatched as a prototype method)`, async () => {
+    const root = await makeRoot(`jeff-plan-parity-protokey-plan-${protokey.replace(/[^a-z]/gi, '')}-`);
+    try {
+      await seedPlanMd(root);
+      assertParity(root, ['plan', protokey]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+// --- top-level <protokey>: unknown subcommand, byte-exact vs the oracle ---
+for (const protokey of ['constructor', '__proto__']) {
+  test(`top-level ${protokey} is refused as an unknown subcommand, matching the oracle (not dispatched as a prototype method)`, async () => {
+    const root = await makeRoot(`jeff-plan-parity-protokey-top-${protokey.replace(/[^a-z]/gi, '')}-`);
+    try {
+      await seedPlanMd(root);
+      assertParity(root, [protokey]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
