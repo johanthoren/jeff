@@ -79,7 +79,7 @@ async function main() {
   const rest = argv.slice(1);
   const root = process.env.COOK_ROOT || gitTopLevel() || process.cwd();
 
-  if (sub !== undefined && sub in VERBS) {
+  if (sub !== undefined && Object.hasOwn(VERBS, sub)) {
     if (rejectUnknownArgs(sub, rest)) return process.exit(1);
     return emit(await VERBS[sub](root));
   }
@@ -107,14 +107,14 @@ async function main() {
       process.stderr.write('cook: usage: cook plan <section|check|append> …\n');
       return process.exit(1);
     }
-    if (!(psub in PLAN_VERBS)) {
+    if (!Object.hasOwn(PLAN_VERBS, psub)) {
       process.stderr.write(`cook: unknown plan subcommand: ${psub} (try section|check|append)\n`);
       return process.exit(1);
     }
     return emit(await PLAN_VERBS[psub](root, ...pargs));
   }
 
-  process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`, \`verify\`, \`doctor\`, \`init\`, \`plan\`)\n`);
+  process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (try \`cook help\`)\n`);
   return process.exit(1);
 }
 
