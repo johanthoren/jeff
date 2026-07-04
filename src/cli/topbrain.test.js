@@ -99,3 +99,15 @@ test('cook topbrain: unparseable config + env=fable -> degrades to env, prints f
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('cook topbrain: top-level primitive config -> degrades to env/default, never hard-fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'jeff-topbrain-test-'));
+  try {
+    await writeConfigRaw(dir, '42');
+    const result = runTopbrain(dir, { JEFF_TOP_BRAIN: 'fable' });
+    assert.equal(result.stdout, 'fable\n');
+    assert.equal(result.code, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat, mkdir, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, stat, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readTask, writeTask } from './store.js';
+import { readTask, writeTask, readConfig } from './store.js';
 
 /** @type {import('./types.js').TaskJson} */
 const TASK = {
@@ -78,6 +78,21 @@ test('writeTask unlinks the temp file and rejects when rename fails', async () =
       !leftovers.some((n) => n.endsWith('.tmp')),
       `orphan temp file left behind: ${leftovers.join(', ')}`,
     );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('readConfig returns null when config.json holds a top-level non-object value', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'jeff-store-test-'));
+  try {
+    await mkdir(join(dir, '.jeff'), { recursive: true });
+
+    await writeFile(join(dir, '.jeff', 'config.json'), '42', 'utf8');
+    assert.equal(await readConfig(dir), null);
+
+    await writeFile(join(dir, '.jeff', 'config.json'), '[1,2]', 'utf8');
+    assert.equal(await readConfig(dir), null);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
