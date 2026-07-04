@@ -146,13 +146,19 @@ export async function collectTasks(root) {
  * scaffold) apart from "present but corrupt" (fail closed rather than
  * clobber a user's project), so it keeps its own bespoke read.
  *
+ * A top-level non-object JSON value (`42`, `[1,2]`, `"s"`, `true`, `null`)
+ * degrades to `null` too, so the return type is honestly object-or-null:
+ * every caller then reads a missing property (→ its default) instead of the
+ * `in` operator or a property access throwing on a primitive.
+ *
  * @param {string} root
  * @returns {Promise<Record<string, unknown> | null>}
  */
 export async function readConfig(root) {
   try {
     const raw = await readFile(join(root, '.jeff', 'config.json'), 'utf8');
-    return JSON.parse(raw);
+    const v = JSON.parse(raw);
+    return isType(v, 'object') ? /** @type {Record<string, unknown>} */ (v) : null;
   } catch {
     return null;
   }
