@@ -70,6 +70,9 @@ function rejectUnknownArgs(label, rest) {
  */
 const VERBS = { validate: validateStore, ls: lsReport, status: statusReport, verify: runVerify, doctor: doctorReport, init: initProject };
 
+/** @type {Record<string, (root: string, ...args: string[]) => Promise<{ code: number, stdout: string[], stderr: string[] }>>} */
+const PLAN_VERBS = { section: planSection, check: planCheck, append: planAppend };
+
 async function main() {
   const argv = process.argv.slice(2);
   const sub = argv[0];
@@ -104,13 +107,11 @@ async function main() {
       process.stderr.write('cook: usage: cook plan <section|check|append> …\n');
       return process.exit(1);
     }
-    if (psub !== 'section' && psub !== 'check' && psub !== 'append') {
+    if (!(psub in PLAN_VERBS)) {
       process.stderr.write(`cook: unknown plan subcommand: ${psub} (try section|check|append)\n`);
       return process.exit(1);
     }
-    if (psub === 'section') return emit(await planSection(root, ...pargs));
-    if (psub === 'check') return emit(await planCheck(root, ...pargs));
-    return emit(await planAppend(root, ...pargs));
+    return emit(await PLAN_VERBS[psub](root, ...pargs));
   }
 
   process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`, \`verify\`, \`doctor\`, \`init\`, \`plan\`)\n`);

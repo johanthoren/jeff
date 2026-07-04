@@ -241,6 +241,24 @@ function sectionBounds(lines, anchor) {
 // --- verbs ----------------------------------------------------------------
 
 /**
+ * Resolve `file` inside ROOT for plan verb `verb` (`section`/`check`/`append`,
+ * used only in the shared die message), or the containment-refusal `Verdict`.
+ * Every verb below checks containment FIRST (an out-of-ROOT read/write is
+ * refused before the file is even opened) with the same message shape, so this
+ * is the one place that pairs `resolveRefPath` with its die.
+ *
+ * @param {string} root
+ * @param {string} verb
+ * @param {string} file
+ * @returns {string | Verdict}
+ */
+function resolveRefOrDie(root, verb, file) {
+  const resolved = resolveRefPath(root, file);
+  if (resolved !== null) return resolved;
+  return die(`plan ${verb}: file must resolve to an existing file inside the repo: ${file}`);
+}
+
+/**
  * `cook plan section <file> <anchor>`: print `<start> <end>` bounds. Containment
  * FIRST (an out-of-ROOT read is refused before the file is opened), then bounds,
  * then the no-match die. Parity with plan_section (:911).
@@ -252,10 +270,8 @@ function sectionBounds(lines, anchor) {
 export async function planSection(root, ...args) {
   if (args.length !== 2) return die('usage: cook plan section <file> <anchor>');
   const [file, anchor] = args;
-  const resolved = resolveRefPath(root, file);
-  if (resolved === null) {
-    return die(`plan section: file must resolve to an existing file inside the repo: ${file}`);
-  }
+  const resolved = resolveRefOrDie(root, 'section', file);
+  if (typeof resolved !== 'string') return resolved;
   const bounds = sectionBounds(splitLines(await readFile(resolved, 'utf8')), anchor);
   if (bounds === null) return die(`plan section: no heading matches anchor: ${anchor}`);
   return { code: 0, stdout: [`${bounds[0]} ${bounds[1]}`], stderr: [] };
@@ -275,10 +291,8 @@ export async function planSection(root, ...args) {
 export async function planCheck(root, ...args) {
   if (args.length !== 2) return die('usage: cook plan check <file> <substring>');
   const [file, sub] = args;
-  const resolved = resolveRefPath(root, file);
-  if (resolved === null) {
-    return die(`plan check: file must resolve to an existing file inside the repo: ${file}`);
-  }
+  const resolved = resolveRefOrDie(root, 'check', file);
+  if (typeof resolved !== 'string') return resolved;
   const lines = splitLines(await readFile(resolved, 'utf8'));
   let matched = false;
   let infence = false;
@@ -320,10 +334,8 @@ export async function planCheck(root, ...args) {
 export async function planAppend(root, ...args) {
   if (args.length !== 3) return die('usage: cook plan append <file> <anchor> <text>');
   const [file, anchor, text] = args;
-  const resolved = resolveRefPath(root, file);
-  if (resolved === null) {
-    return die(`plan append: file must resolve to an existing file inside the repo: ${file}`);
-  }
+  const resolved = resolveRefOrDie(root, 'append', file);
+  if (typeof resolved !== 'string') return resolved;
   const lines = splitLines(await readFile(resolved, 'utf8'));
   const bounds = sectionBounds(lines, anchor);
   if (bounds === null) return die(`plan append: no heading matches anchor: ${anchor}`);
