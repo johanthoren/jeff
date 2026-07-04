@@ -20,6 +20,7 @@ import { lsReport, statusReport, showReport } from '../core/reporters.js';
 import { runVerify } from '../core/verify.js';
 import { doctorReport, initProject } from '../core/lifecycle.js';
 import { planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../core/plan.js';
+import { topbrainReport } from '../core/topbrain.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -68,7 +69,7 @@ function rejectUnknownArgs(label, rest) {
  *
  * @type {Record<string, (root: string) => Promise<{ code: number, stdout: string[], stderr: string[] }>>}
  */
-const VERBS = { validate: validateStore, ls: lsReport, status: statusReport, verify: runVerify, doctor: doctorReport, init: initProject };
+const VERBS = { validate: validateStore, ls: lsReport, status: statusReport, verify: runVerify, doctor: doctorReport, init: initProject, topbrain: topbrainReport };
 
 /** @type {Record<string, (root: string, ...args: string[]) => Promise<{ code: number, stdout: string[], stderr: string[] }>>} */
 const PLAN_VERBS = { section: planSection, check: planCheck, append: planAppend };
