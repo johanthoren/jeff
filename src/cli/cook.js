@@ -21,6 +21,7 @@ import { runVerify } from '../core/verify.js';
 import { doctorReport, initProject } from '../core/lifecycle.js';
 import { planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../core/plan.js';
 import { topbrainReport } from '../core/topbrain.js';
+import { flavorReport } from '../core/flavor.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -77,6 +78,7 @@ const VERBS = {
   doctor: doctorReport,
   init: initProject,
   topbrain: topbrainReport,
+  flavor: flavorReport,
 };
 
 /** @type {Record<string, (root: string, ...args: string[]) => Promise<{ code: number, stdout: string[], stderr: string[] }>>} */
