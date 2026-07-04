@@ -15,9 +15,11 @@
  * `fs.realpathSync` is deliberately REJECTED because it resolves an in→out→in
  * symlink chain the oracle refuses (a parity break AND a containment hole).
  *
- * The GitHub-issue backend (`is_issue_ref` routing) is slice 3d2: an issue-shaped
- * ref falls through here to the markdown containment path (a non-existent
- * `ROOT/<ref>`, refused by `resolveRefPath`) — no special handling in 3d1.
+ * The GitHub-issue backend (`is_issue_ref` routing, slice 3d2) is `planIssueOp`
+ * below: an issue-shaped ref is routed by `cook.js` past `resolveRefPath`
+ * entirely, straight to `gh`, reusing the same `checkContent`/`appendContent`
+ * transforms as the markdown verbs (no containment — a fetched issue body is
+ * not a user path).
  */
 
 import { readFile } from 'node:fs/promises';
@@ -443,12 +445,33 @@ export function issueRefValidate(ref) {
 }
 
 /**
+ * Classify a `gh` `spawnSync` result as ENOENT (gh absent) vs. a non-zero exit,
+ * returning the matching die `Verdict`, or null on success (status 0). The ONE
+ * copy of the error-classification shared by `ghFetchBody` (view) and
+ * `ghWriteBody` (edit) — each supplies its own byte-exact messages; the oracle's
+ * die strings themselves start with a literal `cook: ` and `die` prepends
+ * another → the frozen output is a double `cook: cook: ` prefix, replicated
+ * verbatim by both callers (parity, not aesthetics). gh's stderr is inherited by
+ * both callers, so its own error line streams through BEFORE the die line
+ * (order parity). Shared error-shape of `gh_issue_fetch_body` (:1107) and
+ * `gh_issue_write_body` (:1120).
+ *
+ * @param {{ error?: NodeJS.ErrnoException, status: number | null }} res
+ * @param {string} enoentMsg
+ * @param {string} failMsg
+ * @returns {Verdict | null}
+ */
+function ghDie(res, enoentMsg, failMsg) {
+  if (res.error && res.error.code === 'ENOENT') return die(enoentMsg);
+  if (res.status !== 0) return die(failMsg);
+  return null;
+}
+
+/**
  * Fetch the (already-validated) issue body via `gh issue view <ref> --json body
  * -q .body --`, spawned as an argv ARRAY (no shell → no injection). Returns the
- * body string, or a die `Verdict`. gh's stderr is INHERITED so its own error line
- * streams through BEFORE the caller's die line (order parity). ENOENT (gh absent)
- * and a non-zero status are distinguished into the two byte-exact messages. No
- * token/body is logged. Port of `gh_issue_fetch_body` (:1107).
+ * body string, or a die `Verdict` (see `ghDie`). No token/body is logged. Port
+ * of `gh_issue_fetch_body` (:1107).
  *
  * @param {string} ref
  * @returns {string | Verdict}
@@ -458,15 +481,12 @@ function ghFetchBody(ref) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
   });
-  // As in `issueRefValidate`, the oracle's gh die strings embed a literal
-  // `cook: ` → the frozen output is `cook: cook: …`. Replicate for parity.
-  if (res.error && /** @type {NodeJS.ErrnoException} */ (res.error).code === 'ENOENT') {
-    return die(`cook: \`gh\` is required to read issue ${ref} but was not found on PATH (install the GitHub CLI, then retry).`);
-  }
-  if (res.status !== 0) {
-    return die(`cook: \`gh issue view\` failed for ${ref} (is gh authenticated? try \`gh auth status\`).`);
-  }
-  return res.stdout;
+  const failure = ghDie(
+    res,
+    `cook: \`gh\` is required to read issue ${ref} but was not found on PATH (install the GitHub CLI, then retry).`,
+    `cook: \`gh issue view\` failed for ${ref} (is gh authenticated? try \`gh auth status\`).`,
+  );
+  return failure ?? res.stdout;
 }
 
 /**
@@ -474,8 +494,7 @@ function ghFetchBody(ref) {
  * <ref> --body-file=<tmp> --` — annotate-only, NO state/label/assignee/milestone
  * flag — spawned as an argv ARRAY. CONTENT goes to a temp under `os.tmpdir()`,
  * removed in `finally` even on edit failure (no orphan). Returns null on success
- * or a die `Verdict`; gh's stderr is inherited (order parity). Port of
- * `gh_issue_write_body` (:1120).
+ * or a die `Verdict` (see `ghDie`). Port of `gh_issue_write_body` (:1120).
  *
  * @param {string} ref
  * @param {string} content
@@ -489,13 +508,11 @@ function ghWriteBody(ref, content) {
     const res = spawnSync('gh', ['issue', 'edit', ref, `--body-file=${tmp}`, '--'], {
       stdio: ['ignore', 'inherit', 'inherit'],
     });
-    if (res.error && /** @type {NodeJS.ErrnoException} */ (res.error).code === 'ENOENT') {
-      return die(`cook: \`gh\` is required to update issue ${ref} but was not found on PATH.`);
-    }
-    if (res.status !== 0) {
-      return die(`cook: \`gh issue edit\` failed for ${ref}.`);
-    }
-    return null;
+    return ghDie(
+      res,
+      `cook: \`gh\` is required to update issue ${ref} but was not found on PATH.`,
+      `cook: \`gh issue edit\` failed for ${ref}.`,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
