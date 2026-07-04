@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { validateStore } from '../core/validate-store.js';
 import { lsReport, statusReport, showReport } from '../core/reporters.js';
 import { runVerify } from '../core/verify.js';
+import { doctorReport, initProject } from '../core/lifecycle.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -66,7 +67,7 @@ function rejectUnknownArgs(label, rest) {
  *
  * @type {Record<string, (root: string) => Promise<{ code: number, stdout: string[], stderr: string[] }>>}
  */
-const VERBS = { validate: validateStore, ls: lsReport, status: statusReport, verify: runVerify };
+const VERBS = { validate: validateStore, ls: lsReport, status: statusReport, verify: runVerify, doctor: doctorReport, init: initProject };
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -90,7 +91,7 @@ async function main() {
     return emit(await showReport(root, id ?? ''));
   }
 
-  process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`, \`verify\`)\n`);
+  process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`, \`verify\`, \`doctor\`, \`init\`)\n`);
   return process.exit(1);
 }
 
