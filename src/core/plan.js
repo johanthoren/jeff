@@ -21,9 +21,12 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { lstatSync, statSync, realpathSync, readlinkSync } from 'node:fs';
-import { dirname, basename } from 'node:path';
+import { lstatSync, statSync, realpathSync, readlinkSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { dirname, basename, join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { writeFileAtomic } from './lifecycle.js';
+import { readMode } from './store.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -238,6 +241,80 @@ function sectionBounds(lines, anchor) {
   return found ? [startLine, total] : null;
 }
 
+/**
+ * Tick the FIRST `- [ ]` whose text after `- [x] ` (`substr($0,7)`) contains
+ * `sub`; already-checked is idempotent. Every other byte preserved. Returns the
+ * new content, or null if no checklist item matches (the caller dies — no write).
+ * The ONE copy of the check transform: both the markdown verb (`planCheck`, with
+ * containment) and the issue adapter (`planIssueOp`, no containment) call it.
+ * Port of plan_check_file (:932).
+ *
+ * @param {string} content
+ * @param {string} sub
+ * @returns {string | null}
+ */
+function checkContent(content, sub) {
+  const lines = splitLines(content);
+  let matched = false;
+  let infence = false;
+  /** @type {string[]} */
+  const out = [];
+  for (let line of lines) {
+    if (/^```/.test(line) || /^~~~/.test(line)) {
+      infence = !infence;
+      out.push(line);
+      continue;
+    }
+    if (!matched && !infence && /^- \[[ xX]\] /.test(line)) {
+      const text = line.substring(6); // substr($0, 7) — text after `- [x] `
+      // index(text, needle) > 0 is 1-based: an empty needle is 0 → no match.
+      if (sub !== '' && text.includes(sub)) {
+        matched = true;
+        if (/^- \[ \] /.test(line)) line = line.replace(/^- \[ \] /, '- [x] ');
+      }
+    }
+    out.push(line);
+  }
+  if (!matched) return null;
+  return joinLines(out);
+}
+
+/**
+ * Insert `text` as a new line AFTER the last non-blank line (`/[^ \t]/`) within
+ * the section whose heading slug == `anchor`, so the trailing blank separator
+ * before the next heading survives; `text` is inserted BYTE-VERBATIM. Returns the
+ * new content, or null if no heading matches `anchor` (the caller dies — no
+ * write). The ONE copy of the append transform, shared by `planAppend` (markdown,
+ * containment) and `planIssueOp` (issue, no containment). Port of
+ * plan_append_file (:977).
+ *
+ * @param {string} content
+ * @param {string} anchor
+ * @param {string} text
+ * @returns {string | null}
+ */
+function appendContent(content, anchor, text) {
+  const lines = splitLines(content);
+  const bounds = sectionBounds(lines, anchor);
+  if (bounds === null) return null;
+  const [start, end] = bounds;
+
+  // Insertion point: the LAST non-blank line within [start, end] (1-based).
+  let ins = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const fnr = i + 1;
+    if (fnr >= start && fnr <= end && /[^ \t]/.test(lines[i])) ins = fnr;
+  }
+
+  /** @type {string[]} */
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i]);
+    if (i + 1 === ins) out.push(text);
+  }
+  return joinLines(out);
+}
+
 // --- verbs ----------------------------------------------------------------
 
 /**
@@ -293,29 +370,9 @@ export async function planCheck(root, ...args) {
   const [file, sub] = args;
   const resolved = resolveRefOrDie(root, 'check', file);
   if (typeof resolved !== 'string') return resolved;
-  const lines = splitLines(await readFile(resolved, 'utf8'));
-  let matched = false;
-  let infence = false;
-  /** @type {string[]} */
-  const out = [];
-  for (let line of lines) {
-    if (/^```/.test(line) || /^~~~/.test(line)) {
-      infence = !infence;
-      out.push(line);
-      continue;
-    }
-    if (!matched && !infence && /^- \[[ xX]\] /.test(line)) {
-      const text = line.substring(6); // substr($0, 7) — text after `- [x] `
-      // index(text, needle) > 0 is 1-based: an empty needle is 0 → no match.
-      if (sub !== '' && text.includes(sub)) {
-        matched = true;
-        if (/^- \[ \] /.test(line)) line = line.replace(/^- \[ \] /, '- [x] ');
-      }
-    }
-    out.push(line);
-  }
-  if (!matched) return die(`plan check: no checklist item matches: ${sub}`);
-  await writeFileAtomic(resolved, joinLines(out));
+  const next = checkContent(await readFile(resolved, 'utf8'), sub);
+  if (next === null) return die(`plan check: no checklist item matches: ${sub}`);
+  await writeFileAtomic(resolved, next);
   return { code: 0, stdout: [], stderr: [] };
 }
 
@@ -336,24 +393,160 @@ export async function planAppend(root, ...args) {
   const [file, anchor, text] = args;
   const resolved = resolveRefOrDie(root, 'append', file);
   if (typeof resolved !== 'string') return resolved;
-  const lines = splitLines(await readFile(resolved, 'utf8'));
-  const bounds = sectionBounds(lines, anchor);
-  if (bounds === null) return die(`plan append: no heading matches anchor: ${anchor}`);
-  const [start, end] = bounds;
-
-  // Insertion point: the LAST non-blank line within [start, end] (1-based).
-  let ins = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const fnr = i + 1;
-    if (fnr >= start && fnr <= end && /[^ \t]/.test(lines[i])) ins = fnr;
-  }
-
-  /** @type {string[]} */
-  const out = [];
-  for (let i = 0; i < lines.length; i++) {
-    out.push(lines[i]);
-    if (i + 1 === ins) out.push(text);
-  }
-  await writeFileAtomic(resolved, joinLines(out));
+  const next = appendContent(await readFile(resolved, 'utf8'), anchor, text);
+  if (next === null) return die(`plan append: no heading matches anchor: ${anchor}`);
+  await writeFileAtomic(resolved, next);
   return { code: 0, stdout: [], stderr: [] };
+}
+
+// --- github-issues adapter (plan_issue_op port) ---------------------------
+
+/**
+ * Is REF issue-SHAPED (routes to the issue adapter rather than the markdown
+ * path)? Anything starting with '#', or any http(s) URL. ROUTING predicate ONLY:
+ * a shaped ref is then strictly validated by `issueRefValidate`. Port of
+ * `is_issue_ref` (:1075).
+ *
+ * @param {string} ref
+ * @returns {boolean}
+ */
+export function isIssueRef(ref) {
+  return ref.startsWith('#') || ref.startsWith('http://') || ref.startsWith('https://');
+}
+
+/**
+ * Validate an issue-shaped REF fail-closed (SECURITY): accept ONLY a digits-only
+ * `#<n>` or a strict `https://github.com/<owner>/<repo>/issues/<n>` URL. Returns
+ * null when valid, or a die `Verdict` (three distinct messages, byte-exact with
+ * the oracle). Called BEFORE any gh spawn — a rejected ref spawns NO gh. Port of
+ * `issue_ref_validate` (:1087).
+ *
+ * @param {string} ref
+ * @returns {Verdict | null}
+ */
+export function issueRefValidate(ref) {
+  // The oracle's die strings themselves start with a literal `cook: ` and `die`
+  // prepends another → the frozen output is a double `cook: cook: ` prefix. We
+  // replicate that verbatim (parity, not aesthetics).
+  // `'#'[0-9]*` in the oracle: a `#` followed by at least one digit.
+  if (/^#[0-9]/.test(ref)) {
+    if (!/^#[0-9]+$/.test(ref)) return die(`cook: invalid issue ref: ${ref} (expected '#<digits>').`);
+    return null;
+  }
+  if (ref.startsWith('http://') || ref.startsWith('https://')) {
+    if (!/^https:\/\/github\.com\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/issues\/[0-9]+$/.test(ref)) {
+      return die(`cook: invalid issue URL: ${ref} (expected https://github.com/<owner>/<repo>/issues/<n>).`);
+    }
+    return null;
+  }
+  return die(`cook: invalid issue ref: ${ref} (expected '#<digits>' or a github issues URL).`);
+}
+
+/**
+ * Fetch the (already-validated) issue body via `gh issue view <ref> --json body
+ * -q .body --`, spawned as an argv ARRAY (no shell → no injection). Returns the
+ * body string, or a die `Verdict`. gh's stderr is INHERITED so its own error line
+ * streams through BEFORE the caller's die line (order parity). ENOENT (gh absent)
+ * and a non-zero status are distinguished into the two byte-exact messages. No
+ * token/body is logged. Port of `gh_issue_fetch_body` (:1107).
+ *
+ * @param {string} ref
+ * @returns {string | Verdict}
+ */
+function ghFetchBody(ref) {
+  const res = spawnSync('gh', ['issue', 'view', ref, '--json', 'body', '-q', '.body', '--'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  // As in `issueRefValidate`, the oracle's gh die strings embed a literal
+  // `cook: ` → the frozen output is `cook: cook: …`. Replicate for parity.
+  if (res.error && /** @type {NodeJS.ErrnoException} */ (res.error).code === 'ENOENT') {
+    return die(`cook: \`gh\` is required to read issue ${ref} but was not found on PATH (install the GitHub CLI, then retry).`);
+  }
+  if (res.status !== 0) {
+    return die(`cook: \`gh issue view\` failed for ${ref} (is gh authenticated? try \`gh auth status\`).`);
+  }
+  return res.stdout;
+}
+
+/**
+ * Write CONTENT back to issue REF as its new body via EXACTLY `gh issue edit
+ * <ref> --body-file=<tmp> --` — annotate-only, NO state/label/assignee/milestone
+ * flag — spawned as an argv ARRAY. CONTENT goes to a temp under `os.tmpdir()`,
+ * removed in `finally` even on edit failure (no orphan). Returns null on success
+ * or a die `Verdict`; gh's stderr is inherited (order parity). Port of
+ * `gh_issue_write_body` (:1120).
+ *
+ * @param {string} ref
+ * @param {string} content
+ * @returns {Verdict | null}
+ */
+function ghWriteBody(ref, content) {
+  const dir = mkdtempSync(join(tmpdir(), 'cook-plan-issue-'));
+  const tmp = join(dir, 'body');
+  try {
+    writeFileSync(tmp, content);
+    const res = spawnSync('gh', ['issue', 'edit', ref, `--body-file=${tmp}`, '--'], {
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+    if (res.error && /** @type {NodeJS.ErrnoException} */ (res.error).code === 'ENOENT') {
+      return die(`cook: \`gh\` is required to update issue ${ref} but was not found on PATH.`);
+    }
+    if (res.status !== 0) {
+      return die(`cook: \`gh issue edit\` failed for ${ref}.`);
+    }
+    return null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Run a plan op (section|check|append) against an ISSUE REF, reusing the markdown
+ * engine byte-for-byte on the FETCHED body (no `resolveRefPath` — the body is a
+ * trusted temp we fetched, not a user path). Lite-gated (writing a shared issue
+ * is a lite-only act). Order: lite-gate → `issueRefValidate` → fetch → per-op
+ * arg-count check + engine transform; section is read-only (bounds, no edit),
+ * check/append write back via `ghWriteBody`. Any failure before the write returns
+ * with no edit / no orphan temp. Port of `plan_issue_op` (:1134).
+ *
+ * @param {string} root
+ * @param {string} op
+ * @param {string} ref
+ * @param {...string} rest
+ * @returns {Promise<Verdict>}
+ */
+export async function planIssueOp(root, op, ref, ...rest) {
+  if ((await readMode(root)) !== 'lite') {
+    return die('`cook plan` is a lite-mode command; run `cook lite` first (writing a shared issue is a lite-only act).');
+  }
+  const invalid = issueRefValidate(ref);
+  if (invalid !== null) return invalid;
+
+  const fetched = ghFetchBody(ref);
+  if (typeof fetched !== 'string') return fetched;
+  const body = fetched;
+
+  switch (op) {
+    case 'section': {
+      if (rest.length !== 1) return die('usage: cook plan section <issue-ref> <anchor>');
+      const bounds = sectionBounds(splitLines(body), rest[0]);
+      if (bounds === null) return die(`plan section: no heading matches anchor: ${rest[0]}`);
+      return { code: 0, stdout: [`${bounds[0]} ${bounds[1]}`], stderr: [] };
+    }
+    case 'check': {
+      if (rest.length !== 1) return die('usage: cook plan check <issue-ref> <substring>');
+      const next = checkContent(body, rest[0]);
+      if (next === null) return die(`plan check: no checklist item matches: ${rest[0]}`);
+      return ghWriteBody(ref, next) ?? { code: 0, stdout: [], stderr: [] };
+    }
+    case 'append': {
+      if (rest.length !== 2) return die('usage: cook plan append <issue-ref> <anchor> <text>');
+      const next = appendContent(body, rest[0], rest[1]);
+      if (next === null) return die(`plan append: no heading matches anchor: ${rest[0]}`);
+      return ghWriteBody(ref, next) ?? { code: 0, stdout: [], stderr: [] };
+    }
+    default:
+      return die(`unknown plan subcommand: ${op}`);
+  }
 }

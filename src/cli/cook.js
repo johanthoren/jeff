@@ -19,7 +19,7 @@ import { validateStore } from '../core/validate-store.js';
 import { lsReport, statusReport, showReport } from '../core/reporters.js';
 import { runVerify } from '../core/verify.js';
 import { doctorReport, initProject } from '../core/lifecycle.js';
-import { planSection, planCheck, planAppend } from '../core/plan.js';
+import { planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../core/plan.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -98,9 +98,10 @@ async function main() {
   if (sub === 'plan') {
     // `plan <sub> <target> …` (like `show`, NOT a VERBS entry): validate the
     // subcommand FIRST — parity with cook.sh's cmd_plan (:1024) — then dispatch
-    // to the core verb, which does its own arg-count usage check. 3d1 is the
-    // markdown path only: no is_issue_ref routing (that is slice 3d2), so an
-    // issue-shaped ref falls through to the markdown containment error.
+    // to the core verb, which does its own arg-count usage check. When the first
+    // plan positional (the target) is an issue ref (`#…`/`http(s)://…`), route to
+    // the github-issues adapter instead of the markdown path — parity with
+    // cook.sh's cmd_plan (:1032). Markdown refs are unchanged.
     const psub = rest[0];
     const pargs = rest.slice(1);
     if (psub === undefined || psub === '') {
@@ -110,6 +111,10 @@ async function main() {
     if (!Object.hasOwn(PLAN_VERBS, psub)) {
       process.stderr.write(`cook: unknown plan subcommand: ${psub} (try section|check|append)\n`);
       return process.exit(1);
+    }
+    const target = pargs[0];
+    if (target !== undefined && isIssueRef(target)) {
+      return emit(await planIssueOp(root, psub, target, ...pargs.slice(1)));
     }
     return emit(await PLAN_VERBS[psub](root, ...pargs));
   }
