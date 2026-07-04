@@ -59,40 +59,38 @@ function rejectUnknownArgs(label, rest) {
   return true;
 }
 
+/**
+ * The no-argument verbs: reject any leftover argument, then emit the verdict.
+ * `show` takes its own branch in `main` (an id argument, not `reject_unknown_args`).
+ *
+ * @type {Record<string, (root: string) => Promise<{ code: number, stdout: string[], stderr: string[] }>>}
+ */
+const VERBS = { validate: validateStore, ls: lsReport, status: statusReport };
+
 async function main() {
   const argv = process.argv.slice(2);
   const sub = argv[0];
   const rest = argv.slice(1);
   const root = process.env.COOK_ROOT || gitTopLevel() || process.cwd();
 
-  switch (sub) {
-    case 'validate':
-      if (rejectUnknownArgs('validate', rest)) return process.exit(1);
-      return emit(await validateStore(root));
-
-    case 'ls':
-      if (rejectUnknownArgs('ls', rest)) return process.exit(1);
-      return emit(await lsReport(root));
-
-    case 'status':
-      if (rejectUnknownArgs('status', rest)) return process.exit(1);
-      return emit(await statusReport(root));
-
-    case 'show': {
-      // `show` does NOT reject_unknown_args (N5): a leading-dash arg is an id.
-      // cook.sh order: empty-id first (usage), then the extra-arg guard.
-      const id = rest[0];
-      if (id && rest.length > 1) {
-        process.stderr.write(`cook: show: unexpected argument '${rest[1]}'\n`);
-        return process.exit(1);
-      }
-      return emit(await showReport(root, id ?? ''));
-    }
-
-    default:
-      process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`)\n`);
-      return process.exit(1);
+  if (sub !== undefined && sub in VERBS) {
+    if (rejectUnknownArgs(sub, rest)) return process.exit(1);
+    return emit(await VERBS[sub](root));
   }
+
+  if (sub === 'show') {
+    // `show` does NOT reject_unknown_args (N5): a leading-dash arg is an id.
+    // cook.sh order: empty-id first (usage), then the extra-arg guard.
+    const id = rest[0];
+    if (id && rest.length > 1) {
+      process.stderr.write(`cook: show: unexpected argument '${rest[1]}'\n`);
+      return process.exit(1);
+    }
+    return emit(await showReport(root, id ?? ''));
+  }
+
+  process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (this JS entry supports \`validate\`, \`ls\`, \`status\`, \`show\`)\n`);
+  return process.exit(1);
 }
 
 main();
