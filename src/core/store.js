@@ -1,6 +1,6 @@
 // @ts-check
 
-import { readFile, writeFile, rename, readdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, unlink, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { isType } from './validate.js';
@@ -43,6 +43,11 @@ export async function readTask(taskDir) {
  * it over the target. rename() is atomic on a single filesystem, so a reader
  * never observes a partially-written file. Mirrors cook.sh's `mktemp` + `mv -f`.
  *
+ * The temp file is created exclusively (`flag: 'wx'`, fail if it already exists,
+ * never follow/truncate a pre-existing path) with owner-only perms (`mode: 0o600`);
+ * rename preserves the source mode, so the persisted `task.json` inherits 0600. A
+ * failed rename unlinks the temp file (no orphan) and re-rejects (fails closed).
+ *
  * @param {string} taskDir - path to the task directory (must exist)
  * @param {TaskJson} task
  * @returns {Promise<void>}
@@ -51,8 +56,13 @@ export async function writeTask(taskDir, task) {
   const target = join(taskDir, TASK_FILE);
   const tmp = join(taskDir, `.${TASK_FILE}.${randomBytes(6).toString('hex')}.tmp`);
   const json = `${JSON.stringify(task, null, 2)}\n`;
-  await writeFile(tmp, json, 'utf8');
-  await rename(tmp, target);
+  await writeFile(tmp, json, { flag: 'wx', mode: 0o600, encoding: 'utf8' });
+  try {
+    await rename(tmp, target);
+  } catch (e) {
+    await unlink(tmp).catch(() => {});
+    throw e;
+  }
 }
 
 /**
