@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { readMode, readConfig } from './store.js';
+import { git, treeDirty, testRunsLogPath } from './git.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -41,32 +42,6 @@ async function resolveCommand(root, mode) {
   // jq `// empty` treats null/false as empty; anything else stringifies.
   if (tc == null || tc === false) return '';
   return typeof tc === 'string' ? tc : String(tc);
-}
-
-/**
- * `git -C root ...args`, captured as utf8 and never throwing on a non-zero
- * exit (callers below read `.status`/`.stdout`). Centralizes the `-C root` +
- * `encoding` pair shared by every git call this module makes.
- *
- * @param {string} root
- * @param {string[]} args
- * @returns {import('node:child_process').SpawnSyncReturns<string>}
- */
-function git(root, args) {
-  return spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
-}
-
-/**
- * Whether the working tree is dirty OUTSIDE `.jeff/`, at parity with cook.sh's
- * `tree_dirty` (skills/cook/scripts/cook.sh:163): `git status --porcelain --
- * ':(exclude).jeff'` non-empty.
- *
- * @param {string} root
- * @returns {boolean}
- */
-function treeDirty(root) {
-  const res = git(root, ['status', '--porcelain', '--', ':(exclude).jeff']);
-  return (res.stdout ?? '').length > 0;
 }
 
 /**
@@ -115,7 +90,7 @@ function logTestRun(root, cmd, result) {
   const hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
   if (!hash) return;
   const line = JSON.stringify({ hash, dirty: treeDirty(root), result, suite: cmd, at: utcSecond() });
-  appendFileSync(join(root, '.jeff', 'test-runs.jsonl'), `${line}\n`);
+  appendFileSync(testRunsLogPath(root), `${line}\n`);
   appendLineOnce(join(root, '.git', 'info', 'exclude'), '.jeff/test-runs.jsonl');
 }
 

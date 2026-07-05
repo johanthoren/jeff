@@ -20,6 +20,7 @@ import { lsReport, statusReport, showReport } from '../core/reporters.js';
 import { runVerify } from '../core/verify.js';
 import { doctorReport, initProject } from '../core/lifecycle.js';
 import { planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../core/plan.js';
+import { runBaseline } from '../core/baseline.js';
 import { topbrainReport } from '../core/topbrain.js';
 import { flavorReport } from '../core/flavor.js';
 
@@ -104,6 +105,13 @@ async function main() {
       return process.exit(1);
     }
     return emit(await showReport(root, id ?? ''));
+  }
+
+  if (sub === 'baseline') {
+    // `baseline check [<hash>]` (like `show`/`plan`, NOT a VERBS entry): it
+    // takes its own positional args. runBaseline does its own subcommand +
+    // arg-count usage checks — parity with cook.sh's cmd_baseline (:1470).
+    return emit(await runBaseline(root, rest));
   }
 
   if (sub === 'plan') {
