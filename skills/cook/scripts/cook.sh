@@ -729,11 +729,26 @@ cmd_prune() {
   local sib tmp
   while IFS= read -r sib; do
     [ -n "$sib" ] || continue
+    # Never touch the TARGET's own record: it is about to be `git rm`ed, and
+    # reformatting it in the worktree would make `git rm -r` (no -f) refuse the
+    # "local modifications". Its .deps are irrelevant once the dir is removed.
+    if [ "$(dirname "$sib")" = "$dir" ]; then continue; fi
     tmp="$(mktemp)"
     jq --argjson fid "$id" '
       if (.status == "pending" or .status == "in_progress" or .status == "blocked")
       then .deps = ((.deps // []) - [$fid]) else . end' "$sib" > "$tmp"
-    if cmp -s "$tmp" "$sib"; then rm -f "$tmp"; else mv -f "$tmp" "$sib"; fi
+    # Compare against the jq-NORMALIZED original (not raw bytes): a hand-authored
+    # (non-jq-canonical) sibling must not be rewritten for formatting alone — only
+    # an actual .deps change writes. On a real change, STAGE it (git add) so the
+    # single printed commit captures the complete, valid terminal tree (target
+    # removal + every dep-strip); leaving a strip unstaged would commit the
+    # removal but not the strip, yielding a dangling-dep store.
+    if cmp -s "$tmp" <(jq '.' "$sib"); then
+      rm -f "$tmp"
+    else
+      mv -f "$tmp" "$sib"
+      git -C "$ROOT" add -- "$sib"
+    fi
   done < <(task_json_files)
 
   # Remove the terminal task's dir from worktree + index (staged, not committed).
