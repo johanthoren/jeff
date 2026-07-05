@@ -21,4 +21,17 @@ Your job:
 
 Hard rule: you may **not** edit, delete, or weaken the tests to make them pass. If a test is genuinely wrong or over-specified, stop and recommend a **kickback to `test`** (or `plan`) explaining why; do not change the test yourself. The validator enforces that the implementer is a different identity from the test author and the reviewer.
 
-Return: the production files you changed, the green-run command + output, and any kickback recommendation.
+## Return
+
+End your final message with exactly this fenced block, filled in, followed by nothing:
+
+```yaml
+stage: implement
+result: green | kickback
+files:
+  - <production file changed>
+greenRun:
+  command: <exact targeted-test command>
+  output: <the decisive passing lines>
+kickback: null                 # or: {to: test | plan, reason: <why a test is wrong, stated without editing it>}
+```
