@@ -671,6 +671,55 @@ cmd_show() {
   jq '.' "$f"
 }
 
+# cook kickback <id> <stage>: mechanize the kickback-cap arithmetic. Reads the
+# current blockingKickbacks for <stage>, applies the cap=2 rule, writes the
+# resulting convergence block, and prints the decision word (`kickback` while
+# under cap, `council` once the cap is reached). The verb ONLY counts + prints:
+# it never convenes the council or sets verdict/members (that stays Jeff's
+# orchestration). Runs in BOTH lite and full (INV-7..11 are quality invariants
+# both modes keep), so there is deliberately no mode gate here.
+cmd_kickback() {
+  require_jq
+  # Arg guards FIRST, before any read/write, so a bad invocation never mutates.
+  local id="${1:-}" stage="${2:-}"
+  [ -n "$id" ]    || die "usage: cook kickback <id> <stage>"
+  [ -n "$stage" ] || die "usage: cook kickback <id> <stage>"
+  case "$stage" in
+    review|audit) ;;
+    *) die "kickback: stage must be review or audit (got '$stage')" ;;
+  esac
+  [ "$#" -le 2 ] || die "kickback: unexpected argument '$3'"
+
+  # ponytail: resolve <id> -> task.json inline, byte-identical to cmd_show's
+  # idiom. #17 stays independent of #16; dedup both onto resolve_task_file once
+  # #16 merges. <id> is ONLY a jq comparison value — never interpolated as path.
+  local f
+  f="$(find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null | while IFS= read -r p; do
+        if [ "$(jq -r '.id' "$p")" = "$id" ]; then printf '%s' "$p"; break; fi
+      done)"
+  [ -n "$f" ] || die "no task with id $id"
+
+  # Cap decision: count<2 kicks (count+1, `kickback`); count==2 holds at the cap
+  # and convenes (`council`). blockingKickbacks never exceeds cap (INV-7 0..2).
+  local n decided word
+  n="$(jq -r --arg s "$stage" '(.convergence.stages[$s].blockingKickbacks // 0)' "$f")"
+  if [ "$n" -ge 2 ]; then
+    decided="$n"; word="council"
+  else
+    decided="$((n + 1))"; word="kickback"
+  fi
+
+  # Default-then-set: seed the full valid pre-council block when .convergence is
+  # absent, then set only the target stage's count. Setting one leaf preserves
+  # cap, the OTHER stage's count, and the ENTIRE council object by construction.
+  local tmp; tmp="$(mktemp)"
+  jq --arg s "$stage" --argjson v "$decided" \
+    '.convergence = (.convergence // {cap:2, stages:{review:{blockingKickbacks:0}, audit:{blockingKickbacks:0}}, council:{convened:false, stage:null, members:[], findings:[], verdict:null, outcome:null}})
+     | .convergence.stages[$s].blockingKickbacks = $v' \
+    "$f" > "$tmp" && mv "$tmp" "$f"
+  printf '%s\n' "$word"
+}
+
 cmd_doctor() {
   reject_unknown_args doctor "$@"
   local mode
@@ -1523,6 +1572,7 @@ Subcommands:
   ls           List tasks (id, status, stage, priority, title).
   status       In-flight tasks + backlog health.
   show <id>    Print one task's task.json.
+  kickback <id> <stage>  Increment convergence.stages.<stage>.blockingKickbacks (stage ∈ {review,audit}) under the cap=2 rule; print `kickback` (re-fire the stage) or `council` (convene).
   init         Activate jeff here: scaffold .jeff/ + mark active.
   lite         Activate LITE mode here: scaffold + git-exclude .jeff/ locally; no registry (for shared repos).
   on <ref>     [lite] Adopt a plan location as a run-ledger: a markdown file/PLAN.md#anchor, or a github issue (#<n> or an issues URL). Idempotent.
@@ -1546,6 +1596,7 @@ main() {
     ls)       cmd_ls "$@" ;;
     status)   cmd_status "$@" ;;
     show)     cmd_show "$@" ;;
+    kickback) cmd_kickback "$@" ;;
     doctor)   cmd_doctor "$@" ;;
     init)     cmd_init "$@" ;;
     lite)     cmd_lite "$@" ;;
