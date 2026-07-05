@@ -13,7 +13,7 @@ help:
 	@echo "make test      - run the bats test suite"
 
 test:
-	@$(BATS) --jobs $(JOBS) tests/convergence.bats tests/lite.bats tests/profile.bats tests/lite-adopt.bats tests/release-check.bats tests/lite-pipeline.bats tests/backlog.bats tests/gh-issues.bats tests/complexity.bats tests/command-routing.bats tests/cli-location.bats tests/brains.bats tests/verify.bats tests/gate.bats tests/disposition.bats tests/validate-scale.bats tests/payload-hygiene.bats tests/plugin-manifest.bats tests/strict-args.bats tests/precommit-gate.bats tests/prune.bats tests/flavor.bats
+	@$(BATS) --jobs $(JOBS) tests/convergence.bats tests/lite.bats tests/profile.bats tests/lite-adopt.bats tests/release-check.bats tests/lite-pipeline.bats tests/backlog.bats tests/gh-issues.bats tests/complexity.bats tests/command-routing.bats tests/cli-location.bats tests/brains.bats tests/verify.bats tests/gate.bats tests/disposition.bats tests/validate-scale.bats tests/payload-hygiene.bats tests/plugin-manifest.bats tests/strict-args.bats tests/precommit-gate.bats tests/prune.bats tests/prune-verb.bats tests/flavor.bats
 
 validate:
 	@$(COOK) validate
