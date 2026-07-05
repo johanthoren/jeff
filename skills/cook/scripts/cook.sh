@@ -658,17 +658,92 @@ cmd_status() {
   '
 }
 
+# resolve_task_file <id>: echo the path to the task.json whose .id equals <id>,
+# or echo nothing and return non-zero on no match. The <id> is ONLY ever a jq
+# comparison VALUE, never interpolated into a path or glob: a malicious <id>
+# (`../…`, `*`, `; rm …`, a dir-name) matches no .id and cannot escape
+# .jeff/tasks/ — the resolver is the primary injection defense for the callers
+# that go on to remove the resolved dir. Requires jq (callers `require_jq`).
+resolve_task_file() {
+  local id="$1" f
+  f="$(find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null | while IFS= read -r p; do
+        if [ "$(jq -r '.id' "$p")" = "$id" ]; then printf '%s' "$p"; break; fi
+      done)"
+  [ -n "$f" ] || return 1
+  printf '%s' "$f"
+}
+
 cmd_show() {
   require_jq
   local id="${1:-}"
   [ -n "$id" ] || die "usage: cook show <id>"
   [ "$#" -le 1 ] || die "show: unexpected argument '$2'"
   local f
-  f="$(find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null | while IFS= read -r p; do
-        if [ "$(jq -r '.id' "$p")" = "$id" ]; then printf '%s' "$p"; break; fi
-      done)"
-  [ -n "$f" ] || die "no task with id $id"
+  f="$(resolve_task_file "$id")" || die "no task with id $id"
   jq '.' "$f"
+}
+
+# cmd_prune <id>: mechanize the mechanical half of terminal-with-removal. Full
+# mode only. Strips the finishing id from every LIVE sibling's .deps, `git rm -r`
+# the terminal task's dir, re-runs `cook validate`, and on green PRINTS the exact
+# commit command for the operator to run as a SEPARATE tool call. The verb NEVER
+# commits and does NOT auto-rollback: a failure leaves the staged rm + stripped
+# deps uncommitted (reversible via `git restore`) for the operator to inspect.
+cmd_prune() {
+  # Full-mode gate at the TOP, before any work. Lite tasks are owned by the team
+  # tracker and the store is git-excluded, so there is nothing to prune.
+  [ "$(bake_mode)" != "lite" ] \
+    || die "\`cook prune\` is a full-mode command: lite tasks are owned by the team tracker and the store is git-excluded; nothing to prune."
+  require_jq
+  local id="${1:-}"
+  [ -n "$id" ] || die "usage: cook prune <id>"
+  [ "$#" -le 1 ] || die "prune: unexpected argument '$2'"
+
+  # Resolve id -> task.json (injection defense; see resolve_task_file).
+  local file dir
+  file="$(resolve_task_file "$id")" || die "no task with id $id"
+  dir="$(dirname "$file")"
+
+  # Read terminal state + abandonReason from the record BEFORE removal.
+  local status reason
+  status="$(jq -r '.status' "$file")"
+  case "$status" in
+    done|abandoned) ;;
+    *) die "task $id is not in a terminal state (status: $status); cook prune removes only done or abandoned tasks, and removes nothing otherwise." ;;
+  esac
+  reason="$(jq -r '.abandonReason // empty' "$file")"
+
+  # Strip the finishing id from every LIVE (pending|in_progress|blocked)
+  # sibling's .deps. Touch ONLY .deps (siblings stay byte-deterministic); skip
+  # the write when unchanged (minimal diff, idempotent). The done/abandoned
+  # task's own record is not live, so it is left untouched here.
+  local sib tmp
+  while IFS= read -r sib; do
+    [ -n "$sib" ] || continue
+    tmp="$(mktemp)"
+    jq --argjson fid "$id" '
+      if (.status == "pending" or .status == "in_progress" or .status == "blocked")
+      then .deps = ((.deps // []) - [$fid]) else . end' "$sib" > "$tmp"
+    if cmp -s "$tmp" "$sib"; then rm -f "$tmp"; else mv -f "$tmp" "$sib"; fi
+  done < <(find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null)
+
+  # Remove the terminal task's dir from worktree + index (staged, not committed).
+  git -C "$ROOT" rm -r -q -- "$dir"
+
+  # Re-run validate CATCHABLY: its `die` must not kill the verb before it picks
+  # its posture. On red, surface the failure (validate already printed
+  # "validation FAILED" to stderr), print NO commit line, exit non-zero — leaving
+  # the staged rm + stripped deps for the operator. On green, print the commit
+  # command (Q5) to stdout and exit 0. The verb never commits.
+  local vrc
+  ( cmd_validate ) && vrc=0 || vrc=$?
+  [ "$vrc" -eq 0 ] || die "post-removal validation FAILED: the store is invalid; nothing was committed. Inspect and fix, then commit manually (or \`git restore\` to undo)."
+
+  if [ "$status" = "done" ]; then
+    printf "git commit -m 'task %s · done: <outcome (+ release tag)>'\n" "$id"
+  else
+    printf "git commit -m 'task %s · abandoned: %s'\n" "$id" "$reason"
+  fi
 }
 
 cmd_doctor() {
@@ -1523,6 +1598,7 @@ Subcommands:
   ls           List tasks (id, status, stage, priority, title).
   status       In-flight tasks + backlog health.
   show <id>    Print one task's task.json.
+  prune <id>   [full] Retire a done/abandoned task: strip it from live siblings' deps, `git rm -r` its dir, re-validate, then PRINT the commit command to run separately.
   init         Activate jeff here: scaffold .jeff/ + mark active.
   lite         Activate LITE mode here: scaffold + git-exclude .jeff/ locally; no registry (for shared repos).
   on <ref>     [lite] Adopt a plan location as a run-ledger: a markdown file/PLAN.md#anchor, or a github issue (#<n> or an issues URL). Idempotent.
@@ -1546,6 +1622,7 @@ main() {
     ls)       cmd_ls "$@" ;;
     status)   cmd_status "$@" ;;
     show)     cmd_show "$@" ;;
+    prune)    cmd_prune "$@" ;;
     doctor)   cmd_doctor "$@" ;;
     init)     cmd_init "$@" ;;
     lite)     cmd_lite "$@" ;;
