@@ -28,14 +28,15 @@ const STAGE_TIER = {
   plan: { tier: 'judge', effort: 'xhigh' },
   test: { tier: 'encode', effort: 'medium' },
   implement: { tier: 'build', effort: 'high' },
-  refactor: { tier: 'tidy', effort: 'high' },
+  // judge caliber, but its OWN non-judge tier so topBrain=fable never elevates refactor (the fable branch keys on tier==='judge')
+  refactor: { tier: 'tidy', effort: 'xhigh' },
   review: { tier: 'judge', effort: 'xhigh' },
   audit: { tier: 'judge', effort: 'xhigh' },
 };
 
 /** @type {Record<string, Record<string, string>>} */
 const PROVIDER_COLUMNS = {
-  anthropic: { judge: 'opus', build: 'opus', tidy: 'sonnet', encode: 'sonnet' },
+  anthropic: { judge: 'opus', build: 'opus', tidy: 'opus', encode: 'sonnet' },
   // openai: §9/bench placeholder — intentionally unpinned (do NOT pin gpt-5.*);
   // resolves to opts.sessionModel like any untuned provider until a column lands.
   openai: {},

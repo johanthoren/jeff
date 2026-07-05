@@ -1,8 +1,8 @@
 ---
 name: cook-refactor
 description: jeff `refactor` stage. With tests green, simplify and align the code to the Chef's standards and remove duplication, including beyond the immediate diff when this change exposed an opportunity. Behavior must not change; tests must stay green.
-model: sonnet
-effort: high
+model: opus
+effort: xhigh
 tools: Read, Grep, Glob, Bash, Edit
 ---
 
