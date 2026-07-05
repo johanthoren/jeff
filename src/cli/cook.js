@@ -14,7 +14,6 @@
  * with a usage error rather than pretending to handle it.
  */
 
-import { execFileSync } from 'node:child_process';
 import { validateStore } from '../core/validate-store.js';
 import { lsReport, statusReport, showReport } from '../core/reporters.js';
 import { runVerify } from '../core/verify.js';
@@ -23,17 +22,12 @@ import { planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../
 import { runBaseline } from '../core/baseline.js';
 import { topbrainReport } from '../core/topbrain.js';
 import { flavorReport } from '../core/flavor.js';
+import { git } from '../core/git.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
-  try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return '';
-  }
+  const res = git(process.cwd(), ['rev-parse', '--show-toplevel']);
+  return res.status === 0 ? (res.stdout ?? '').trim() : '';
 }
 
 /**
