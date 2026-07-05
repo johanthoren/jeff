@@ -1496,10 +1496,10 @@ cmd_baseline() {
   # "…^{tree}" MUST stay double-quoted (the ^{...} trips brace/glob in bash);
   # the arg flows to rev-parse as a single quoted argv (no sh -c, no injection).
   local head_tree want_tree
-  head_tree="$(git -C "$ROOT" rev-parse "HEAD^{tree}" 2>/dev/null)"
+  head_tree="$(git -C "$ROOT" rev-parse "HEAD^{tree}" 2>/dev/null)" || head_tree=""
   [ -n "$head_tree" ] \
     || die "baseline check: could not determine the current tree (unborn HEAD?)."
-  want_tree="$(git -C "$ROOT" rev-parse "${1:-HEAD}^{tree}" 2>/dev/null)"
+  want_tree="$(git -C "$ROOT" rev-parse "${1:-HEAD}^{tree}" 2>/dev/null)" || want_tree=""
   [ -n "$want_tree" ] \
     || die "baseline check: bad ref '${1:-HEAD}': could not resolve its tree."
 

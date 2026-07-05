@@ -228,7 +228,11 @@ cross-order constraint is each order's `dependsOn`, preserved as `deps`.
   jeff-shaped: `brains` are informational (jeff no longer validates them),
   `convergence` and `tests.gate` are absent-tolerant, and the
   status/stage/priority enums match. No per-task edits are needed.
-- `test-runs.jsonl` uses the same `{hash, dirty, result, suite, at}` line shape
-  jeff writes, so `cook verify` / `cook baseline check` read it directly.
+- `test-runs.jsonl` is keyed on the working-tree hash: jeff writes
+  `{treeHash, dirty, result, suite, at, commit}` (the `commit` is informational
+  only). `cook verify` / `cook baseline check` match on `treeHash`. Any
+  pre-existing commit-keyed lines from a bakehouse store lack a `treeHash`, so
+  they are harmlessly ignored — they never false-match a baseline, and no
+  migration is needed.
 - Numeric ids carry over as-is (full mode wants integer ids). String ids only
   appear in lite ledgers adopted via `cook on`.
