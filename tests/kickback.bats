@@ -36,22 +36,28 @@ cook() {
 # Fixture helpers (per-file convention; test_helper.bash untouched)
 # ---------------------------------------------------------------------------
 
-# write_baseline_task <bk_dir> <task_id> <slug>
-# A fully schema-valid v1 task.json, status:done, no convergence block, so
-# only the convergence mutation under test can drive a validate failure.
+# write_baseline_task <bk_dir> <task_id> <slug> [status]
+# A fully schema-valid v1 task.json, no convergence block, so only the
+# convergence mutation under test can drive a validate failure. status
+# defaults to "done"; tests that also run `cook validate` in FULL mode pass
+# "in_progress" so the fixture does not trip the full-mode [prune] registry
+# invariant (a done/abandoned task dir must not rest in the store); that
+# invariant is unrelated to the convergence block under test here, and a
+# kickback mid-review/audit is realistically in_progress, not done anyway.
 write_baseline_task() {
-  local bk="$1" id="$2" slug="$3"
+  local bk="$1" id="$2" slug="$3" status="${4:-done}"
   local task_dir="$bk/tasks/${id}-${slug}"
   mkdir -p "$task_dir"
   jq -n \
     --argjson id "$id" \
     --arg slug "$slug" \
+    --arg status "$status" \
     '{
       schemaVersion: 1,
       id: $id,
       slug: $slug,
       title: ("Synthetic task: " + $slug),
-      status: "done",
+      status: $status,
       stage: "done",
       priority: "p2",
       deps: [],
@@ -165,7 +171,7 @@ CONV_PRE_COUNCIL_R2A0='{
 # ---------------------------------------------------------------------------
 
 @test "kickback: absent convergence creates full valid block and prints kickback" {
-  write_baseline_task "$BK" 1 "task-kb-absent"
+  write_baseline_task "$BK" 1 "task-kb-absent" "in_progress"
 
   run cook kickback 1 review
   [ "$status" -eq 0 ]
@@ -222,7 +228,7 @@ CONV_PRE_COUNCIL_R2A0='{
 # ---------------------------------------------------------------------------
 
 @test "kickback: at cap the verb holds the count, prints council, does not convene" {
-  write_baseline_task "$BK" 4 "task-kb-3rd"
+  write_baseline_task "$BK" 4 "task-kb-3rd" "in_progress"
   local f="$BK/tasks/4-task-kb-3rd/task.json"
   patch_convergence "$f" "$CONV_PRE_COUNCIL_R2A0"
 
