@@ -5,7 +5,7 @@
 # Subcommands:
 #   validate         Check .jeff state against the schema + philosophy invariants.
 #   verify           Run the configured test command (full-suite gate); log the verdict.
-#   baseline check   Is <hash> (default HEAD) a known green+clean baseline in the run log?
+#   baseline check   Is <commit-ish>'s tree (default HEAD) a known green+clean baseline in the run log?
 #   ls               List tasks (id, status, stage, priority, title).
 #   status           Show in-flight task(s) + backlog health.
 #   show <id>        Print one task's task.json.
