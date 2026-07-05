@@ -443,8 +443,10 @@ clean_tree() {
 
   run cook baseline check
   [ "$status" -ne 0 ]
-  # Must not be a stack/parse error: output should not contain bash traceback.
-  [[ "$output" != *"line "*": "* ]] || true
+  # Must not be a stack/parse error: assert no bash-trace signature in output
+  # (binding, no `|| true`; the crude "line "*": " pattern also false-matched
+  # "baseline check:" itself, so it is dropped in favor of a real anchor).
+  [[ "$output" != *"cook.sh: line "* ]]
 }
 
 @test "verify/AC2: a squash-merge (same tree, new commit) is recognized as a green baseline" {
@@ -489,8 +491,26 @@ clean_tree() {
 
   run cook baseline check
   [ "$status" -ne 0 ]
-  # Must not be a stack/parse error: output should not contain bash traceback.
-  [[ "$output" != *"line "*": "* ]] || true
+  # Must not be a stack/parse error: assert no bash-trace signature in output
+  # (binding, no `|| true`).
+  [[ "$output" != *"cook.sh: line "* ]]
+}
+
+@test "verify/F1: baseline check <bad-ref> dies with a clear message, not silent exit 128" {
+  # Review follow-up F1 (task #19 dual review, fold-in): under set -euo
+  # pipefail, cmd_baseline's bare `want_tree="$(git rev-parse
+  # "${1:-HEAD}^{tree}" 2>/dev/null)"` assignment aborts the script at exit
+  # 128 (the command substitution's failure trips -e) BEFORE the
+  # `[ -n "$want_tree" ] || die "baseline check: bad ref '...'..."` guard ever
+  # runs, so that die message is currently unreachable dead code.
+  # RED now: `cook baseline check <bad-ref>` exits non-zero (128) but with
+  # EMPTY output; the message-substring assertion below fails. GREEN once the
+  # implementer guards the assignment (`|| want_tree=""`) so the die guard
+  # fires and prints the "bad ref" message.
+  write_full_config
+  run cook baseline check no-such-ref-xyz
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"bad ref"* ]]
 }
 
 # ---------------------------------------------------------------------------
