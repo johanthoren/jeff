@@ -1358,7 +1358,7 @@ cmd_indiff() {
 }
 
 # ---------------------------------------------------------------------------
-# verify: config-driven full-suite gate runner + hash-keyed run log.
+# verify: config-driven full-suite gate runner + tree-keyed run log.
 #
 # `cook verify` resolves the project's test command from config (full mode) or
 # the operating profile prose (lite mode), runs it as `sh -c "$cmd"` (the same
@@ -1369,9 +1369,10 @@ cmd_indiff() {
 # and a non-zero exit, NEVER an empty `sh -c ""` (which exits 0 = a silent green)
 # and NEVER a hardcoded default (`make test`).
 #
-# `cook baseline check [<hash>]` answers "is <hash> (default HEAD) a known
-# green+clean baseline?" purely from the run log: used by the entry-state
-# carry-forward so a task can skip re-running a suite the tree already passed at.
+# `cook baseline check [<commit-ish>]` answers "is <commit-ish>'s tree (default
+# HEAD's) a known green+clean baseline?" purely from the run log: used by the
+# entry-state carry-forward so a task can skip re-running a suite the tree
+# already passed at (a squash-merge of identical content is a HIT).
 # ---------------------------------------------------------------------------
 
 # Echo the resolved test command for the active mode, or nothing.
@@ -1433,26 +1434,33 @@ cmd_verify() {
   fi
 
   # Full-mode run log: append exactly ONE jsonl line recording the verdict keyed
-  # by the current git HEAD + tree-dirty flag, so `cook baseline check` can later
-  # answer "is this hash a known green+clean baseline?" without re-running. Lite
-  # mode's whole .jeff/ is already git-excluded and the team owns tracking,
-  # so the log is a full-mode entry-state mechanism only.
+  # by the current tree hash (git rev-parse "HEAD^{tree}") + tree-dirty flag, so
+  # `cook baseline check` can later answer "is this tree a known green+clean
+  # baseline?" without re-running. Keying on the tree (not the commit) makes a
+  # squash-merge of identical content a baseline HIT. The commit is still
+  # recorded (informational). Lite mode's whole .jeff/ is already git-excluded
+  # and the team owns tracking, so the log is a full-mode entry-state mechanism.
   if [ "$(bake_mode)" != "lite" ] \
      && git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1; then
-    local head dirty at log
+    local tree head dirty at log
+    # "HEAD^{tree}" MUST stay double-quoted (the ^{...} trips brace/glob in bash).
+    tree="$(git -C "$ROOT" rev-parse "HEAD^{tree}" 2>/dev/null)" || tree=""
     head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" || head=""
-    if [ -n "$head" ]; then
+    # Skip the log on an unborn HEAD / unresolvable tree (no crash, no partial line).
+    if [ -n "$tree" ]; then
       tree_dirty && dirty=true || dirty=false
       at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       log="$BK/test-runs.jsonl"
+      # treeHash is the primary key; commit is informational (never matched on).
       # NO stdout/stderr field is ever recorded (only the verdict + provenance).
       jq -nc \
-        --arg hash "$head" \
+        --arg treeHash "$tree" \
         --argjson dirty "$dirty" \
         --arg result "$result" \
         --arg suite "$cmd" \
         --arg at "$at" \
-        '{hash:$hash, dirty:$dirty, result:$result, suite:$suite, at:$at}' \
+        --arg commit "$head" \
+        '{treeHash:$treeHash, dirty:$dirty, result:$result, suite:$suite, at:$at, commit:$commit}' \
         >> "$log"
       # Git-exclude the log locally + idempotently (per-clone, never committed).
       append_line_once "$ROOT/.git/info/exclude" ".jeff/test-runs.jsonl"
@@ -1462,17 +1470,21 @@ cmd_verify() {
   return "$rc"
 }
 
-# cook baseline check [<hash>]
-# Exit 0 IFF the run log carries a line { hash == <hash>, dirty == false,
-# result == "green" } AND the tree is currently clean AND current HEAD == <hash>.
-# Default hash = current HEAD. Any miss ⇒ non-zero + a one-line reason on stderr.
-# Absent/empty log ⇒ non-zero cleanly (nothing anchored), never a crash.
+# cook baseline check [<commit-ish>]
+# Exit 0 IFF the run log carries a line { treeHash == <tree>, dirty == false,
+# result == "green" } AND the tree is currently clean AND the current
+# HEAD^{tree} equals <tree>, where <tree> = <commit-ish>^{tree} (default HEAD).
+# Keying on the tree makes a squash-merge (same tree, new commit) a baseline HIT.
+# The <commit-ish> arg is a caller-side "I expect to be at <X>" assertion on the
+# tree; a bad ref dies (git rev-parse exits 128). Any miss ⇒ non-zero + a
+# one-line reason on stderr. Absent/empty log ⇒ non-zero cleanly, never a crash.
+# Old commit-keyed lines (no .treeHash) never false-match (null == tree is false).
 cmd_baseline() {
   require_jq
   local sub="${1:-}"
   case "$sub" in
     check) shift ;;
-    "")    die "usage: cook baseline check [<hash>]" ;;
+    "")    die "usage: cook baseline check [<commit-ish>]" ;;
     *)     die "unknown baseline subcommand: $sub (try \`cook baseline check\`)" ;;
   esac
   [ "$#" -le 1 ] || die "baseline check: unexpected argument '$2'"
@@ -1480,16 +1492,21 @@ cmd_baseline() {
   git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1 \
     || die "not a git repository: $ROOT (baseline check reads the git HEAD + tree state)."
 
-  local head
-  head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" \
-    || die "baseline check: could not determine the current HEAD."
+  # Resolve the current checkout's tree and the requested commit-ish's tree.
+  # "…^{tree}" MUST stay double-quoted (the ^{...} trips brace/glob in bash);
+  # the arg flows to rev-parse as a single quoted argv (no sh -c, no injection).
+  local head_tree want_tree
+  head_tree="$(git -C "$ROOT" rev-parse "HEAD^{tree}" 2>/dev/null)"
+  [ -n "$head_tree" ] \
+    || die "baseline check: could not determine the current tree (unborn HEAD?)."
+  want_tree="$(git -C "$ROOT" rev-parse "${1:-HEAD}^{tree}" 2>/dev/null)"
+  [ -n "$want_tree" ] \
+    || die "baseline check: bad ref '${1:-HEAD}': could not resolve its tree."
 
-  local want="${1:-$head}"
-
-  # The tree must currently be at <hash> (asking about a hash the tree is not at
-  # cannot be a baseline for the current work).
-  [ "$head" = "$want" ] \
-    || die "baseline check: HEAD ($head) is not at the requested hash ($want): not a baseline."
+  # The current checkout must be AT the requested tree (asking about a tree the
+  # working tree is not at cannot be a baseline for the current work).
+  [ "$head_tree" = "$want_tree" ] \
+    || die "baseline check: current tree ($head_tree) is not at the requested tree ($want_tree): not a baseline."
 
   # Tree must be clean OUTSIDE .jeff/: same probe tree_dirty uses, so
   # "clean here" matches "dirty:false logged" in the run log.
@@ -1499,17 +1516,18 @@ cmd_baseline() {
 
   local log="$BK/test-runs.jsonl"
   [ -s "$log" ] \
-    || die "baseline check: no run log (.jeff/test-runs.jsonl absent or empty): nothing anchored at $want."
+    || die "baseline check: no run log (.jeff/test-runs.jsonl absent or empty): nothing anchored at $want_tree."
 
-  # A green+clean line for <hash> must exist. Read line-by-line so a malformed
-  # line cannot abort the scan; the slurp-free `-e` exit code is the verdict.
-  if jq -e -s --arg h "$want" \
-       'any(.[]; .hash == $h and .dirty == false and .result == "green")' \
+  # A green+clean line for <tree> must exist. Slurp defensively; an old
+  # commit-keyed line has no .treeHash, so `.treeHash == $t` is `null == $t`
+  # (false) — never a false-match, never a crash.
+  if jq -e -s --arg t "$want_tree" \
+       'any(.[]; .treeHash == $t and .dirty == false and .result == "green")' \
        "$log" >/dev/null 2>&1; then
-    printf 'cook: baseline OK: %s is a green+clean baseline.\n' "$want"
+    printf 'cook: baseline OK: %s is a green+clean baseline.\n' "$want_tree"
     return 0
   fi
-  die "baseline check: no green+clean run logged for $want: not a baseline."
+  die "baseline check: no green+clean run logged for $want_tree: not a baseline."
 }
 
 usage() {
@@ -1518,8 +1536,8 @@ cook: Jeff v1-lean CLI.
 
 Subcommands:
   validate     Check .jeff state against the schema + invariants (skips if not a jeff project).
-  verify       Run the configured test command (full-suite gate); exit code is the verdict. Full mode appends a hash-keyed line to .jeff/test-runs.jsonl.
-  baseline check [<hash>]  Exit 0 iff <hash> (default HEAD) is a green+clean baseline in the run log AND the tree is currently clean at it.
+  verify       Run the configured test command (full-suite gate); exit code is the verdict. Full mode appends a tree-keyed line to .jeff/test-runs.jsonl.
+  baseline check [<commit-ish>]  Exit 0 iff <commit-ish>'s tree (default HEAD) is a green+clean baseline in the run log AND the tree is currently clean at it.
   ls           List tasks (id, status, stage, priority, title).
   status       In-flight tasks + backlog health.
   show <id>    Print one task's task.json.
