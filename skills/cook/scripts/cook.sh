@@ -692,7 +692,7 @@ cmd_kickback() {
 
   # ponytail: resolve <id> -> task.json inline, byte-identical to cmd_show's
   # idiom. #17 stays independent of #16; dedup both onto resolve_task_file once
-  # #16 merges. <id> is ONLY a jq comparison value — never interpolated as path.
+  # #16 merges. <id> is ONLY a jq comparison value, never interpolated as path.
   local f
   f="$(find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null | while IFS= read -r p; do
         if [ "$(jq -r '.id' "$p")" = "$id" ]; then printf '%s' "$p"; break; fi
