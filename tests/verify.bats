@@ -133,18 +133,27 @@ Vocabulary:
 PROFILE
 }
 
-# append_jsonl_line <hash> <dirty_bool> <result>: manually append a jsonl line.
-# Used to pre-seed the log for baseline check tests.
+# append_jsonl_line <treehash> <dirty_bool> <result> [commit]: manually append
+# a jsonl line in the tree-keyed shape (task #19). <treehash> is the primary
+# key (git rev-parse "HEAD^{tree}"); [commit] is informational only and
+# defaults to a placeholder when the test does not care about it.
 append_jsonl_line() {
-  local hash="$1" dirty="$2" result="$3"
+  local treehash="$1" dirty="$2" result="$3"
+  local commit="${4:-0000000000000000000000000000000000000000}"
   jq -nc \
-    --arg hash "$hash" \
+    --arg treehash "$treehash" \
     --argjson dirty "$dirty" \
     --arg result "$result" \
     --arg suite "synthetic-suite" \
     --arg at "2026-01-01T00:00:00Z" \
-    '{hash:$hash, dirty:$dirty, result:$result, suite:$suite, at:$at}' \
+    --arg commit "$commit" \
+    '{treeHash:$treehash, dirty:$dirty, result:$result, suite:$suite, at:$at, commit:$commit}' \
     >> "$BK/test-runs.jsonl"
+}
+
+# current_tree_hash: git rev-parse "HEAD^{tree}" of the fixture repo.
+current_tree_hash() {
+  git -C "$TMP" rev-parse "HEAD^{tree}"
 }
 
 # dirty_tree: add an untracked file to make the tree dirty.
@@ -253,11 +262,15 @@ clean_tree() {
 # B: test-runs.jsonl log + .git/info/exclude
 # ---------------------------------------------------------------------------
 
-@test "verify/B1: full-mode verify appends a well-formed jsonl line with required keys" {
-  # Test design B line 1: a full-mode verify appends exactly one well-formed jsonl
-  # line with hash/dirty/result/suite/at and NO stdout/stderr field.
-  # RED now: unknown subcommand → no log file.
+@test "verify/B1: full-mode verify appends a well-formed jsonl line keyed by tree hash" {
+  # Test design AC1 line 1 (revised for task #19): a full-mode verify appends
+  # exactly one well-formed jsonl line whose PRIMARY KEY .treeHash equals
+  # git rev-parse "HEAD^{tree}", with .commit informational and NO
+  # stdout/stderr field.
+  # RED now: current code keys the line on .hash (commit), not .treeHash.
   write_full_config_with_cmd "true"
+  local want_tree
+  want_tree="$(current_tree_hash)"
   run cook verify
   local log="$BK/test-runs.jsonl"
   [ -f "$log" ]
@@ -266,14 +279,18 @@ clean_tree() {
   [ "$line_count" -eq 1 ]
   # Must be jq-parseable.
   jq -e . < "$log" > /dev/null
-  # Must carry the required keys.
-  local has_hash has_dirty has_result has_suite has_at
-  has_hash="$(jq -r 'has("hash")' < "$log")"
+  # .treeHash is the primary key and must equal the fixture's HEAD^{tree}.
+  local tree_val
+  tree_val="$(jq -r '.treeHash' < "$log")"
+  [ "$tree_val" = "$want_tree" ]
+  # .commit is present (informational; renamed from the old .hash key).
+  local has_commit has_dirty has_result has_suite has_at
+  has_commit="$(jq -r 'has("commit")' < "$log")"
   has_dirty="$(jq -r 'has("dirty")' < "$log")"
   has_result="$(jq -r 'has("result")' < "$log")"
   has_suite="$(jq -r 'has("suite")' < "$log")"
   has_at="$(jq -r 'has("at")' < "$log")"
-  [ "$has_hash" = "true" ]
+  [ "$has_commit" = "true" ]
   [ "$has_dirty" = "true" ]
   [ "$has_result" = "true" ]
   [ "$has_suite" = "true" ]
@@ -329,76 +346,90 @@ clean_tree() {
 # B: `cook baseline check`
 # ---------------------------------------------------------------------------
 
-@test "verify/B4: baseline check exits 0 when HEAD logged green+clean and tree is clean" {
-  # Test design B line 4: baseline check exits 0 when HEAD is logged green-and-clean
-  # AND the tree is currently clean AND at that hash.
-  # RED now: unknown subcommand → non-zero.
+@test "verify/B4: baseline check exits 0 when the current tree is logged green+clean" {
+  # Test design AC1 line 2 (revised for task #19): baseline check (no arg) exits
+  # 0 when the clean current tree has a green line logged for its treeHash.
+  # RED now: current code matches on .hash (commit); a treeHash-seeded line
+  # never matches the .hash lookup, so baseline is non-zero for the wrong
+  # reason (it wants 0 here).
   write_full_config
-  local head
-  head="$(git -C "$TMP" rev-parse HEAD)"
+  local tree
+  tree="$(current_tree_hash)"
   clean_tree
-  append_jsonl_line "$head" "false" "green"
+  append_jsonl_line "$tree" "false" "green"
 
   run cook baseline check
   [ "$status" -eq 0 ]
 }
 
 @test "verify/B5: baseline check exits non-zero when logged run was dirty" {
-  # Test design B line 5: baseline check exits non-zero when the only logged run
-  # for that hash was dirty.
-  # RED now: unknown subcommand → non-zero (correct failure, wrong reason).
+  # Test design AC1 line 3 (revised for task #19): a logged dirty:true line for
+  # the current tree is never baseline-eligible.
+  # Trivially green under current (commit-keyed) code: a treeHash-seeded line
+  # never matches .hash regardless, so this is non-zero for the "wrong" reason
+  # now; it becomes meaningful once the code is tree-keyed.
   write_full_config
-  local head
-  head="$(git -C "$TMP" rev-parse HEAD)"
+  local tree
+  tree="$(current_tree_hash)"
   clean_tree
-  append_jsonl_line "$head" "true" "green"
+  append_jsonl_line "$tree" "true" "green"
 
   run cook baseline check
   [ "$status" -ne 0 ]
 }
 
 @test "verify/B6: baseline check exits non-zero when logged run was red" {
-  # Test design B line 6: baseline check exits non-zero when the logged run for
-  # that hash was red.
-  # RED now: unknown subcommand → non-zero.
+  # Test design AC1 line 4 (revised for task #19): a logged result:red line for
+  # the current tree is not a baseline.
+  # Trivially green under current (commit-keyed) code, for the "wrong" reason
+  # (treeHash-seeded line never matches .hash); meaningful once tree-keyed.
   write_full_config
-  local head
-  head="$(git -C "$TMP" rev-parse HEAD)"
+  local tree
+  tree="$(current_tree_hash)"
   clean_tree
-  append_jsonl_line "$head" "false" "red"
+  append_jsonl_line "$tree" "false" "red"
 
   run cook baseline check
   [ "$status" -ne 0 ]
 }
 
 @test "verify/B7: baseline check exits non-zero when tree is currently dirty" {
-  # Test design B line 7: baseline check exits non-zero when the tree is currently
-  # dirty even though a green+clean line exists for HEAD.
-  # RED now: unknown subcommand → non-zero.
+  # Test design AC1 line 5 (revised for task #19): a currently-dirty tree is
+  # never baseline-eligible even with a green line logged for its (committed)
+  # treeHash.
+  # Trivially green under current (commit-keyed) code, for the "wrong" reason;
+  # meaningful once tree-keyed.
   write_full_config
-  local head
-  head="$(git -C "$TMP" rev-parse HEAD)"
-  append_jsonl_line "$head" "false" "green"
+  local tree
+  tree="$(current_tree_hash)"
+  append_jsonl_line "$tree" "false" "green"
   dirty_tree
 
   run cook baseline check
   [ "$status" -ne 0 ]
 }
 
-@test "verify/B8: baseline check with explicit hash exits non-zero when HEAD != hash" {
-  # Test design B line 8: baseline check <hash> exits non-zero when HEAD != <hash>
-  # (asking about a hash the tree is not at).
-  # RED now: unknown subcommand → non-zero.
+@test "verify/B8: baseline check <commit-ish> refuses when current tree is not at that ref's tree" {
+  # Test design AC1 line 6 (revised for task #19): baseline check <commit-ish>
+  # refuses when the current tree is not at the tree that <commit-ish>
+  # resolves to (arg semantics changed from "HEAD == literal hash" to
+  # "current tree == <commit-ish>^{tree}").
+  # Trivially green under current (commit-keyed) code (HEAD != commit-A
+  # literally after advancing), for the "wrong" reason; meaningful once
+  # tree-keyed.
   write_full_config
-  local head_orig
-  head_orig="$(git -C "$TMP" rev-parse HEAD)"
+  local commit_a
+  commit_a="$(git -C "$TMP" rev-parse HEAD)"
   clean_tree
-  append_jsonl_line "$head_orig" "false" "green"
+  append_jsonl_line "$(current_tree_hash)" "false" "green"
 
-  # Advance HEAD to a new commit so HEAD != head_orig.
-  git -C "$TMP" commit --allow-empty -q -m "advance HEAD"
+  # Advance HEAD to a commit with a DIFFERENT tree (add a tracked file).
+  printf 'tracked
+' > "$TMP/tracked-file.txt"
+  git -C "$TMP" add tracked-file.txt
+  git -C "$TMP" commit -q -m "advance HEAD to a different tree"
 
-  run cook baseline check "$head_orig"
+  run cook baseline check "$commit_a"
   [ "$status" -ne 0 ]
 }
 
@@ -409,6 +440,52 @@ clean_tree() {
   write_full_config
   # Ensure no log file exists.
   rm -f "$BK/test-runs.jsonl"
+
+  run cook baseline check
+  [ "$status" -ne 0 ]
+  # Must not be a stack/parse error: output should not contain bash traceback.
+  [[ "$output" != *"line "*": "* ]] || true
+}
+
+@test "verify/AC2: a squash-merge (same tree, new commit) is recognized as a green baseline" {
+  # Test design AC2 (new for task #19): the headline behavior. `cook verify`
+  # green at commit A, then an empty commit B with an IDENTICAL HEAD^{tree}
+  # but a DIFFERENT HEAD (the squash-merge model). `cook baseline check`
+  # (no arg) must still exit 0: the baseline is keyed on the tree, not the
+  # commit.
+  # RED now: current code keys the log + the baseline lookup on the commit
+  # hash, so commit B's HEAD never matches the line logged for commit A.
+  write_full_config_with_cmd "true"
+  clean_tree
+  run cook verify
+  [ "$status" -eq 0 ]
+
+  # Advance HEAD to a new commit with an IDENTICAL tree.
+  git -C "$TMP" commit --allow-empty -q -m "squash-merge: same tree, new commit"
+
+  run cook baseline check
+  [ "$status" -eq 0 ]
+}
+
+@test "verify/AC3: an old commit-keyed log line (no treeHash) is ignored, not false-matched" {
+  # Test design AC3 (new for task #19): a pre-existing line in the old shape
+  # (.hash == current commit, no .treeHash) must NOT false-match the tree
+  # query, and must not crash the reader.
+  # RED now: current code reads .hash directly, so the old-shape line DOES
+  # match (the seeded .hash equals the current commit) and baseline exits 0;
+  # AC3 wants non-zero.
+  write_full_config
+  local head
+  head="$(git -C "$TMP" rev-parse HEAD)"
+  clean_tree
+  jq -nc \
+    --arg hash "$head" \
+    --argjson dirty false \
+    --arg result "green" \
+    --arg suite "synthetic-suite" \
+    --arg at "2026-01-01T00:00:00Z" \
+    '{hash:$hash, dirty:$dirty, result:$result, suite:$suite, at:$at}' \
+    >> "$BK/test-runs.jsonl"
 
   run cook baseline check
   [ "$status" -ne 0 ]
