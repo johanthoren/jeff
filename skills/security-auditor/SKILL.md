@@ -77,10 +77,11 @@ security_audit_result:
 
 ## Common Flags
 
-- `--changes` / `--staged`
-- `--strict` (escalate low findings to `REVIEW` and warnings to non-pass)
-- `--force` (run even when no repo/i18n-like heuristics)
-- `--report-dir <dir>`
+- `--changes` / `--staged` (audit changed / staged files only)
+- `--strict` (escalate any finding or coverage/tool debt to `BLOCK`)
+- `--force` (emit an empty audit report even when no scannable files resolve)
+- `--skip-deps` (skip dependency audit commands)
+- `--report-dir <dir>` / `--max-file-kb <n>`
 
 ## References
 
