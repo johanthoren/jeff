@@ -671,7 +671,7 @@ cmd_status() {
 # or echo nothing and return non-zero on no match. The <id> is ONLY ever a jq
 # comparison VALUE, never interpolated into a path or glob: a malicious <id>
 # (`../…`, `*`, `; rm …`, a dir-name) matches no .id and cannot escape
-# .jeff/tasks/ — the resolver is the primary injection defense for the callers
+# .jeff/tasks/; the resolver is the primary injection defense for the callers
 # that go on to remove the resolved dir. Requires jq (callers `require_jq`).
 resolve_task_file() {
   local id="$1" f
@@ -741,7 +741,7 @@ cmd_prune() {
       if (.status == "pending" or .status == "in_progress" or .status == "blocked")
       then .deps = ((.deps // []) - [$fid]) else . end' "$sib" > "$tmp"
     # Compare against the jq-NORMALIZED original (not raw bytes): a hand-authored
-    # (non-jq-canonical) sibling must not be rewritten for formatting alone — only
+    # (non-jq-canonical) sibling must not be rewritten for formatting alone; only
     # an actual .deps change writes. On a real change, STAGE it (git add) so the
     # single printed commit captures the complete, valid terminal tree (target
     # removal + every dep-strip); leaving a strip unstaged would commit the
@@ -759,10 +759,10 @@ cmd_prune() {
 
   # Re-run validate CATCHABLY: its `die` must not kill the verb before it picks
   # its posture. Route validate's OWN stdout to stderr (`>&2`) so the only thing
-  # on the verb's stdout is the commit command below — validate's "OK"/"nothing
+  # on the verb's stdout is the commit command below; validate's "OK"/"nothing
   # to validate" chatter is progress, not the contract. On red, surface the
   # failure (validate already printed "validation FAILED" to stderr), print NO
-  # commit line, exit non-zero — leaving the staged rm + stripped deps for the
+  # commit line, exit non-zero, leaving the staged rm + stripped deps for the
   # operator. On green, print the commit command (Q5) to stdout and exit 0. The
   # verb never commits.
   local vrc
