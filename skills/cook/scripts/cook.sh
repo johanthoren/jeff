@@ -126,16 +126,25 @@ EOF
   exit 3
 }
 
+# task_json_files: emit the path of every task.json in the store, one per line.
+# Each lives at depth 2 (<slug-dir>/task.json) under .jeff/tasks/; a missing
+# store yields an empty stream (2>/dev/null), never an error. Single source of
+# the store scan for collect_tasks, resolve_task_file, and cmd_prune.
+task_json_files() {
+  find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null
+}
+
 # Emit a JSON array of every task.json (each augmented with _dir), sorted by
 # path, or [] if none. Returns non-zero (fail CLOSED) if ANY task.json is
 # unparseable, so cmd_validate's rc check `die`s instead of treating a corrupt
 # store as empty/clean.
 #
-# The list is read via process substitution (`< <(find … | sort)`), NOT a
-# `find | sort | {…}` pipe: a pipe runs the loop in a subshell whose exit status
-# is its trailing `printf ']'` (always 0), masking a per-file `jq` failure (the
-# original fail-open bug). Reading via `< <(…)` keeps the loop in this function's
-# own scope, so a per-file failure's `return 1` actually aborts collect_tasks.
+# The list is read via process substitution (`< <(task_json_files | sort)`), NOT
+# a `task_json_files | sort | {…}` pipe: a pipe runs the loop in a subshell whose
+# exit status is its trailing `printf ']'` (always 0), masking a per-file `jq`
+# failure (the original fail-open bug). Reading via `< <(…)` keeps the loop in
+# this function's own scope, so a per-file failure's `return 1` actually aborts
+# collect_tasks.
 collect_tasks() {
   local f out="" obj _rc
   if [ -d "$BK/tasks" ]; then
@@ -149,7 +158,7 @@ collect_tasks() {
         return 1
       fi
       out="${out}${obj}"$'\n'
-    done < <(find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null | sort)
+    done < <(task_json_files | sort)
   fi
   # Slurp the per-file objects into one array (input/path order preserved); an
   # empty stream slurps to []. This pass reads already-validated objects.
@@ -666,7 +675,7 @@ cmd_status() {
 # that go on to remove the resolved dir. Requires jq (callers `require_jq`).
 resolve_task_file() {
   local id="$1" f
-  f="$(find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null | while IFS= read -r p; do
+  f="$(task_json_files | while IFS= read -r p; do
         if [ "$(jq -r '.id' "$p")" = "$id" ]; then printf '%s' "$p"; break; fi
       done)"
   [ -n "$f" ] || return 1
@@ -725,18 +734,21 @@ cmd_prune() {
       if (.status == "pending" or .status == "in_progress" or .status == "blocked")
       then .deps = ((.deps // []) - [$fid]) else . end' "$sib" > "$tmp"
     if cmp -s "$tmp" "$sib"; then rm -f "$tmp"; else mv -f "$tmp" "$sib"; fi
-  done < <(find "$BK/tasks" -mindepth 2 -maxdepth 2 -name task.json 2>/dev/null)
+  done < <(task_json_files)
 
   # Remove the terminal task's dir from worktree + index (staged, not committed).
   git -C "$ROOT" rm -r -q -- "$dir"
 
   # Re-run validate CATCHABLY: its `die` must not kill the verb before it picks
-  # its posture. On red, surface the failure (validate already printed
-  # "validation FAILED" to stderr), print NO commit line, exit non-zero — leaving
-  # the staged rm + stripped deps for the operator. On green, print the commit
-  # command (Q5) to stdout and exit 0. The verb never commits.
+  # its posture. Route validate's OWN stdout to stderr (`>&2`) so the only thing
+  # on the verb's stdout is the commit command below — validate's "OK"/"nothing
+  # to validate" chatter is progress, not the contract. On red, surface the
+  # failure (validate already printed "validation FAILED" to stderr), print NO
+  # commit line, exit non-zero — leaving the staged rm + stripped deps for the
+  # operator. On green, print the commit command (Q5) to stdout and exit 0. The
+  # verb never commits.
   local vrc
-  ( cmd_validate ) && vrc=0 || vrc=$?
+  ( cmd_validate ) >&2 && vrc=0 || vrc=$?
   [ "$vrc" -eq 0 ] || die "post-removal validation FAILED: the store is invalid; nothing was committed. Inspect and fix, then commit manually (or \`git restore\` to undo)."
 
   if [ "$status" = "done" ]; then
