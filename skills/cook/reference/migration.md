@@ -232,7 +232,7 @@ cross-order constraint is each order's `dependsOn`, preserved as `deps`.
   `{treeHash, dirty, result, suite, at, commit}` (the `commit` is informational
   only). `cook verify` / `cook baseline check` match on `treeHash`. Any
   pre-existing commit-keyed lines from a bakehouse store lack a `treeHash`, so
-  they are harmlessly ignored — they never false-match a baseline, and no
+  they are harmlessly ignored: they never false-match a baseline, and no
   migration is needed.
 - Numeric ids carry over as-is (full mode wants integer ids). String ids only
   appear in lite ledgers adopted via `cook on`.
