@@ -103,6 +103,57 @@ pv_write_done() {
   }' > "$dir/task.json"
 }
 
+# pv_write_done_noncanonical <dir> <id> <slug> <deps_json>
+# Same schema-valid, inv4-clean done record as pv_write_done, but hand-authored
+# (4-space indent, aligned inline brains objects) rather than emitted by
+# `jq -n`, so `jq . task.json` reformats it: `cmp -s <(jq . f) f` is FALSE.
+# Real full-mode task.json is hand-authored the same way (SKILL.md), so this
+# reproduces the strip loop's target-reformatting defect that jq-canonical
+# fixtures mask. See notes.md Kickback #1.
+pv_write_done_noncanonical() {
+  local dir="$1" id="$2" slug="$3" deps="$4"
+  mkdir -p "$dir"
+  cat > "$dir/task.json" <<JSON
+{
+    "schemaVersion": 1,
+    "id": $id,
+    "slug": "$slug",
+    "title": "Synthetic $slug",
+    "status": "done",
+    "stage": "done",
+    "priority": "p2",
+    "deps": $deps,
+    "complexity": "simple",
+    "branch": null,
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-02T00:00:00.000Z",
+    "brains": {
+        "capture":   { "model": "opus", "effort": "xhigh" },
+        "plan":      { "model": "opus", "effort": "xhigh" },
+        "test":      { "model": "sonnet", "effort": "med"   },
+        "implement": { "model": "opus", "effort": "high"  },
+        "refactor":  { "model": "opus", "effort": "high"  },
+        "review":    { "model": "opus", "effort": "xhigh" },
+        "audit":     { "model": "opus", "effort": "xhigh" }
+    },
+    "agents": {
+        "plan_agent_id": "pv-plan-1",
+        "test_author_agent_id": "pv-tester-1",
+        "implementer_agent_id": "pv-impl-1",
+        "reviewer_agent_id": "pv-reviewer-1",
+        "audit_agent_id": null
+    },
+    "tests": { "authored_by_agent_id": "pv-tester-1", "green": true, "evidence": ["synthetic evidence"] },
+    "review": { "verdict": "pass", "reviewer_agent_id": "pv-reviewer-1", "evidence": ["synthetic pass"] },
+    "audit": { "required": false, "verdict": "na", "audit_agent_id": null, "evidence": [] },
+    "commits": [],
+    "kickbacks": [],
+    "blockedReason": null,
+    "abandonReason": null
+}
+JSON
+}
+
 # pv_write_abandoned <dir> <id> <slug> <deps_json> <abandonReason>
 pv_write_abandoned() {
   local dir="$1" id="$2" slug="$3" deps="$4" reason="$5"
@@ -308,4 +359,58 @@ pv_head_count() {
   [ "$after" = "$before" ]
   [ -d "$dir" ]
   [ "$(cat "$TMP/canary.txt")" = "canary" ]
+}
+
+# ---------------------------------------------------------------------------
+# Kickback #1 regression A · non-jq-canonical done TARGET must still prune.
+# The strip loop runs `jq` over EVERY task.json (including the done target
+# itself) and `mv`s any file whose bytes differ from jq's reformatting. Real
+# full-mode task.json is hand-authored and not jq-canonical, so the target
+# gets reformatted in the worktree before `git rm -r` (no `-f`) runs, and
+# `git rm` refuses "local modifications". See notes.md Kickback #1 /
+# audit ac7b308c5dfe134b2 (survived REFUTE a7fcb4dac439b01b6).
+# ---------------------------------------------------------------------------
+
+@test "prune-verb/regression-A: prunes a done target whose task.json is valid but not jq-canonical" {
+  local done_dir="$BK/tasks/2001-pv-done-noncanon"
+  pv_write_done_noncanonical "$done_dir" 2001 "pv-done-noncanon" '[]'
+
+  # Belt-and-suspenders: pin that this fixture really is non-jq-canonical, so
+  # a future reformat of the fixture can't silently neuter the regression.
+  run bash -c "cmp -s <(jq . '$done_dir/task.json') '$done_dir/task.json'"
+  [ "$status" -ne 0 ]
+
+  pv_commit_store
+
+  run --separate-stderr cook prune 2001
+  [ "$status" -eq 0 ]
+  [ ! -d "$done_dir" ]
+  [[ "$output" == *"git commit -m 'task 2001 · done:"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# Kickback #1 regression B · the printed commit must capture the FULL
+# terminal change. The strip loop `mv`s live siblings' stripped deps
+# (unstaged) while `git rm` stages only the target's removal, so the printed
+# `git commit -m` would commit the removal but not the dep-strip, leaving a
+# live sibling dangling a dep on the removed task in the committed tree.
+# Jeff-verified second defect, same root cause; see notes.md.
+# ---------------------------------------------------------------------------
+
+@test "prune-verb/regression-B: stages the sibling dep-strip so the printed commit captures the full terminal change" {
+  local done_dir="$BK/tasks/2101-pv-done-stage"
+  local sib_dir="$BK/tasks/2102-pv-pending-stage"
+  pv_write_done "$done_dir" 2101 "pv-done-stage" '[]'
+  pv_write_live "$sib_dir" 2102 "pv-pending-stage" pending capture '[2101]' null
+  pv_commit_store
+
+  run --separate-stderr cook prune 2101
+  [ "$status" -eq 0 ]
+
+  local staged unstaged
+  staged="$(git -C "$TMP" diff --cached --name-only)"
+  unstaged="$(git -C "$TMP" diff --name-only)"
+
+  [[ "$staged" == *"2102-pv-pending-stage/task.json"* ]]
+  [[ "$unstaged" != *"2102-pv-pending-stage/task.json"* ]]
 }
