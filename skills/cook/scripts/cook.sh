@@ -697,7 +697,8 @@ cmd_show() {
 # the terminal task's dir, re-runs `cook validate`, and on green PRINTS the exact
 # commit command for the operator to run as a SEPARATE tool call. The verb NEVER
 # commits and does NOT auto-rollback: a failure leaves the staged rm + stripped
-# deps uncommitted (reversible via `git restore`) for the operator to inspect.
+# deps uncommitted (reversible via `git restore --staged --worktree .` /
+# `git reset --hard`) for the operator to inspect.
 cmd_prune() {
   # Full-mode gate at the TOP, before any work. Lite tasks are owned by the team
   # tracker and the store is git-excluded, so there is nothing to prune.
@@ -766,7 +767,7 @@ cmd_prune() {
   # verb never commits.
   local vrc
   ( cmd_validate ) >&2 && vrc=0 || vrc=$?
-  [ "$vrc" -eq 0 ] || die "post-removal validation FAILED: the store is invalid; nothing was committed. Inspect and fix, then commit manually (or \`git restore\` to undo)."
+  [ "$vrc" -eq 0 ] || die "post-removal validation FAILED: the store is invalid; nothing was committed. Inspect and fix, then commit manually (or \`git restore --staged --worktree .\` / \`git reset --hard\` to undo)."
 
   if [ "$status" = "done" ]; then
     printf "git commit -m 'task %s · done: <outcome (+ release tag)>'\n" "$id"
