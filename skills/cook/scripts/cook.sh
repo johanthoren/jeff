@@ -732,7 +732,9 @@ cmd_prune() {
     # Never touch the TARGET's own record: it is about to be `git rm`ed, and
     # reformatting it in the worktree would make `git rm -r` (no -f) refuse the
     # "local modifications". Its .deps are irrelevant once the dir is removed.
-    if [ "$(dirname "$sib")" = "$dir" ]; then continue; fi
+    # `$file` is the exact path task_json_files emitted for the target, so a
+    # direct string compare identifies it (no per-sibling `dirname` subshell).
+    if [ "$sib" = "$file" ]; then continue; fi
     tmp="$(mktemp)"
     jq --argjson fid "$id" '
       if (.status == "pending" or .status == "in_progress" or .status == "blocked")
