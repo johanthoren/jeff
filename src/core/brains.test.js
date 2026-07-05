@@ -24,12 +24,15 @@ test('AC1: tier->effort is the durable, provider-agnostic invariant (judge stage
 });
 
 test('AC1: tier->effort is provider-agnostic for build/tidy/encode tiers', () => {
-  for (const stage of ['implement', 'refactor']) {
+  for (const stage of ['implement']) {
     assert.equal(resolveBrain('anthropic', stage).effort, 'high', `anthropic ${stage} effort`);
     assert.equal(resolveBrain('untuned-x', stage, { sessionModel: 'm' }).effort, 'high', `untuned-x ${stage} effort`);
   }
   assert.equal(resolveBrain('anthropic', 'test').effort, 'medium');
   assert.equal(resolveBrain('untuned-x', 'test', { sessionModel: 'm' }).effort, 'medium');
+  // AC3 (refactor-brain-xhigh): refactor's xhigh is sourced from STAGE_TIER,
+  // not the provider column — an untuned provider still yields xhigh.
+  assert.equal(resolveBrain('untuned-x', 'refactor', { sessionModel: 'm' }).effort, 'xhigh');
 });
 
 test('AC1: untuned/absent-column provider falls back to opts.sessionModel, effort preserved', () => {
@@ -87,4 +90,11 @@ test('AC4: no availableModels given -> the table pin is returned unchanged (no f
   const r = resolveBrain('anthropic', 'plan');
   assert.equal(r.model, 'opus');
   assert.equal(r.effort, 'xhigh');
+});
+
+test('refactor-brain-xhigh AC1: resolveBrain(anthropic, refactor) resolves to opus·xhigh', () => {
+  // Deliberate exception to this file's "base owned by drift" header (:8-15),
+  // same pattern as the `opus` pins at :69/:87 — refactor's value changed in
+  // this task and nothing else value-pins it.
+  assert.deepEqual(resolveBrain('anthropic', 'refactor'), { provider: 'anthropic', model: 'opus', effort: 'xhigh' });
 });
