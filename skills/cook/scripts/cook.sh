@@ -1520,7 +1520,7 @@ cmd_baseline() {
 
   # A green+clean line for <tree> must exist. Slurp defensively; an old
   # commit-keyed line has no .treeHash, so `.treeHash == $t` is `null == $t`
-  # (false) — never a false-match, never a crash.
+  # (false): never a false-match, never a crash.
   if jq -e -s --arg t "$want_tree" \
        'any(.[]; .treeHash == $t and .dirty == false and .result == "green")' \
        "$log" >/dev/null 2>&1; then
