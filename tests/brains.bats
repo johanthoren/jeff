@@ -9,7 +9,7 @@
 #   plan        opus    xhigh   (new in 0041: dispatched test-designer)
 #   test        opus    medium  (0041: re-pinned down from xhigh: encoder/doer)
 #   implement   opus    high
-#   refactor    opus    high
+#   refactor    opus    xhigh
 #   review      opus    xhigh
 #   audit       opus    xhigh
 #
@@ -51,7 +51,7 @@ frontmatter_field() {
 #   plan        opus    xhigh   (dispatched test-designer, 0041)
 #   test        sonnet  medium  (doer/encoder, low-effort by design)
 #   implement   opus    high
-#   refactor    sonnet  high    (behavior-preserving, fenced by green + review)
+#   refactor    opus    xhigh   (judge caliber: zoom-out dedup/harmonization, a different angle than review)
 #   review      opus    xhigh
 #   audit       opus    xhigh
 # ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ frontmatter_field() {
 plan|opus
 test|sonnet
 implement|opus
-refactor|sonnet
+refactor|opus
 review|opus
 audit|opus
 MODEL_CASES
@@ -86,7 +86,7 @@ MODEL_CASES
 plan|xhigh
 test|medium
 implement|high
-refactor|high
+refactor|xhigh
 review|xhigh
 audit|xhigh
 EFFORT_CASES
