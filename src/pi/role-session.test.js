@@ -45,7 +45,7 @@ test('prompt construction includes role body, task directory, brief, and agent i
   assert.match(prompt, /Check the diff\./);
 });
 
-test('dispatchRoleSession starts a fresh Pi session without a real model call', async () => {
+test('dispatchRoleSession inherits the current Pi model and changes only thinking level', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {any} */
     let capturedOptions;
@@ -79,16 +79,48 @@ test('dispatchRoleSession starts a fresh Pi session without a real model call', 
         return { session: fakeSession };
       },
     };
-    const modelRegistry = {
-      async getAvailable() {
-        return [{ provider: 'anthropic', id: 'claude-opus-4-5' }];
+    const currentModel = { provider: 'local', id: 'qwen-dev' };
+
+    const result = await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Check the diff.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      modelRegistry: { find: assert.fail, getAvailable: assert.fail },
+      sdk,
+      generateAgentId: () => '0123456789abcdef',
+    });
+
+    assert.equal(result.agent_id, '0123456789abcdef');
+    assert.equal(result.stage, 'review');
+    assert.deepEqual(result.brain, { provider: 'local', model: 'qwen-dev', effort: 'xhigh' });
+    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls', 'bash']);
+    assert.equal(capturedOptions.thinkingLevel, 'xhigh');
+    assert.equal(capturedOptions.model, currentModel);
+    assert.match(capturedPrompt, /Review body\./);
+    assert.equal(result.transcript, 'verdict: pass');
+    assert.equal(disposed, true);
+  });
+});
+
+test('dispatchRoleSession lets Pi choose the model when no current model exists', async () => {
+  await withRepo(async (repoRoot) => {
+    /** @type {any} */
+    let capturedOptions;
+    const fakeSession = {
+      subscribe() {
+        return () => {};
       },
-      /**
-       * @param {string} provider
-       * @param {string} id
-       */
-      find(provider, id) {
-        return { provider, id };
+      async prompt() {},
+      dispose() {},
+    };
+    const sdk = {
+      SessionManager: { inMemory: () => ({}) },
+      /** @param {any} options */
+      createAgentSession: async (options) => {
+        capturedOptions = options;
+        return { session: fakeSession };
       },
     };
 
@@ -97,20 +129,11 @@ test('dispatchRoleSession starts a fresh Pi session without a real model call', 
       brief: 'Check the diff.',
       cwd: repoRoot,
       repoRoot,
-      currentModel: { provider: 'anthropic', id: 'claude-sonnet-4-5' },
-      modelRegistry,
       sdk,
-      generateAgentId: () => '0123456789abcdef',
+      generateAgentId: () => 'fedcba9876543210',
     });
 
-    assert.equal(result.agent_id, '0123456789abcdef');
-    assert.equal(result.stage, 'review');
-    assert.deepEqual(result.brain, { provider: 'anthropic', model: 'claude-opus-4-5', effort: 'xhigh' });
-    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls', 'bash']);
-    assert.equal(capturedOptions.thinkingLevel, 'xhigh');
-    assert.equal(capturedOptions.model.id, 'claude-opus-4-5');
-    assert.match(capturedPrompt, /Review body\./);
-    assert.equal(result.transcript, 'verdict: pass');
-    assert.equal(disposed, true);
+    assert.equal(capturedOptions.model, undefined);
+    assert.deepEqual(result.brain, { provider: undefined, model: undefined, effort: 'xhigh' });
   });
 });

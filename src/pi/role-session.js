@@ -5,7 +5,6 @@ import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { resolvePiModelId } from './model-resolver.js';
 
 export const STAGES = ['plan', 'test', 'implement', 'refactor', 'review', 'audit', 'refute'];
 
@@ -75,55 +74,6 @@ function modelParts(model) {
 }
 
 /**
- * @param {unknown[]} models
- * @param {string} provider
- * @returns {string[]}
- */
-function idsForProvider(models, provider) {
-  return models
-    .map((model) => modelParts(model))
-    .filter((model) => model.provider === provider && model.id)
-    .map((model) => /** @type {string} */ (model.id));
-}
-
-/**
- * @param {unknown} registry
- * @returns {Promise<unknown[]>}
- */
-async function getAvailableModels(registry) {
-  if (!registry || typeof registry !== 'object') return [];
-  const getAvailable = /** @type {{ getAvailable?: unknown }} */ (registry).getAvailable;
-  if (typeof getAvailable !== 'function') return [];
-  const models = await getAvailable.call(registry);
-  return Array.isArray(models) ? models : [];
-}
-
-/**
- * @param {unknown} registry
- * @param {string} provider
- * @param {string | undefined} id
- * @param {unknown[]} available
- * @param {unknown} currentModel
- * @returns {unknown | undefined}
- */
-function findModel(registry, provider, id, available, currentModel) {
-  if (!id) return undefined;
-  if (modelParts(currentModel).provider === provider && modelParts(currentModel).id === id) return currentModel;
-
-  const foundAvailable = available.find((model) => {
-    const parts = modelParts(model);
-    return parts.provider === provider && parts.id === id;
-  });
-  if (foundAvailable) return foundAvailable;
-
-  if (registry && typeof registry === 'object') {
-    const find = /** @type {{ find?: unknown }} */ (registry).find;
-    if (typeof find === 'function') return find.call(registry, provider, id);
-  }
-  return undefined;
-}
-
-/**
  * @param {unknown | undefined} injected
  * @returns {Promise<any>}
  */
@@ -154,7 +104,7 @@ async function loadSdk(injected) {
  *   sdk?: unknown,
  *   generateAgentId?: () => string,
  * }} opts
- * @returns {Promise<{ agent_id: string, stage: string, brain: { provider: string, model: string | undefined, effort: string | undefined }, transcript: string }>}
+ * @returns {Promise<{ agent_id: string, stage: string, brain: { provider: string | undefined, model: string | undefined, effort: string | undefined }, transcript: string }>}
  */
 export async function dispatchRoleSession(opts) {
   if (!STAGES.includes(opts.stage)) throw new Error(`cook_dispatch: unknown stage '${opts.stage}'`);
@@ -163,15 +113,8 @@ export async function dispatchRoleSession(opts) {
   const rawRole = await readFile(join(repoRoot, 'agents', `cook-${opts.stage}.md`), 'utf8');
   const role = parseRoleFile(rawRole);
   const agentId = (opts.generateAgentId ?? generateAgentId)();
-  const available = await getAvailableModels(opts.modelRegistry);
   const current = modelParts(opts.currentModel);
-  const provider = current.provider ?? modelParts(available[0]).provider ?? 'anthropic';
-  const modelId = resolvePiModelId(role.frontmatter.model, {
-    provider,
-    sessionModelId: current.id ?? modelParts(available[0]).id,
-    availableModelIds: idsForProvider(available, provider),
-  });
-  const model = findModel(opts.modelRegistry, provider, modelId, available, opts.currentModel);
+  const model = current.provider || current.id ? opts.currentModel : undefined;
   const sdk = await loadSdk(opts.sdk);
   const prompt = buildRolePrompt({
     stage: opts.stage,
@@ -213,7 +156,7 @@ export async function dispatchRoleSession(opts) {
   return {
     agent_id: agentId,
     stage: opts.stage,
-    brain: { provider, model: modelId, effort: role.frontmatter.effort },
+    brain: { provider: current.provider, model: current.id, effort: role.frontmatter.effort },
     transcript: (streamed || final).trim(),
   };
 }
