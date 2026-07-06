@@ -12,6 +12,7 @@
 #   refactor    opus    xhigh
 #   review      opus    xhigh
 #   audit       opus    xhigh
+#   refute      opus    xhigh
 #
 # RED now (task 0041): agents/plan.md does not yet exist, and
 # agents/test.md still pins effort: xhigh. GREEN after 0041 adds plan
@@ -54,6 +55,7 @@ frontmatter_field() {
 #   refactor    opus    xhigh   (judge caliber: zoom-out dedup/harmonization, a different angle than review)
 #   review      opus    xhigh
 #   audit       opus    xhigh
+#   refute      opus    xhigh   (can overturn a judge's blocking finding)
 # ---------------------------------------------------------------------------
 
 @test "brains: each stage agent pins the settled model" {
@@ -71,6 +73,7 @@ implement|opus
 refactor|opus
 review|opus
 audit|opus
+refute|opus
 MODEL_CASES
 }
 
@@ -89,5 +92,6 @@ implement|high
 refactor|xhigh
 review|xhigh
 audit|xhigh
+refute|xhigh
 EFFORT_CASES
 }

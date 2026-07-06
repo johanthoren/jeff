@@ -32,6 +32,7 @@ const STAGE_TIER = {
   refactor: { tier: 'tidy', effort: 'xhigh' },
   review: { tier: 'judge', effort: 'xhigh' },
   audit: { tier: 'judge', effort: 'xhigh' },
+  refute: { tier: 'judge', effort: 'xhigh' },
 };
 
 /** @type {Record<string, Record<string, string>>} */

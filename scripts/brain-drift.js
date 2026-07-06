@@ -18,7 +18,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveBrain } from '../src/core/brains.js';
 
-const STAGES = ['plan', 'test', 'implement', 'refactor', 'review', 'audit'];
+const STAGES = ['plan', 'test', 'implement', 'refactor', 'review', 'audit', 'refute'];
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
