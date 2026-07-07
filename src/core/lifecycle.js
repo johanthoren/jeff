@@ -1,6 +1,6 @@
 // @ts-check
 
-import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
+import { lstat, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, basename } from 'node:path';
@@ -137,6 +137,14 @@ export async function initProject(root) {
   }
 
   const bk = join(root, '.jeff');
+  try {
+    if ((await lstat(bk)).isSymbolicLink()) {
+      return { code: 1, stdout: [], stderr: [`cook: refusing .jeff symlink: ${bk}`] };
+    }
+  } catch (e) {
+    if (/** @type {any} */ (e).code !== 'ENOENT') throw e;
+  }
+
   await mkdir(join(bk, 'tasks'), { recursive: true });
   await mkdir(join(bk, 'memory'), { recursive: true });
 

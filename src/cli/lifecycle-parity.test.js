@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile, readFile, stat } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -190,6 +190,26 @@ test('init rejects a stray argument before any write, matching the oracle', asyn
     await assertNoScaffold(root);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('init refuses a .jeff symlink before writing outside the repo', async () => {
+  const root = await makeGitRoot('jeff-lifecycle-symlink-root-');
+  const outside = await mkdtemp(join(tmpdir(), 'jeff-lifecycle-symlink-outside-'));
+  try {
+    await symlink(outside, join(root, '.jeff'), 'dir');
+
+    const js = runJs(root, ['init']);
+
+    assert.notEqual(js.code, 0);
+    assert.match(js.stderr, /refusing \.jeff symlink/);
+    await assert.rejects(
+      stat(join(outside, 'config.json')),
+      /** @type {(err: any) => boolean} */ ((err) => err.code === 'ENOENT'),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

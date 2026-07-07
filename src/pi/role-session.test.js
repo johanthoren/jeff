@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRolePrompt, dispatchRoleSession } from './role-session.js';
+import { buildRolePrompt, dispatchRoleSession, loadSdk } from './role-session.js';
 
 const REVIEW_AGENT = `---
 name: cook-review
@@ -102,6 +102,63 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
     assert.equal(result.transcript, 'verdict: pass');
     assert.equal(disposed, true);
   });
+});
+
+test('dispatchRoleSession loads bundled agents when target cwd has no agents directory', async () => {
+  const target = await mkdtemp(join(tmpdir(), 'jeff-pi-target-'));
+  try {
+    /** @type {any} */
+    let capturedPrompt = '';
+    const sdk = {
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({
+        session: {
+          subscribe() {},
+          /** @param {string} prompt */
+          async prompt(prompt) { capturedPrompt = prompt; },
+          dispose() {},
+        },
+      }),
+    };
+
+    const result = await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Check the diff.',
+      cwd: target,
+      sdk,
+      generateAgentId: () => '0011223344556677',
+    });
+
+    assert.equal(result.agent_id, '0011223344556677');
+    assert.match(capturedPrompt, /You are the \*\*review\*\* station of the jeff brigade/);
+  } finally {
+    await rm(target, { recursive: true, force: true });
+  }
+});
+
+test('loadSdk falls back when argv-adjacent index.js import fails', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'jeff-pi-sdk-'));
+  try {
+    const entry = join(dir, 'wrapper.mjs');
+    await writeFile(entry, '');
+    const fallbackSdk = { createAgentSession: true };
+    /** @type {string[]} */
+    const attempted = [];
+
+    const got = await loadSdk(undefined, entry, async (specifier) => {
+      attempted.push(specifier);
+      if (specifier.startsWith('file:')) throw new Error('missing adjacent SDK');
+      return fallbackSdk;
+    });
+
+    assert.equal(got, fallbackSdk);
+    assert.equal(attempted.length, 2);
+    assert.equal(attempted[0].startsWith('file:'), true);
+    assert.equal(attempted[0].endsWith('/index.js'), true);
+    assert.equal(attempted[1], '@earendil-works/pi-coding-agent');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('dispatchRoleSession lets Pi choose the model when no current model exists', async () => {

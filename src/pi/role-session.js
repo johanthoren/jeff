@@ -4,13 +4,14 @@ import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const STAGES = ['plan', 'test', 'implement', 'refactor', 'review', 'audit', 'refute'];
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls', 'bash'];
 const PLAN_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'write'];
 const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
  * @param {string} stage
@@ -75,21 +76,22 @@ function modelParts(model) {
 
 /**
  * @param {unknown | undefined} injected
+ * @param {string | undefined} [entry]
+ * @param {(specifier: string) => Promise<any>} [importModule]
  * @returns {Promise<any>}
  */
-async function loadSdk(injected) {
+export async function loadSdk(injected, entry = process.argv[1], importModule = (specifier) => import(specifier)) {
   if (injected) return injected;
 
-  const entry = process.argv[1];
   if (entry) {
     try {
       const distIndex = join(dirname(realpathSync(entry)), 'index.js');
-      return import(pathToFileURL(distIndex).href);
+      return await importModule(pathToFileURL(distIndex).href);
     } catch {
       // Fall back to normal package resolution below.
     }
   }
-  return Function('specifier', 'return import(specifier)')('@earendil-works/pi-coding-agent');
+  return importModule('@earendil-works/pi-coding-agent');
 }
 
 /**
@@ -109,7 +111,7 @@ async function loadSdk(injected) {
 export async function dispatchRoleSession(opts) {
   if (!STAGES.includes(opts.stage)) throw new Error(`cook_dispatch: unknown stage '${opts.stage}'`);
 
-  const repoRoot = opts.repoRoot ?? opts.cwd;
+  const repoRoot = opts.repoRoot ?? PACKAGE_ROOT;
   const rawRole = await readFile(join(repoRoot, 'agents', `cook-${opts.stage}.md`), 'utf8');
   const role = parseRoleFile(rawRole);
   const agentId = (opts.generateAgentId ?? generateAgentId)();
