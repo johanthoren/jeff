@@ -206,6 +206,37 @@ test('loadSdk falls back when argv-adjacent index.js import fails', async () => 
   }
 });
 
+test('dispatchRoleSession falls back to session state when no text events arrive', async () => {
+  await withRepo(async (repoRoot) => {
+    const fakeSession = {
+      state: {
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: 'prompt' }] },
+          { role: 'assistant', content: [{ type: 'text', text: 'state transcript' }] },
+        ],
+      },
+      subscribe() { return () => {}; },
+      async prompt() {},
+      dispose() {},
+    };
+    const sdk = {
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({ session: fakeSession }),
+    };
+
+    const result = await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Check the diff.',
+      cwd: repoRoot,
+      repoRoot,
+      sdk,
+      generateAgentId: () => '0123456789abcdef',
+    });
+
+    assert.equal(result.transcript, 'state transcript');
+  });
+});
+
 test('dispatchRoleSession lets Pi choose the model when no current model exists', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {any} */

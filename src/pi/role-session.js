@@ -63,6 +63,24 @@ export function buildRolePrompt(opts) {
 }
 
 /**
+ * @param {unknown} session
+ * @returns {string}
+ */
+function lastAssistantText(session) {
+  const messages = /** @type {{ state?: { messages?: any[] } }} */ (session).state?.messages;
+  if (!Array.isArray(messages)) return '';
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    return message.content
+      .filter((/** @type {any} */ part) => part.type === 'text')
+      .map((/** @type {any} */ part) => part.text)
+      .join('\n');
+  }
+  return '';
+}
+
+/**
  * @param {unknown} model
  * @returns {{ provider?: string, id?: string }}
  */
@@ -166,6 +184,6 @@ export async function dispatchRoleSession(opts) {
       model: actual.id,
       effort: typeof session.thinkingLevel === 'string' ? session.thinkingLevel : role.frontmatter.effort,
     },
-    transcript: (streamed || final).trim(),
+    transcript: (streamed || final || lastAssistantText(session)).trim(),
   };
 }
