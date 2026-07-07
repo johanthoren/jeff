@@ -103,7 +103,7 @@ async function makeGitRoot(prefix) {
 
 /**
  * @param {string} root
- * @param {object} config
+ * @param {unknown} config
  */
 async function seedConfig(root, config) {
   await mkdir(join(root, '.jeff'), { recursive: true });
@@ -188,6 +188,22 @@ test('init rejects a stray argument before any write, matching the oracle', asyn
   try {
     assertParity(root, ['init', 'zzz']);
     await assertNoScaffold(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('init refuses non-object config.json instead of reporting false activation', async () => {
+  const root = await makeGitRoot('jeff-lifecycle-nonobject-root-');
+  try {
+    await seedConfig(root, 42);
+
+    const js = runJs(root, ['init']);
+    const raw = await readFile(join(root, '.jeff', 'config.json'), 'utf8');
+
+    assert.notEqual(js.code, 0);
+    assert.match(js.stderr, /config\.json must be an object/);
+    assert.equal(raw, '42');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

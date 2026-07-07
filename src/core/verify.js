@@ -39,9 +39,8 @@ async function resolveCommand(root, mode) {
   const cfg = await readConfig(root);
   if (!cfg) return '';
   const tc = cfg.testCommand;
-  // jq `// empty` treats null/false as empty; anything else stringifies.
-  if (tc == null || tc === false) return '';
-  return typeof tc === 'string' ? tc : String(tc);
+  // Fail closed on non-strings instead of inventing shell from malformed JSON.
+  return typeof tc === 'string' ? tc : '';
 }
 
 /**

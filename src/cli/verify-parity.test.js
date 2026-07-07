@@ -113,6 +113,15 @@ function runGit(root, args) {
  * @returns {Promise<string>}
  */
 async function makeFullRoot(testCommand) {
+  const config = testCommand === undefined ? {} : { testCommand };
+  return makeFullRootWithConfig(config);
+}
+
+/**
+ * @param {unknown} config
+ * @returns {Promise<string>}
+ */
+async function makeFullRootWithConfig(config) {
   const root = await mkdtemp(join(tmpdir(), 'jeff-verify-parity-full-'));
   runGit(root, ['init', '-q']);
   runGit(root, ['config', 'user.email', 'jeff-verify-parity@example.com']);
@@ -121,7 +130,6 @@ async function makeFullRoot(testCommand) {
   runGit(root, ['add', 'seed.txt']);
   runGit(root, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'seed']);
   await mkdir(join(root, '.jeff'), { recursive: true });
-  const config = testCommand === undefined ? {} : { testCommand };
   await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify(config), 'utf8');
   return root;
 }
@@ -250,6 +258,19 @@ test('lite verify with a real command plus a trailing comment is NOT rejected, m
   const root = await makeLiteRoot('Test command: `true # all`.\n');
   try {
     assertParity(root, ['verify']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('full-mode verify rejects non-string testCommand before shell execution', async () => {
+  const root = await makeFullRootWithConfig({ testCommand: ['true'] });
+  try {
+    const js = runJs(root, ['verify']);
+    assert.equal(js.code, 1);
+    assert.match(js.stderr, /no test command configured/);
+    assert.equal(js.stdout, '');
+    assert.equal(await readLogLine(root), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

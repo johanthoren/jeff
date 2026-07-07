@@ -163,9 +163,11 @@ export async function initProject(root) {
   // Existing config: read → set `.active = true` (in place / append-last) →
   // re-serialize. Absent: the jq-form default. An unparseable existing config
   // throws (fails closed) rather than clobbering a user's real project state.
-  const obj = raw === null
-    ? { schemaVersion: 1, system: 'jeff', active: true }
-    : Object.assign(JSON.parse(raw), { active: true });
+  const obj = raw === null ? { schemaVersion: 1, system: 'jeff', active: true } : JSON.parse(raw);
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+    return { code: 1, stdout: [], stderr: [`cook: config.json must be an object: ${configPath}`] };
+  }
+  obj.active = true;
 
   await writeFileAtomic(configPath, `${JSON.stringify(obj, null, 2)}\n`);
 

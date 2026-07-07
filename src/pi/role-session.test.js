@@ -95,12 +95,57 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
     assert.equal(result.agent_id, '0123456789abcdef');
     assert.equal(result.stage, 'review');
     assert.deepEqual(result.brain, { provider: 'local', model: 'qwen-dev', effort: 'xhigh' });
-    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls', 'bash']);
+    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls']);
     assert.equal(capturedOptions.thinkingLevel, 'xhigh');
     assert.equal(capturedOptions.model, currentModel);
     assert.match(capturedPrompt, /Review body\./);
     assert.equal(result.transcript, 'verdict: pass');
     assert.equal(disposed, true);
+  });
+});
+
+test('dispatchRoleSession grants read-only tools to judgment and planning stages', async () => {
+  await withRepo(async (repoRoot) => {
+    /** @type {Record<string, string>} */
+    const agents = {
+      plan: '---\nname: cook-plan\nmodel: opus\neffort: xhigh\n---\nPlan body.',
+      audit: '---\nname: cook-audit\nmodel: opus\neffort: xhigh\n---\nAudit body.',
+      refute: '---\nname: cook-refute\nmodel: opus\neffort: xhigh\n---\nRefute body.',
+    };
+    for (const [stage, body] of Object.entries(agents)) {
+      await writeFile(join(repoRoot, 'agents', `cook-${stage}.md`), body);
+    }
+
+    /** @type {Record<string, string[]>} */
+    const toolsByStage = {};
+    const sdk = {
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (/** @type {any} */ options) => {
+        toolsByStage[options.stageForTest] = options.tools;
+        return { session: { subscribe() {}, async prompt() {}, dispose() {} } };
+      },
+    };
+
+    for (const stage of ['plan', 'review', 'audit', 'refute']) {
+      await dispatchRoleSession({
+        stage,
+        brief: 'Check the diff.',
+        cwd: repoRoot,
+        repoRoot,
+        sdk: {
+          ...sdk,
+          createAgentSession: async (/** @type {any} */ options) => sdk.createAgentSession({ ...options, stageForTest: stage }),
+        },
+        generateAgentId: () => `agent-${stage}`,
+      });
+    }
+
+    assert.deepEqual(toolsByStage, {
+      plan: ['read', 'grep', 'find', 'ls'],
+      review: ['read', 'grep', 'find', 'ls'],
+      audit: ['read', 'grep', 'find', 'ls'],
+      refute: ['read', 'grep', 'find', 'ls'],
+    });
   });
 });
 
