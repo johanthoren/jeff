@@ -13,4 +13,20 @@ Your job:
 - You **may range beyond the lines this task changed** when the change exposed a simplification or duplication elsewhere (e.g. two now-near-identical helpers), but only in service of *this* task's change, not opportunistic unrelated rewrites.
 - **Behavior must not change.** Re-run only the targeted tests (the tests relevant to your change) and confirm they are still green; cite the command + output. Do **not** run the project's whole test set; Jeff owns the single suite-wide gate, run once after this last code-changing stage, and routes any beyond-the-diff regression back to you as a kickback. If you cannot keep the targeted tests green, revert and report.
 
-Return: the files refactored, what you simplified and why, the green-run evidence, and an explicit note if you touched code outside the original diff (so the reviewer can scope it).
+## Return
+
+End your final message with exactly this fenced block, filled in, followed by nothing:
+
+```yaml
+stage: refactor
+result: refactored | clean     # clean = inspected, nothing worth changing
+files:
+  - <file touched>
+outsideDiff:                   # files touched beyond the task's own diff; empty when none
+  - <file>
+greenRun:
+  command: <exact targeted-test command>
+  output: <the decisive passing lines>
+summary:
+  - <one line per simplification: what and why>
+```

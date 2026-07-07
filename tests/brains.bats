@@ -2,21 +2,11 @@
 # tests/brains.bats: content-contract for agents/*.md frontmatter.
 #
 # Task 0026: brain tiering by pure frontmatter assignment.
-# Task 0041: dispatched plan specialist + test reframed as a low-effort doer.
-# Each dispatched stage must pin BOTH model: and effort: to the settled values:
-#
-#   stage       model   effort
-#   plan        opus    xhigh   (new in 0041: dispatched test-designer)
-#   test        opus    medium  (0041: re-pinned down from xhigh: encoder/doer)
-#   implement   opus    high
-#   refactor    opus    xhigh
-#   review      opus    xhigh
-#   audit       opus    xhigh
-#   refute      opus    xhigh
-#
-# RED now (task 0041): agents/plan.md does not yet exist, and
-# agents/test.md still pins effort: xhigh. GREEN after 0041 adds plan
-# and re-pins test to medium.
+# Task 0041: dispatched plan specialist + test reframed as a low-latitude doer.
+# 2026-07-05 (skills-optimization): refactor re-pinned opus·xhigh (mandate
+# widened to zoom-out dedup/harmonization) and the cook-refute pass added.
+# Each dispatched stage must pin BOTH model: and effort: to the settled values
+# in the table below.
 
 REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
@@ -50,9 +40,9 @@ frontmatter_field() {
 #
 # Settled brain table (stage → model · effort):
 #   plan        opus    xhigh   (dispatched test-designer, 0041)
-#   test        sonnet  medium  (doer/encoder, low-effort by design)
+#   test        sonnet  medium  (doer/encoder, low-latitude by design)
 #   implement   opus    high
-#   refactor    opus    xhigh   (judge caliber: zoom-out dedup/harmonization, a different angle than review)
+#   refactor    opus    xhigh   (zoom-out dedup/harmonization: judgment work)
 #   review      opus    xhigh
 #   audit       opus    xhigh
 #   refute      opus    xhigh   (can overturn a judge's blocking finding)

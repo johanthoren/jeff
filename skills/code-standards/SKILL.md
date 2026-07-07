@@ -5,15 +5,15 @@ description: "Language-agnostic code standards for writing clean, maintainable c
 
 # Code Standards
 
-Language-agnostic defaults. Language-specific skills override where they conflict.
+Language-agnostic defaults. Language-specific skills override where they conflict. These are the Chef's taste stated as directives: apply them as written, and do not substitute your own or your provider's defaults where they differ.
 
 ## Core Philosophy
 
-- **Modular**: Small, focused, reusable components
-- **Functional**: Pure functions, immutability, composition
-- **Maintainable**: Self-documenting, testable, predictable
-- **Single source of truth**: one authoritative owner per fact; no drifting duplicates
-- **Separate by rate of change**: don't weld a fast-changing concern into a slow-changing one; couple the layers loosely so each moves at its own pace
+- **Modular**: small, focused, reusable components.
+- **Functional first**: pure functions, immutability, composition. A house choice, not a suggestion.
+- **Maintainable**: self-documenting, testable, predictable.
+- **Single source of truth**: one authoritative owner per fact; no drifting duplicates.
+- **Separate by rate of change**: don't weld a fast-changing concern into a slow-changing one; couple the layers loosely so each moves at its own pace.
 - **Docs are part of the system**: incorrect documentation is a bug. When a change alters docs that describe the system's behavior, verify them against the code as it stands, not just for prose. (OpenBSD.)
 
 **Golden Rule**: If you can't easily test it, refactor it.
@@ -39,145 +39,38 @@ The best code is the code you never wrote. Before writing any, stop at the first
 
 *Ladder adapted from [ponytail](https://github.com/DietrichGebert/ponytail) (MIT); see NOTICE.*
 
-## Critical Patterns
+## The House Style, as Directives
 
-### Pure Functions
-Same input = same output, no side effects.
-
-```javascript
-// Good
-const add = (a, b) => a + b;
-const formatUser = (user) => ({ ...user, fullName: `${user.first} ${user.last}` });
-
-// Bad - side effects
-let total = 0;
-const addToTotal = (v) => { total += v; return total; };
-```
-
-### Immutability
-Create new data, don't modify existing.
-
-```javascript
-// Good
-const addItem = (items, item) => [...items, item];
-
-// Bad
-const addItem = (items, item) => { items.push(item); return items; };
-```
-
-### Composition
-Build complex from simple functions.
-
-```javascript
-// Good
-const processUser = pipe(validate, enrich, save);
-
-// Bad
-class ExtendedUserManagerWithValidation extends UserManager { }
-```
-
-### Small Functions
-- < 50 lines per function
-- < 100 lines per module
-- Single responsibility
+- **Pure functions**: same input, same output, no side effects. `const addToTotal = (v) => { total += v; }` is the smell; `const add = (a, b) => a + b` is the rule.
+- **Immutability**: create new data, never mutate what you were given. `items.push(item)` → `[...items, item]`.
+- **Composition over inheritance**: `pipe(validate, enrich, save)`, not `class ExtendedUserManagerWithValidation extends UserManager`.
+- **Explicit dependencies**: inject collaborators (`createService(database, logger)`), never import-and-reach from inside (`import db from './database'`). Hidden dependencies kill testability.
+- **Small units, single responsibility**: functions < 50 lines, modules < 200 lines. Deep nesting (> 3 levels), global state, and god modules are refusals, not warnings.
 
 ### Policy Predicates
+
 Policy decisions (access gating, capability checks, state validation) must live in named predicates on the owning type, not as raw comparisons scattered at call sites.
 
 ```javascript
 // Bad: policy duplicated at every call site
-if (permissionManager.status === 'allGranted') { ... }
 if (permissionManager.status === 'allGranted' && !licensed) { ... }
 
 // Good: policy centralized on the owning type
-if (permissionManager.areGranted) { ... }
 if (permissionManager.areGranted && !licenseManager.isLicensed) { ... }
 ```
 
-**When to extract**: If the same boolean check appears in more than one place, or if the check requires knowing internal state of another type, it belongs in a named predicate.
+**When to extract**: the same boolean check appears in more than one place, or the check requires knowing another type's internal state. **Migration**: grep for raw field comparisons (`status == .X`, `type === 'Y'`), extract to a named predicate on the owning type, replace all call sites, add a unit test for the predicate.
 
-**Naming**: Use `is`, `has`, `can`, `are` prefixes, e.g., `isReady`, `hasPermission`, `canRecord`, `areGranted`.
+## Validation, Errors, Security
 
-**Migration**: Grep for raw field comparisons (`status == .X`, `type === 'Y'`), extract to a named predicate on the owning type, replace all call sites, add a unit test for the predicate.
-
-### Dependency Injection
-
-```javascript
-// Good - explicit dependencies
-function createService(database, logger) {
-  return {
-    create: (data) => {
-      logger.info('Creating');
-      return database.insert(data);
-    }
-  };
-}
-
-// Bad - hidden dependencies
-import db from './database';
-function create(data) { return db.insert(data); }
-```
-
-## Validation
-
-Validate at boundaries:
-- Check null/nil/None
-- Validate types and ranges
-- Sanitize user input
-- Return clear error messages
-
-## Error Handling
-
-- Catch specific errors, not generic
-- Log errors with context
-- Return meaningful messages
-- Don't expose internals to users
-
-```javascript
-function parseJSON(text) {
-  try {
-    return { success: true, data: JSON.parse(text) };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-```
-
-## Security
-
-**NEVER**:
-- Log passwords, tokens, API keys
-- Hardcode credentials
-- Expose internal errors to users
-- Skip input validation
-
-**ALWAYS**:
-- Use environment variables for secrets
-- Sanitize all user input
-- Follow least privilege principle
+- Validate at boundaries: check null/nil/None, validate types and ranges, sanitize all user input, return clear error messages.
+- Catch specific errors, not generic; log them with context; return meaning to the caller (`parseJSON` returns `{ success, data | error }`, it does not rethrow soup). Never expose internals to users.
+- **NEVER**: log passwords/tokens/API keys; hardcode credentials; skip input validation. **ALWAYS**: secrets from the environment or a secret manager; least privilege.
+- Log at conventional levels (debug/info/warning/error); errors always carry context.
 
 ## Naming
 
-- **Files**: `lowercase-with-dashes.js`
-- **Functions**: verbPhrases (`getUser`, `validateEmail`)
-- **Predicates**: `isValid`, `hasPermission`, `canAccess`
-- **Variables**: descriptive (`userCount` not `uc`)
-- **Constants**: `UPPER_SNAKE_CASE`
-
-## Anti-Patterns
-
-- Mutation and side effects
-- Deep nesting (> 3 levels)
-- God modules (> 200 lines)
-- Global state
-- Large functions (> 50 lines)
-
-## Logging Levels
-
-- **Debug**: Development only, detailed info
-- **Info**: Important events, milestones
-- **Warning**: Potential issues, non-blocking
-- **Error**: Failures, exceptions
+Files `lowercase-with-dashes`; functions are verb phrases (`getUser`, `validateEmail`); predicates read as questions (`isValid`, `hasPermission`, `canAccess`, `areGranted`); variables descriptive (`userCount`, not `uc`); constants `UPPER_SNAKE_CASE`.
 
 ## Code Review Checklist
 
