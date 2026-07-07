@@ -209,6 +209,27 @@ test('init refuses non-object config.json instead of reporting false activation'
   }
 });
 
+test('init refuses a symlinked .jeff/tasks before writing outside the repo', async () => {
+  const root = await makeGitRoot('jeff-lifecycle-tasks-symlink-root-');
+  const outside = await mkdtemp(join(tmpdir(), 'jeff-lifecycle-tasks-symlink-outside-'));
+  try {
+    await mkdir(join(root, '.jeff'));
+    await symlink(outside, join(root, '.jeff', 'tasks'), 'dir');
+
+    const js = runJs(root, ['init']);
+
+    assert.notEqual(js.code, 0);
+    assert.match(js.stderr, /refusing \.jeff\/tasks symlink/);
+    await assert.rejects(
+      stat(join(outside, '.gitkeep')),
+      /** @type {(err: any) => boolean} */ ((err) => err.code === 'ENOENT'),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test('init refuses a .jeff symlink before writing outside the repo', async () => {
   const root = await makeGitRoot('jeff-lifecycle-symlink-root-');
   const outside = await mkdtemp(join(tmpdir(), 'jeff-lifecycle-symlink-outside-'));

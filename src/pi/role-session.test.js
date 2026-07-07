@@ -95,7 +95,7 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
     assert.equal(result.agent_id, '0123456789abcdef');
     assert.equal(result.stage, 'review');
     assert.deepEqual(result.brain, { provider: 'local', model: 'qwen-dev', effort: 'xhigh' });
-    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls']);
+    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls', 'bash']);
     assert.equal(capturedOptions.thinkingLevel, 'xhigh');
     assert.equal(capturedOptions.model, currentModel);
     assert.match(capturedPrompt, /Review body\./);
@@ -104,7 +104,7 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
   });
 });
 
-test('dispatchRoleSession grants read-only tools to judgment and planning stages', async () => {
+test('dispatchRoleSession grants stage-appropriate tools without edit access to judgment stages', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {Record<string, string>} */
     const agents = {
@@ -141,10 +141,10 @@ test('dispatchRoleSession grants read-only tools to judgment and planning stages
     }
 
     assert.deepEqual(toolsByStage, {
-      plan: ['read', 'grep', 'find', 'ls'],
-      review: ['read', 'grep', 'find', 'ls'],
-      audit: ['read', 'grep', 'find', 'ls'],
-      refute: ['read', 'grep', 'find', 'ls'],
+      plan: ['read', 'grep', 'find', 'ls', 'write'],
+      review: ['read', 'grep', 'find', 'ls', 'bash'],
+      audit: ['read', 'grep', 'find', 'ls', 'bash'],
+      refute: ['read', 'grep', 'find', 'ls', 'bash'],
     });
   });
 });
@@ -211,6 +211,8 @@ test('dispatchRoleSession lets Pi choose the model when no current model exists'
     /** @type {any} */
     let capturedOptions;
     const fakeSession = {
+      model: { provider: 'picked', id: 'model-from-child' },
+      thinkingLevel: 'high',
       subscribe() {
         return () => {};
       },
@@ -236,6 +238,6 @@ test('dispatchRoleSession lets Pi choose the model when no current model exists'
     });
 
     assert.equal(capturedOptions.model, undefined);
-    assert.deepEqual(result.brain, { provider: undefined, model: undefined, effort: 'xhigh' });
+    assert.deepEqual(result.brain, { provider: 'picked', model: 'model-from-child', effort: 'high' });
   });
 });

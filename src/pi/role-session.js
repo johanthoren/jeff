@@ -9,6 +9,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const STAGES = ['plan', 'test', 'implement', 'refactor', 'review', 'audit', 'refute'];
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
+const PLAN_TOOLS = ['read', 'grep', 'find', 'ls', 'write'];
+const JUDGMENT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash'];
 const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -17,9 +19,9 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * @returns {string[]}
  */
 function toolsForStage(stage) {
-  if (stage === 'plan') return READ_TOOLS;
+  if (stage === 'plan') return PLAN_TOOLS;
   if (stage === 'test' || stage === 'implement' || stage === 'refactor') return EDIT_TOOLS;
-  return READ_TOOLS;
+  return JUDGMENT_TOOLS;
 }
 
 /** @returns {string} */
@@ -154,10 +156,16 @@ export async function dispatchRoleSession(opts) {
     session.dispose();
   }
 
+  const actual = modelParts(session.model ?? opts.currentModel);
+
   return {
     agent_id: agentId,
     stage: opts.stage,
-    brain: { provider: current.provider, model: current.id, effort: role.frontmatter.effort },
+    brain: {
+      provider: actual.provider,
+      model: actual.id,
+      effort: typeof session.thinkingLevel === 'string' ? session.thinkingLevel : role.frontmatter.effort,
+    },
     transcript: (streamed || final).trim(),
   };
 }

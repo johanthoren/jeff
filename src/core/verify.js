@@ -2,7 +2,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, appendFileSync, lstatSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { readMode, readConfig } from './store.js';
 import { git, treeDirty, testRunsLogPath } from './git.js';
@@ -72,6 +72,19 @@ function utcSecond() {
 }
 
 /**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isSymlink(path) {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch (e) {
+    if (/** @type {any} */ (e).code === 'ENOENT') return false;
+    throw e;
+  }
+}
+
+/**
  * Full-mode run log: append one HEAD-keyed jsonl line to
  * `.jeff/test-runs.jsonl` and git-exclude it, but only in a git repo with a
  * resolvable HEAD. Side-effecting; kept separate from the pure verdict build
@@ -107,6 +120,12 @@ function logTestRun(root, cmd, result) {
 export async function runVerify(root) {
   const mode = await readMode(root);
   const cmd = await resolveCommand(root, mode);
+
+  if (mode !== 'lite') {
+    if (isSymlink(join(root, '.jeff')) || isSymlink(testRunsLogPath(root))) {
+      return { code: 1, stdout: [], stderr: [`cook: refusing symlinked test-runs log: ${testRunsLogPath(root)}`] };
+    }
+  }
 
   // Fail CLOSED before any `sh -c`: empty, whitespace-only, or comment-only
   // (first non-ws char `#`) is treated as unconfigured, never a silent green.

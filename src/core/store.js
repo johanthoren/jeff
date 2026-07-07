@@ -1,6 +1,6 @@
 // @ts-check
 
-import { readFile, writeFile, rename, unlink, readdir } from 'node:fs/promises';
+import { readFile, writeFile, rename, unlink, readdir, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { isType } from './validate.js';
@@ -82,9 +82,13 @@ export async function collectTasks(root) {
   const tasksDir = join(root, '.jeff', 'tasks');
   let entries;
   try {
+    if ((await lstat(tasksDir)).isSymbolicLink()) {
+      throw new Error(`refusing .jeff/tasks symlink: ${tasksDir}`);
+    }
     entries = await readdir(tasksDir, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (e) {
+    if (/** @type {any} */ (e).code === 'ENOENT') return [];
+    throw e;
   }
 
   // Depth-2 `task.json` files only (mindepth 2 / maxdepth 2): the task.json

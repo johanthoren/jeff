@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, symlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -260,6 +260,26 @@ test('lite verify with a real command plus a trailing comment is NOT rejected, m
     assertParity(root, ['verify']);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('full-mode verify refuses symlinked run log before appending outside the repo', async () => {
+  const root = await makeFullRoot('true');
+  const outside = await mkdtemp(join(tmpdir(), 'jeff-verify-log-outside-'));
+  try {
+    await symlink(join(outside, 'victim.jsonl'), logPath(root));
+
+    const js = runJs(root, ['verify']);
+
+    assert.notEqual(js.code, 0);
+    assert.match(js.stderr, /refusing symlinked test-runs log/);
+    await assert.rejects(
+      stat(join(outside, 'victim.jsonl')),
+      /** @type {(err: any) => boolean} */ ((err) => err.code === 'ENOENT'),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 

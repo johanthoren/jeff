@@ -145,11 +145,20 @@ export async function initProject(root) {
     if (/** @type {any} */ (e).code !== 'ENOENT') throw e;
   }
 
-  await mkdir(join(bk, 'tasks'), { recursive: true });
+  const tasksDir = join(bk, 'tasks');
+  try {
+    if ((await lstat(tasksDir)).isSymbolicLink()) {
+      return { code: 1, stdout: [], stderr: [`cook: refusing .jeff/tasks symlink: ${tasksDir}`] };
+    }
+  } catch (e) {
+    if (/** @type {any} */ (e).code !== 'ENOENT') throw e;
+  }
+
+  await mkdir(tasksDir, { recursive: true });
   await mkdir(join(bk, 'memory'), { recursive: true });
 
   // `.gitkeep` if absent — never truncate an existing one (`[ -f … ] || :>`).
-  await writeFile(join(bk, 'tasks', '.gitkeep'), '', { flag: 'wx', encoding: 'utf8' })
+  await writeFile(join(tasksDir, '.gitkeep'), '', { flag: 'wx', encoding: 'utf8' })
     .catch((/** @type {any} */ e) => { if (e.code !== 'EEXIST') throw e; });
 
   const configPath = join(bk, 'config.json');

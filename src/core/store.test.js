@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, stat, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, mkdir, readdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readTask, writeTask, readConfig } from './store.js';
+import { collectTasks, readTask, writeTask, readConfig } from './store.js';
 
 /** @type {import('./types.js').TaskJson} */
 const TASK = {
@@ -80,6 +80,20 @@ test('writeTask unlinks the temp file and rejects when rename fails', async () =
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('collectTasks refuses a symlinked tasks directory', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-store-root-'));
+  const outside = await mkdtemp(join(tmpdir(), 'jeff-store-outside-'));
+  try {
+    await mkdir(join(root, '.jeff'), { recursive: true });
+    await symlink(outside, join(root, '.jeff', 'tasks'), 'dir');
+
+    await assert.rejects(() => collectTasks(root), /refusing \.jeff\/tasks symlink/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });
 
