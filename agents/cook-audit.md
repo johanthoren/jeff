@@ -40,9 +40,9 @@ scan:
   command: <the review-security.sh invocation you ran>
   recommendation: PASS | REVIEW | BLOCK
   reportPath: <path from the scan output>
-coverage:                      # tri-state, every category from the scan report, no omissions
+coverage:                      # every category from the scan report's coverage[cat].status, no omissions
   - category: <category>
-    status: covered_with_hits | covered_no_hits | not_covered
+    status: covered_with_hits | covered_no_hits | not_covered  # not_covered = inapplicable to scope, not a blocker
 findings:                      # empty list when verdict is pass or na
   - file: <path>
     line: <n>
