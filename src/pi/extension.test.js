@@ -1,5 +1,8 @@
 // @ts-check
 
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -50,4 +53,23 @@ test('extension registers /jeff-status and cook_dispatch', () => {
   assert.equal(commands.get('jeff-status').description, 'Report that the jeff Pi package is active');
   assert.equal(tools.has('cook_dispatch'), true);
   assert.deepEqual(tools.get('cook_dispatch').parameters.required, ['stage', 'brief']);
+});
+
+test('cook_dispatch refuses inactive projects before starting a role session', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-inactive-'));
+  try {
+    const tools = new Map();
+    jeffExtension({
+      registerCommand() {},
+      /** @param {any} definition */
+      registerTool(definition) { tools.set(definition.name, definition); },
+    });
+
+    await assert.rejects(
+      () => tools.get('cook_dispatch').execute('call-1', { stage: 'review', brief: 'x' }, undefined, undefined, { cwd }),
+      /inactive jeff project/,
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });

@@ -1,10 +1,17 @@
 // @ts-check
 
+import { readConfig } from '../core/store.js';
 import { dispatchRoleSession, STAGES } from './role-session.js';
 
 /** @param {unknown} result */
 export function formatDispatchResult(result) {
   return JSON.stringify(result, null, 2);
+}
+
+/** @param {string} cwd */
+async function assertActiveJeffProject(cwd) {
+  const cfg = await readConfig(cwd);
+  if (cfg?.active !== true) throw new Error(`cook_dispatch: inactive jeff project: ${cwd}`);
 }
 
 const DispatchParams = {
@@ -47,6 +54,7 @@ export default function jeffExtension(pi) {
      * @param {any} ctx
      */
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      await assertActiveJeffProject(ctx.cwd);
       const result = await dispatchRoleSession({
         stage: params.stage,
         brief: params.brief,

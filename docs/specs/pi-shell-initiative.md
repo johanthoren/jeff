@@ -26,12 +26,14 @@ and rebased onto current pi (`0.71`).
    `git:github.com/johanthoren/jeff` in `~/.pi/agent/settings.json` packages. No
    "also run brew/npm install jeff" step for either. Existing `jeff@jeff` users
    change nothing in usage.
-3. **No regression, per-chef brains.** Every stage runs at its own `{model, effort}`
-   on every supported shell. No one-size-fits-all, no session-default fallback.
+3. **No regression, per-stage effort.** Claude Code keeps per-stage `{model, effort}`
+   from agent frontmatter. pi is model-agnostic: it inherits the current pi
+   provider/model and applies only the stage `effort` as thinking level.
 4. **One core, not two.** A single shared implementation of the validator, state,
    gates, and dispatch. No parallel Bash and JS systems to keep in sync.
-5. **Single brain definition.** Model and effort live in one place and resolve per
-   provider. jeff is native on both Claude and gpt models.
+5. **Single stage-effort definition.** Agent frontmatter remains the source for
+   stage effort. pi ignores `model:` frontmatter by design; no provider ranking,
+   alias mapping, or cross-provider switching happens in pi dispatch.
 
 ## 3. Why single-root-package (constraint 1 + 2)
 
@@ -81,83 +83,34 @@ in-process replacement for pi-bakehouse's subprocess adapter). Claude Code's dis
 stays its native Task tool. Chef-facing behavior is identical on both: order in, line
 fired, fresh cook per station, plate back.
 
-## 5. Brains: one table, resolved per provider (constraint 3 + 5)
+## 5. Brains on pi: inherit model, apply effort (constraint 3 + 5)
 
-Model and effort are defined once, provider-abstract, and resolved by the active
-provider family of the shell/session (not hardcoded per shell; pi with an anthropic
-provider still picks the anthropic column).
+Claude Code keeps the existing contract: each `agents/cook-*.md` frontmatter pins
+`model:` and `effort:` and Claude Code loads both through its native Task tool.
 
-Stage -> semantic tier + effort (one definition):
+pi deliberately does less. It starts a fresh `createAgentSession` for each stage,
+passes the current pi model/provider through unchanged, and applies only the stage
+`effort:` as `thinkingLevel`. The `model:` field remains in the shared agent files for
+Claude Code compatibility and drift checks, but pi ignores it.
 
-| stage | tier | effort |
-| --- | --- | --- |
-| capture | top (session brain) | (session) |
-| plan | judge | xhigh |
-| test | encode | medium |
-| implement | build | high |
-| refactor | tidy | high |
-| review | judge | xhigh |
-| audit | judge | xhigh |
+This is the approved pi policy for this branch:
 
-Tier x provider -> concrete model. jeff ships an `anthropic` and an `openai` column
-natively; other providers get an effort-only fallback until a column is added.
+- no Claude alias mapping (`opus`/`sonnet` are not translated in pi);
+- no provider/model ranking;
+- no cross-provider switching;
+- no `JEFF_TOP_BRAIN`/Fable behavior in pi dispatch;
+- return the child session's actual `{provider, model, effort}` when pi exposes it,
+  falling back to the requested effort only when the host does not report a value.
 
-| tier | anthropic | openai | fallback (untuned provider) |
-| --- | --- | --- | --- |
-| judge | opus · xhigh | gpt-5.5 · xhigh (TBD, bench) | session model · xhigh |
-| build | opus · high | gpt-5.5 · high (TBD, bench) | session model · high |
-| tidy | sonnet · high | gpt-5.x mid · high (TBD, bench) | session model · high |
-| encode | sonnet · medium | gpt-5.x small · medium (TBD, bench) | session model · low |
+The hard invariant that remains cross-shell is fresh-context separation plus the stage
+thinking level. Model selection belongs to the pi session the Chef chose.
 
-Effort is one shared axis: Claude `effort` and pi `thinkingLevel` use the same ladder
-(`low/medium/high/xhigh`). The openai column's concrete models are a bench follow-up,
-not a structural blocker. The **anthropic column is the current jeff values reused
-verbatim**, so running pi on an Anthropic key gives brains identical to Claude Code
-(zero new tuning). `[[pin-tuning-kickback-economics]]` becomes a per-provider judgement.
+### 5.1 Source of truth: checked frontmatter, host-specific use
 
-"Judge >= builder" still holds by construction within each provider column.
-
-**Fable.** The anthropic column deliberately does not pin `fable` (Claude Fable 5):
-it is tokens-only (not included in Max from 2026-07-07), so most Chefs will not have
-it. One narrow opt-in exists for those who pay for access: `JEFF_TOP_BRAIN=fable`
-elevates the judge tier (plan/review/audit) to `fable · xhigh`. It follows the
-`JEFF_FLAVOR` pattern exactly: env var, per-repo `.jeff/config.json` `"topBrain"`
-override, resolved by the shared resolver and surfaced by a `cook` verb. On Claude
-Code the orchestrator passes the model on the Task call (call-level model takes
-precedence over agent frontmatter); on pi the dispatch tool resolves it directly.
-Availability fallback applies unchanged (fable not authed -> opus, xhigh preserved).
-Values other than `fable` are the deferred arbitrary override (§9), not this knob.
-
-### 5.1 Resolution: provider is a runtime property, model is best-available
-
-A pi user may have several providers authed at once (Anthropic + OpenAI + other), and
-may not have every model within a column. So:
-
-- **`tier -> effort` is the durable invariant** (always applies, provider-agnostic).
-  **Model is a best-available lookup**, never a hard pin.
-- **Which column: the session's active provider.** This respects the user's explicit
-  provider choice (pi `defaultProvider` or a per-session switch) and matches Claude
-  Code (Anthropic-locked). jeff does not silently reach across providers. Resolution is
-  `(sessionProvider, tier) -> model`, `tier -> effort`.
-- **Availability fallback within a column:** if a tier's model is not authed, degrade to
-  the nearest available model in that provider (else the session model), effort
-  preserved. A dispatch never hard-fails on availability; effort never silently flattens.
-- **Record the resolved `{provider, model, effort}` actually used** per stage in the
-  existing informational `brains.<stage>` record (point 3). This is the audit trail the
-  no-regression gate (§7) checks, and it matters more now that provider is runtime-variable.
-
-Cross-provider best-of-breed selection (e.g. opus for judge + a cheap OpenAI model for
-encode in one task, ignoring the session provider) is deferred (§9). The resolver
-signature stays clean so it becomes an additive `(providers[], tier) -> model` later,
-not a rewrite.
-
-### 5.2 Source of truth: one table, checked copies
-
-The brain table is authoritative. `agents/cook-*.md` frontmatter stays hand-authored
-(jeff's current stance, unchanged) and a small CI drift check asserts every stage's
-frontmatter `model` + `effort` matches the table, as ponytail does with
-`check-rule-copies.js`. No generator: 6 files x 2 fields does not earn codegen. pi
-reads the table at runtime. AGENTS.md / SKILL.md language updates to match.
+`agents/cook-*.md` frontmatter stays hand-authored and drift-checked against the settled
+Claude Code table. pi reads the same files for role text and `effort:` only. This keeps
+one set of role briefs without inventing a provider abstraction layer the branch no
+longer needs.
 
 ## 6. Build and dependency policy (constraint 2 + 4)
 
@@ -198,16 +151,11 @@ same core in-process from the extension.
 
 Turn "if it works" into machine-checkable gates, not a promise:
 
-- **Resolution test:** with a fully-authed provider column, every stage resolves to the
-  exact table cell (`model` + `effort`). Claude Code side asserts the frontmatter
-  carries the right `model` + `effort` per stage; pi side asserts `createAgentSession`
-  receives the right `model` + `thinkingLevel`. Effort always matches the tier regardless
-  of model availability (it never flattens); model falls back to nearest-available only
-  when the tier's model is not authed, and that fallback is itself recorded (§5.1).
-  With `JEFF_TOP_BRAIN=fable` set, judge resolves to `fable · xhigh`, falling back to
-  `opus · xhigh` when fable is not authed.
-- **Drift check:** hand-authored `agents/cook-*.md` frontmatter must match the brain
-  table (`model` + `effort` per stage) or CI fails (§5.2).
+- **pi dispatch test:** `createAgentSession` receives the current pi model unchanged
+  and the stage `effort:` as `thinkingLevel`; returned results include the child
+  session's actual `{provider, model, effort}` when pi reports it.
+- **Drift check:** hand-authored `agents/cook-*.md` frontmatter must match the settled
+  Claude Code table (`model` + `effort` per stage) or CI fails (§5.1).
 - **Parity check:** the JS validator reproduces the current Bash+jq validator's verdicts
   on the existing `tests/*.bats` fixtures before `main`'s validator is retired on this
   branch.
@@ -239,28 +187,20 @@ process required.
 ## 9. Non-goals / deferred (ponytail-cut)
 
 - Arbitrary model/effort override config (swap any stage to any model). Revisit only
-  if the fixed table proves insufficient. The `JEFF_TOP_BRAIN=fable` knob (§5) is one
-  tier, one value, and deliberately not this feature.
-- Cross-provider best-of-breed dispatch (picking each tier's model across all authed
-  providers, overriding the session provider). Resolver is structured for it (§5.1);
-  behavior deferred, adjacent to the override config above.
+  if operator experience proves the fixed stage efforts insufficient.
+- Cross-provider best-of-breed dispatch. pi dispatch deliberately inherits the active
+  pi model/provider; selecting different providers per stage is out of scope.
 - Per-OS compiled binary.
 - Instruction-tier adapters for other shells (Cursor, Windsurf, ...). Out of scope;
   this initiative is pi as a first-class shell, not a portability sweep.
 
-## 10. Open decisions
+## 10. Settled decisions
 
-1. Sequencing only: which provider to bench first. Anthropic needs none (§5 column is
-   reused verbatim); the openai column's concrete `tidy`/`encode` models need bench data
-   and confirmation that a low-effort frontier model stays a faithful encoder.
-
-Settled: gate hook uses ponytail's guarded-direct-node pattern (§6); `.jeff/` needs no
-new structure, only the resolved-`{provider, model, effort}` field on the existing
-`brains.<stage>` record (§5.1), and no `role-runs/` directories. Settled 2026-07-02
-(Fable re-assessment): the core is plain zero-dependency ESM JS, no build step and no
-committed `dist/` (§6); frontmatter stays hand-authored with a drift check, no
-generator (§5.2); fable is never a default pin, only the `JEFF_TOP_BRAIN=fable`
-opt-in for the judge tier (§5).
+- pi dispatch inherits the active pi model/provider and only applies stage effort.
+- The core is plain zero-dependency ESM JS, no build step and no committed `dist/` (§6).
+- Frontmatter stays hand-authored with a drift check, no generator (§5.1).
+- `.jeff/` needs no new structure and no `role-runs/` directories.
+- The gate hook uses ponytail's guarded-direct-node pattern (§6).
 
 ## 11. Decomposition sketch (into jeff tasks)
 
@@ -269,12 +209,11 @@ opt-in for the judge tier (§5).
 2. Port the validator (`cook validate` and friends) to JS; parity check vs `tests/*.bats`.
 3. Port the remaining CLI verbs (`ls`, `status`, `show`, `verify`, `init`, `doctor`,
    `plan section/check/append`).
-4. Brain table module + resolution API (incl. the `JEFF_TOP_BRAIN` override) +
-   frontmatter drift check.
+4. Frontmatter effort reader + drift check; pi inherits the active model/provider.
 5. Swap Claude Code SKILL.md / hooks invocations from `cook.sh` to `node src/cli/cook.js`;
    retire `cook.sh` on this branch; `doctor` checks node.
 6. pi package manifest (`package.json#pi`) + extension entrypoint (commands + activation).
-7. `runRoleSession` + dispatch tool on pi (in-process `createAgentSession`), per-stage
-   brain wiring, role permissions.
-8. Resolution + no-regression gates green on both shells; end-to-end smoke on a sample
+7. `runRoleSession` + dispatch tool on pi (in-process `createAgentSession`), stage
+   effort wiring, role permissions.
+8. Dispatch + no-regression gates green on both shells; end-to-end smoke on a sample
    task in each shell.

@@ -100,9 +100,15 @@ export async function collectTasks(root) {
     const rel = ['.jeff', 'tasks', ent.name, 'task.json'].join('/');
     let raw;
     try {
+      await lstat(full);
+    } catch (e) {
+      if (/** @type {any} */ (e).code === 'ENOENT') continue;
+      throw unparseableTaskError(rel);
+    }
+    try {
       raw = await readFile(full, 'utf8');
     } catch {
-      continue; // no task.json in this dir (find -name task.json would not match)
+      throw unparseableTaskError(rel);
     }
     candidates.push({ full, rel, raw });
   }

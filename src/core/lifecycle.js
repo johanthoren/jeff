@@ -166,7 +166,17 @@ export async function initProject(root) {
   let raw = null;
   try {
     raw = await readFile(configPath, 'utf8');
-  } catch {
+  } catch (e) {
+    let exists = true;
+    try {
+      await lstat(configPath);
+    } catch (statErr) {
+      if (/** @type {any} */ (statErr).code === 'ENOENT') exists = false;
+      else throw statErr;
+    }
+    if (exists) {
+      return { code: 1, stdout: [], stderr: [`cook: cannot read existing config.json: ${configPath}`] };
+    }
     raw = null; // absent → create fresh below
   }
   // Existing config: read → set `.active = true` (in place / append-last) →

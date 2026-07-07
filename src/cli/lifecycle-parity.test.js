@@ -193,6 +193,21 @@ test('init rejects a stray argument before any write, matching the oracle', asyn
   }
 });
 
+test('init refuses existing unreadable config.json instead of treating it as absent', async () => {
+  const root = await makeGitRoot('jeff-lifecycle-config-symlink-root-');
+  try {
+    await mkdir(join(root, '.jeff'));
+    await symlink(join(root, 'missing-config-target'), join(root, '.jeff', 'config.json'));
+
+    const js = runJs(root, ['init']);
+
+    assert.notEqual(js.code, 0);
+    assert.match(js.stderr, /cannot read existing config\.json/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('init refuses non-object config.json instead of reporting false activation', async () => {
   const root = await makeGitRoot('jeff-lifecycle-nonobject-root-');
   try {

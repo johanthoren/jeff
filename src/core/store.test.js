@@ -83,6 +83,18 @@ test('writeTask unlinks the temp file and rejects when rename fails', async () =
   }
 });
 
+test('collectTasks rejects unreadable task.json instead of silently skipping it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-store-root-'));
+  try {
+    await mkdir(join(root, '.jeff', 'tasks', '001-x'), { recursive: true });
+    await symlink(join(root, 'missing-task-target'), join(root, '.jeff', 'tasks', '001-x', 'task.json'));
+
+    await assert.rejects(() => collectTasks(root), /unparseable task\.json/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('collectTasks refuses a symlinked tasks directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'jeff-store-root-'));
   const outside = await mkdtemp(join(tmpdir(), 'jeff-store-outside-'));
