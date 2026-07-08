@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
  * one node:test differential file spawning BOTH the frozen bash oracle
  * (`skills/cook/scripts/cook.sh <verb>`) and the JS port
  * (`src/cli/cook.js <verb>`) with `COOK_ROOT=<fixture>`, asserting equality
- * against the oracle's OWN runtime output — never a hardcoded golden string.
+ * against the oracle's OWN runtime output : never a hardcoded golden string.
  * Doctor (read-only) + the two die/reject rows use ONE shared fixture and
  * full byte-parity (`assertParity`). The three scaffold rows + idempotency
  * MUTATE, so they use a fixture PAIR (A=oracle, B=JS) with stdout
@@ -111,7 +111,7 @@ async function seedConfig(root, config) {
 }
 
 // =====================================================================
-// DOCTOR — shared fixture, assertParity, byte-exact (AC1)
+// DOCTOR : shared fixture, assertParity, byte-exact (AC1)
 // =====================================================================
 
 // --- D1: lite + active (AC1) ---
@@ -168,7 +168,7 @@ test('doctor rejects a stray argument fail-closed, matching the oracle', async (
 });
 
 // =====================================================================
-// INIT — die/reject rows, shared fixture (no mutation), assertParity + no-scaffold (AC3)
+// INIT : die/reject rows, shared fixture (no mutation), assertParity + no-scaffold (AC3)
 // =====================================================================
 
 // --- I4: git guard (AC3) ---
@@ -266,7 +266,7 @@ test('init refuses a .jeff symlink before writing outside the repo', async () =>
 });
 
 // =====================================================================
-// INIT — scaffold rows, fixture PAIR (A=oracle, B=JS), stdout normalization
+// INIT : scaffold rows, fixture PAIR (A=oracle, B=JS), stdout normalization
 // + `.jeff/` subtree parity (AC4, AC5)
 // =====================================================================
 

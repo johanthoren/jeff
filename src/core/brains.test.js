@@ -7,9 +7,9 @@ import { resolveBrain } from './brains.js';
 /**
  * Test design (.jeff/tasks/item4-brains/notes.md, "## Test design"):
  * DIRECT behavioral pins on the pure resolver (no cook.sh oracle exists for
- * brains — greenfield). Anthropic base `{model,effort}` verbatim is owned
+ * brains : greenfield). Anthropic base `{model,effort}` verbatim is owned
  * by the drift check (AC2⊕AC6, src/cli/brain-drift.test.js), NOT restated
- * here as literal constants — these rows assert only the delta behaviors
+ * here as literal constants : these rows assert only the delta behaviors
  * (provider-agnostic effort, unknown-provider fallback, unknown-stage
  * throw, fable elevation + degrade, availability-fallback matrix).
  */
@@ -31,7 +31,7 @@ test('AC1: tier->effort is provider-agnostic for build/tidy/encode tiers', () =>
   assert.equal(resolveBrain('anthropic', 'test').effort, 'medium');
   assert.equal(resolveBrain('untuned-x', 'test', { sessionModel: 'm' }).effort, 'medium');
   // AC3 (refactor-brain-xhigh): refactor's xhigh is sourced from STAGE_TIER,
-  // not the provider column — an untuned provider still yields xhigh.
+  // not the provider column : an untuned provider still yields xhigh.
   assert.equal(resolveBrain('untuned-x', 'refactor', { sessionModel: 'm' }).effort, 'xhigh');
 });
 
@@ -94,7 +94,7 @@ test('AC4: no availableModels given -> the table pin is returned unchanged (no f
 
 test('refactor-brain-xhigh AC1: resolveBrain(anthropic, refactor) resolves to opus·xhigh', () => {
   // Deliberate exception to this file's "base owned by drift" header (:8-15),
-  // same pattern as the `opus` pins at :69/:87 — refactor's value changed in
+  // same pattern as the `opus` pins at :69/:87 : refactor's value changed in
   // this task and nothing else value-pins it.
   assert.deepEqual(resolveBrain('anthropic', 'refactor'), { provider: 'anthropic', model: 'opus', effort: 'xhigh' });
 });

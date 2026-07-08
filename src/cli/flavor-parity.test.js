@@ -10,14 +10,14 @@ import { spawnSync } from 'node:child_process';
 
 /**
  * Test design (.jeff/tasks/item5a1-flavor/notes.md, "## Test design"):
- * a differential spawn — run the same fixture through BOTH
+ * a differential spawn : run the same fixture through BOTH
  * `node src/cli/cook.js flavor [args]` (the JS port) and
  * `bash skills/cook/scripts/cook.sh flavor [args]` (the frozen oracle), each
  * with COOK_ROOT=<isolated mkdtemp> and a controlled JEFF_FLAVOR (set to the
  * row's value, or deleted from the spawn env for the unset cell), passed
  * identically to both. Asserts byte-identical stdout, byte-identical stderr,
  * and identical exit code (assertParity). The expectation is always the
- * oracle's own runtime output — never a hardcoded golden — so this stays a
+ * oracle's own runtime output : never a hardcoded golden : so this stays a
  * genuine differential. Rows: C1-C11 (config branch), E1-E6 (env branch),
  * A1-A2 (arg-rejection). See the 19-row matrix in notes.md for the full
  * pinning rationale of each row.
@@ -31,7 +31,7 @@ const COOK_JS = join(REPO_ROOT, 'src', 'cli', 'cook.js');
 /**
  * Build the spawn env for a row: COOK_ROOT is always injected; JEFF_FLAVOR is
  * either set to `flavorEnv` or, when `flavorEnv` is `undefined`, deleted from
- * the spawn env entirely (the "unset" cell) — identical for both spawns.
+ * the spawn env entirely (the "unset" cell) : identical for both spawns.
  *
  * @param {string} root
  * @param {string} [flavorEnv]

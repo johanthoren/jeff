@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
  * (`skills/cook/scripts/cook.sh baseline …`) and the JS port (`src/cli/cook.js
  * baseline …`) over the SAME isolated git fixture, byte-comparing raw stdout,
  * raw stderr, and exit code (the `assertParity` shape from
- * verify-parity.test.js — never trims, never a golden string). Rows map to
+ * verify-parity.test.js : never trims, never a golden string). Rows map to
  * the plan's B1-B13 table; see the per-test comment for the row.
  */
 
@@ -78,7 +78,7 @@ function runGit(root, args) {
 }
 
 /**
- * headSha(root) = `git -C root rev-parse HEAD` trimmed — fetched at runtime
+ * headSha(root) = `git -C root rev-parse HEAD` trimmed : fetched at runtime
  * for rows whose expected message embeds HEAD.
  *
  * @param {string} root

@@ -62,7 +62,7 @@ function appendLineOnce(file, line) {
 
 /**
  * UTC ISO at second precision, matching the oracle's `date -u
- * +%Y-%m-%dT%H:%M:%SZ` shape (no millis) — a bare `toISOString()` emits `.mmm`
+ * +%Y-%m-%dT%H:%M:%SZ` shape (no millis) : a bare `toISOString()` emits `.mmm`
  * and would be rejected by the format assertion.
  *
  * @returns {string}
@@ -88,7 +88,7 @@ function isSymlink(path) {
  * Full-mode run log: append one HEAD-keyed jsonl line to
  * `.jeff/test-runs.jsonl` and git-exclude it, but only in a git repo with a
  * resolvable HEAD. Side-effecting; kept separate from the pure verdict build
- * in `runVerify` (lite mode never calls this — its `.jeff/` is already
+ * in `runVerify` (lite mode never calls this : its `.jeff/` is already
  * git-excluded).
  *
  * @param {string} root

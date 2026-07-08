@@ -10,7 +10,7 @@ import { readMode, readConfig } from './store.js';
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
 /**
- * The live `jq --version` (trimmed), or `null` if jq is not on PATH — the JS
+ * The live `jq --version` (trimmed), or `null` if jq is not on PATH : the JS
  * equivalent of cook.sh's `command -v jq` + `jq --version`. Both the oracle and
  * this port shell the SAME binary, so the version string matches; the jq-present
  * flag also gates `doctor`'s ACTIVE status, replicating cook.sh's quirk (:686).
@@ -33,10 +33,10 @@ function jqVersion() {
  * cook.sh's `cmd_doctor` (skills/cook/scripts/cook.sh:674). Prints, in order:
  * the header, `root:`, the jq line (OK-with-version or the MISSING install
  * hint), `mode:` (via the shared `readMode`), the jeff ACTIVE/inactive status,
- * and — lite mode only — the git-hook note.
+ * and : lite mode only : the git-hook note.
  *
  * ACTIVE requires ALL of: `.jeff/config.json` exists, jq is on PATH, and its
- * `.active` reads as `true` — cook.sh gates the status on jq-presence (:686),
+ * `.active` reads as `true` : cook.sh gates the status on jq-presence (:686),
  * quirk and all, so this port does too. The `.active // false = "true"` shell
  * test maps to `String(cfg.active ?? false) === 'true'` (a JSON `true` or the
  * string `"true"` both pass; absent/null/false fail).
@@ -78,7 +78,7 @@ export async function doctorReport(root) {
 }
 
 /**
- * Whether `<root>/.git` is a directory — the `[ -d "$ROOT/.git" ]` guard. A
+ * Whether `<root>/.git` is a directory : the `[ -d "$ROOT/.git" ]` guard. A
  * `.git` FILE (submodule/worktree) or a missing `.git` both read false, matching
  * cook.sh's `cmd_init` (:711).
  *
@@ -122,7 +122,7 @@ export async function writeFileAtomic(target, json) {
  * a non-git dir dies `cook: not a git repository: <root>` (exit 1) with nothing
  * scaffolded. Otherwise: `mkdir -p .jeff/{tasks,memory}`; create an empty
  * `.jeff/tasks/.gitkeep` if absent (never truncate an existing one); and write
- * `config.json` — an ABSENT config gets `{schemaVersion:1, system:"jeff",
+ * `config.json` : an ABSENT config gets `{schemaVersion:1, system:"jeff",
  * active:true}`, an EXISTING config has `.active` set to `true` preserving every
  * other key and its ORDER (update-in-place if present, append-last if not). The
  * config is `JSON.stringify(obj, null, 2) + '\n'` (byte-identical to jq's
@@ -157,7 +157,7 @@ export async function initProject(root) {
   await mkdir(tasksDir, { recursive: true });
   await mkdir(join(bk, 'memory'), { recursive: true });
 
-  // `.gitkeep` if absent — never truncate an existing one (`[ -f … ] || :>`).
+  // `.gitkeep` if absent : never truncate an existing one (`[ -f … ] || :>`).
   await writeFile(join(tasksDir, '.gitkeep'), '', { flag: 'wx', encoding: 'utf8' })
     .catch((/** @type {any} */ e) => { if (e.code !== 'EEXIST') throw e; });
 

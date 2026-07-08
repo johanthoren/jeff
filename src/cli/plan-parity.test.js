@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
  * one node:test differential file spawning BOTH the frozen bash oracle
  * (`skills/cook/scripts/cook.sh plan …`) and the JS port (`src/cli/cook.js
  * plan …`) with `COOK_ROOT=<fixture>`, asserting the port's output against the
- * oracle's OWN LIVE runtime output — never a hardcoded golden string.
+ * oracle's OWN LIVE runtime output : never a hardcoded golden string.
  * Read-only rows (S1-S5, C1-C7, D1) use ONE shared mkdtemp fixture +
  * assertParity (raw stdout+stderr+rc, byte-exact). Mutating rows (K1-K4,
  * A1-A3) use a fixture PAIR (A=oracle, B=JS) seeded byte-identically,
@@ -129,7 +129,7 @@ async function seedPlanMd(root) {
 }
 
 // =====================================================================
-// S1-S5 — plan section, shared fixture, assertParity (AC1)
+// S1-S5 : plan section, shared fixture, assertParity (AC1)
 // =====================================================================
 
 // --- S1: matching heading, nested + same-depth follower ends the section ---
@@ -190,7 +190,7 @@ test('plan section with no matching anchor dies matching the oracle', async () =
 });
 
 // =====================================================================
-// K1-K4 — plan check, fixture PAIR, byte-diff (AC2)
+// K1-K4 : plan check, fixture PAIR, byte-diff (AC2)
 // =====================================================================
 
 /**
@@ -276,7 +276,7 @@ test('plan check does not tick a checklist item inside a fence, matching the ora
 });
 
 // =====================================================================
-// A1-A3 — plan append, fixture PAIR, byte-diff (AC3)
+// A1-A3 : plan append, fixture PAIR, byte-diff (AC3)
 // =====================================================================
 
 // --- A1: insert after LAST non-blank line in the section, blank separator survives ---
@@ -331,7 +331,7 @@ test('plan append with no matching anchor dies and leaves the file unchanged, ma
 });
 
 // =====================================================================
-// C1-C8 — containment (resolve_ref_path), the security core (AC4)
+// C1-C8 : containment (resolve_ref_path), the security core (AC4)
 // =====================================================================
 
 // --- C1: `..`-escape ref -> refuse byte-exact ---
@@ -442,7 +442,7 @@ test('plan check/append on an escaping target refuse and leave the victim file b
     const victimContent = '# Victim\n\nsecret unchanged content\n';
     // A single shared victim: containment REFUSES before any write (no tmp,
     // no mv), so there is no cross-talk risk running both sides against the
-    // same path — and the refusal echoes the RAW arg, so both sides must see
+    // same path : and the refusal echoes the RAW arg, so both sides must see
     // the identical arg for their stderr to be comparable at all.
     const victim = join(outside, 'victim.md');
     await writeFile(victim, victimContent, 'utf8');
@@ -467,7 +467,7 @@ test('plan check/append on an escaping target refuse and leave the victim file b
 });
 
 // =====================================================================
-// D1 — dispatch/usage: sub validation + per-verb usage strings (AC5)
+// D1 : dispatch/usage: sub validation + per-verb usage strings (AC5)
 // =====================================================================
 
 test('plan dispatch/usage strings match the oracle for missing sub, unknown sub, and under-args', async () => {
@@ -489,7 +489,7 @@ test('plan dispatch/usage strings match the oracle for missing sub, unknown sub,
 });
 
 // =====================================================================
-// Prototype-key dispatch bug pins (`in` walks the prototype chain) — new
+// Prototype-key dispatch bug pins (`in` walks the prototype chain) : new
 // rows added by the coordinator's re-fire, review-found, test-first.
 // `sub in VERBS` / `psub in PLAN_VERBS` treat Object.prototype own-property
 // names (constructor, toString, __proto__, hasOwnProperty) as known verbs,

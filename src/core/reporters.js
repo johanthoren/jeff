@@ -1,7 +1,7 @@
 // @ts-check
 
 /**
- * The read-only reporter verbs — `ls`, `status`, `show` — as pure functions
+ * The read-only reporter verbs : `ls`, `status`, `show` : as pure functions
  * over the task store. Ports of cook.sh's `cmd_ls` (skills/cook/scripts/cook.sh:634),
  * `cmd_status` (:645), and `cmd_show` (:661), returning the same verdict shape
  * as `validate-store.js` (`{ code, stdout, stderr }`) instead of printing +
@@ -24,9 +24,9 @@ import { collectTasks } from './store.js';
 /**
  * Collect the store, or map the single `collectTasks` throw (unparseable
  * task.json) to the reporter failure verdict. This is `collect_tasks`'s single
- * `warn` line + rc 1 (nuance N4) — the shell aborts under `set -e` when the
+ * `warn` line + rc 1 (nuance N4) : the shell aborts under `set -e` when the
  * `tasks="$(collect_tasks)"` substitution fails, having already emitted the
- * warn to stderr — NOT `validateStore`'s richer two-line failure.
+ * warn to stderr : NOT `validateStore`'s richer two-line failure.
  *
  * @param {string} root
  * @returns {Promise<{ tasks: any[] } | { fail: Report }>}
@@ -87,7 +87,7 @@ export async function lsReport(root) {
 
 /**
  * `cook status`: in-flight count + per-active line (in collect/path order, NOT
- * id-sorted — nuance N2), the pending backlog count with a `⚠` suffix iff
+ * id-sorted : nuance N2), the pending backlog count with a `⚠` suffix iff
  * pending > 8, then the done/blocked/abandoned tally.
  *
  * @param {string} root
@@ -124,7 +124,7 @@ export async function statusReport(root) {
  *
  * The success path re-serializes the RAW file (not the `collectTasks` object,
  * which carries an injected `_dir`) as `JSON.stringify(JSON.parse(raw), null, 2)`
- * — byte-exact with cook.sh's `jq '.' "$f"` over the task.json schema (contract
+ * : byte-exact with cook.sh's `jq '.' "$f"` over the task.json schema (contract
  * C; the caller appends the single trailing newline).
  *
  * @param {string} root

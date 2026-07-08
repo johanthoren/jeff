@@ -7,7 +7,7 @@ import { git, treeDirty, testRunsLogPath } from './git.js';
 
 /**
  * A `die`: exit 1 with a single `cook: <msg>` line on stderr (the `cook: `
- * prefix is part of the string; `emit` adds the newline — same shape verify.js
+ * prefix is part of the string; `emit` adds the newline : same shape verify.js
  * uses).
  *
  * @param {string} msg
@@ -25,7 +25,7 @@ function die(msg) {
  *
  * Two-pass, slurp-first (mirrors `jq -e -s`): read the whole file first; an
  * absent or zero-byte file is the `[ -s ]` gate (die #8). Then parse EVERY
- * non-blank line — ANY parse failure fails the whole check (die #10), even if
+ * non-blank line : ANY parse failure fails the whole check (die #10), even if
  * a valid match appears earlier (row B13). Only once all lines parse does the
  * record scan decide OK vs die #10. This can NOT be scan-first-return-on-match:
  * the oracle's `jq -s` slurps the whole file before evaluating, so one
@@ -73,7 +73,7 @@ function scanRunLog(root, want) {
  * currently clean OUTSIDE `.jeff/` AND current HEAD == `<hash>`. Default hash =
  * current HEAD. Read-only port of cook.sh's `cmd_baseline`
  * (skills/cook/scripts/cook.sh:1470). `<hash>` is only string-compared and
- * interpolated into messages — never passed to git as a revision.
+ * interpolated into messages : never passed to git as a revision.
  *
  * @param {string} root
  * @param {string[]} args - argv after `baseline`
@@ -88,7 +88,7 @@ export async function runBaseline(root, args) {
   const pos = args.slice(1);
 
   // Count-only guard, naming the 2ND positional (the first token BEYOND the
-  // allowed hash) — parity with cook.sh's `[ "$#" -le 1 ] || die … '$2'`. NO
+  // allowed hash) : parity with cook.sh's `[ "$#" -le 1 ] || die … '$2'`. NO
   // dash-prefixed "unknown option" special case (`check --foo` is a hash).
   if (pos.length > 1) return die(`baseline check: unexpected argument '${pos[1]}'`);
 

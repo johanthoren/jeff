@@ -9,7 +9,7 @@
  * non-zero naming any drifted stage(s), else 0. No generator: 6 files × 2 fields
  * does not earn codegen.
  *
- * The agents dir is `argv[2]` (default `<repo>/agents`) — the testability seam: a
+ * The agents dir is `argv[2]` (default `<repo>/agents`) : the testability seam: a
  * test points it at a temp drifted copy, never mutating the real files.
  */
 
@@ -46,7 +46,7 @@ async function main() {
     if (actual.model !== expected.model || actual.effort !== expected.effort) {
       drifted++;
       process.stderr.write(
-        `brain-drift: ${stage}: frontmatter drifted from the table — ` +
+        `brain-drift: ${stage}: frontmatter drifted from the table : ` +
           `expected model=${expected.model} effort=${expected.effort}, ` +
           `got model=${actual.model} effort=${actual.effort}\n`,
       );

@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
  * fixture), asserting equal raw stdout, equal raw stderr, and equal exit
  * code (byte-exact for L-rows), plus a timestamp-tolerant comparison of the
  * appended `.jeff/test-runs.jsonl` line for F-rows. The expectation is always
- * the oracle's OWN runtime output — never a hardcoded golden string. Rows map
+ * the oracle's OWN runtime output : never a hardcoded golden string. Rows map
  * to the plan's L1-L7 / F1-F5 table; see the per-test comment for the row.
  */
 
@@ -169,7 +169,7 @@ async function clearLog(root) {
  * from the oracle, one from the JS port, captured from the SAME fixture so
  * `hash` is comparable): equal on every field except `at`, byte-equal on the
  * raw line once `at` is masked (pins compactness/key order/boolean `dirty`),
- * and both `at` values well-formed per the oracle's own format — never a
+ * and both `at` values well-formed per the oracle's own format : never a
  * byte comparison of the non-deterministic value itself.
  *
  * @param {string} oracleLine
@@ -378,7 +378,7 @@ test('git-exclude append for the run log stays idempotent across oracle and JS r
     const js = runJs(root, ['verify']);
     // Idempotency is only meaningful if the JS run itself actually performed
     // verify (and its own append) rather than merely being spawned and
-    // ignored — pin JS's own exit code to the oracle's (AC3), so this row
+    // ignored : pin JS's own exit code to the oracle's (AC3), so this row
     // cannot pass vacuously while the JS verb is absent.
     assert.equal(js.code, oracle.code, 'exit code mismatch for verify');
 

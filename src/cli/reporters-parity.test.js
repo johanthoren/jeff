@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
  * (`skills/cook/scripts/cook.sh`) and the JS port (`src/cli/cook.js`) over
  * shared fixture stores, asserting equal raw stdout, equal raw stderr, and
  * equal exit code. The expectation is always the oracle's OWN runtime output
- * — never a hardcoded golden string — so this is a genuine differential, not
+ * : never a hardcoded golden string : so this is a genuine differential, not
  * a change-detector. Rows map to the plan's behavior × seam × disposition
  * table; see the per-test comment for the row number.
  */
@@ -163,7 +163,7 @@ test('ls on a string-id (lite) store sorts by codepoint, matching the oracle', a
 // "reporters' unparseable line is collect_tasks's single warn … reproduce the
 // single-line shape"). So this row asserts: rc parity, empty-stdout parity,
 // and that JS stderr CONTAINS the oracle's own `cook: validation FAILED: …`
-// line (extracted from the oracle's actual output, not a golden string — still
+// line (extracted from the oracle's actual output, not a golden string : still
 // a genuine differential). It stays discriminating: a missing warn line, a
 // non-1 rc, or non-empty stdout still fails it.
 test('ls on a store with an unparseable task.json matches the oracle warn + rc 1', async () => {

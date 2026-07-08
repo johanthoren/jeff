@@ -10,7 +10,7 @@ export const STAGES = ['plan', 'test', 'implement', 'refactor', 'review', 'audit
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
 const PLAN_TOOLS = ['read', 'grep', 'find', 'ls', 'write'];
-const JUDGMENT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash'];
+const JUDGMENT_TOOLS = ['read', 'grep', 'find', 'ls'];
 const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 

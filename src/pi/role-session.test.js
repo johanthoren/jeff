@@ -95,7 +95,7 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
     assert.equal(result.agent_id, '0123456789abcdef');
     assert.equal(result.stage, 'review');
     assert.deepEqual(result.brain, { provider: 'local', model: 'qwen-dev', effort: 'xhigh' });
-    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls', 'bash']);
+    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls']);
     assert.equal(capturedOptions.thinkingLevel, 'xhigh');
     assert.equal(capturedOptions.model, currentModel);
     assert.match(capturedPrompt, /Review body\./);
@@ -104,7 +104,7 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
   });
 });
 
-test('dispatchRoleSession grants stage-appropriate tools without edit access to judgment stages', async () => {
+test('dispatchRoleSession grants stage-appropriate tools without command or edit access to judgment stages', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {Record<string, string>} */
     const agents = {
@@ -142,9 +142,9 @@ test('dispatchRoleSession grants stage-appropriate tools without edit access to 
 
     assert.deepEqual(toolsByStage, {
       plan: ['read', 'grep', 'find', 'ls', 'write'],
-      review: ['read', 'grep', 'find', 'ls', 'bash'],
-      audit: ['read', 'grep', 'find', 'ls', 'bash'],
-      refute: ['read', 'grep', 'find', 'ls', 'bash'],
+      review: ['read', 'grep', 'find', 'ls'],
+      audit: ['read', 'grep', 'find', 'ls'],
+      refute: ['read', 'grep', 'find', 'ls'],
     });
   });
 });

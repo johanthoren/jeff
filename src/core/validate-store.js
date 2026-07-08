@@ -64,7 +64,7 @@ export async function validateStore(root) {
     return fail(stderr);
   }
 
-  // 2. [gate] done-gate pre-flight — short-circuits the whole pass on violation.
+  // 2. [gate] done-gate pre-flight : short-circuits the whole pass on violation.
   let gateViolations;
   try {
     gateViolations = gatePreflight(tasks);
@@ -80,7 +80,7 @@ export async function validateStore(root) {
     return pass(['cook: no tasks under .jeff/tasks/: nothing to validate.']);
   }
 
-  // 4. Main invariant pass — fail CLOSED if it could not evaluate.
+  // 4. Main invariant pass : fail CLOSED if it could not evaluate.
   let violations;
   try {
     violations = runInvariants(tasks, { lite });
@@ -91,7 +91,7 @@ export async function validateStore(root) {
     return fail([...violations, `cook: validation FAILED (${violations.length} issue(s))`]);
   }
 
-  // 5. Profile conformance — present-means-conform; absent is fine.
+  // 5. Profile conformance : present-means-conform; absent is fine.
   let profileText = null;
   try {
     profileText = await readFile(join(root, '.jeff', 'profile.md'), 'utf8');
@@ -160,7 +160,7 @@ export function checkProfile(text) {
   // mode`. Reaches true byte-parity here (no jq-noise leak). The `parsed !== null`
   // clause is load-bearing and the OPPOSITE boundary from store.js's item-3 guard:
   // `null` front-matter must keep falling through to the conformance path (which
-  // already matches cook.sh's null behavior — free parity). Do not drop it.
+  // already matches cook.sh's null behavior : free parity). Do not drop it.
   if (parsed !== null && !isType(parsed, 'object')) {
     return 'cook: profile.md: front-matter JSON is unparseable';
   }

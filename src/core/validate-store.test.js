@@ -120,7 +120,7 @@ test('validateStore: test author == implementer fails with [inv1]', async () => 
   }
 });
 
-test('validateStore: lite gating discriminator — string id passes under lite, fails under full', async () => {
+test('validateStore: lite gating discriminator : string id passes under lite, fails under full', async () => {
   const rootLite = await makeRoot();
   const rootFull = await makeRoot();
   try {
@@ -245,7 +245,7 @@ test('validateStore: a malformed .jeff/profile.md (missing a required key) fails
  * marker which the finding names explicitly.
  */
 
-test('validateStore: A1 — tests as an array instead of an object fails closed', async () => {
+test('validateStore: A1 : tests as an array instead of an object fails closed', async () => {
   const root = await makeRoot();
   try {
     await writeTaskDir(root, '0001-task-one', validTask({ tests: [] }));
@@ -258,7 +258,7 @@ test('validateStore: A1 — tests as an array instead of an object fails closed'
   }
 });
 
-test('validateStore: A2 — agents as a number instead of an object fails closed', async () => {
+test('validateStore: A2 : agents as a number instead of an object fails closed', async () => {
   const root = await makeRoot();
   try {
     await writeTaskDir(root, '0001-task-one', validTask({ agents: 42 }));
@@ -271,7 +271,7 @@ test('validateStore: A2 — agents as a number instead of an object fails closed
   }
 });
 
-test('validateStore: A3 — na-justification gate rejects a numeric (non-array) evidence under lite', async () => {
+test('validateStore: A3 : na-justification gate rejects a numeric (non-array) evidence under lite', async () => {
   const root = await makeRoot();
   try {
     await writeConfig(root, { mode: 'lite' });
@@ -296,7 +296,7 @@ test('validateStore: A3 — na-justification gate rejects a numeric (non-array) 
   }
 });
 
-test('validateStore: A4 — deps as a string instead of an array fails closed via the container guard, not spurious inv5', async () => {
+test('validateStore: A4 : deps as a string instead of an array fails closed via the container guard, not spurious inv5', async () => {
   const root = await makeRoot();
   try {
     await writeTaskDir(root, '0001-task-one', validTask({ deps: 'abc' }));
@@ -315,11 +315,11 @@ test('validateStore: A4 — deps as a string instead of an array fails closed vi
 
 /**
  * Test design (.jeff/tasks/lite-8-1975209887/notes.md, "Test design
- * (2026-07-03)"): items 3 and 4 (AC2) — crash-path message alignment on
+ * (2026-07-03)"): items 3 and 4 (AC2) : crash-path message alignment on
  * non-fixture store shapes.
  */
 
-test('validateStore: item 3 — a whole-task non-object task.json emits the per-file "unparseable task.json at DIR" line', async () => {
+test('validateStore: item 3 : a whole-task non-object task.json emits the per-file "unparseable task.json at DIR" line', async () => {
   const root = await makeRoot();
   try {
     const dir = join(root, '.jeff', 'tasks', '0001-broken');
@@ -338,7 +338,7 @@ test('validateStore: item 3 — a whole-task non-object task.json emits the per-
   }
 });
 
-test('validateStore: item 4 — array/scalar profile front-matter is reported unparseable; null front-matter stays a conformance failure', async () => {
+test('validateStore: item 4 : array/scalar profile front-matter is reported unparseable; null front-matter stays a conformance failure', async () => {
   const arrayProfile = ['```json', '[1,2,3]', '```', ''].join('\n');
   const nullProfile = ['```json', 'null', '```', ''].join('\n');
 

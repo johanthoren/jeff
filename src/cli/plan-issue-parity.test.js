@@ -231,7 +231,7 @@ function assertAnnotateOnly(argvLog) {
 }
 
 // =====================================================================
-// F-SECTION — read-only fetch + bounds, no gh issue edit (AC1, AC3, AC6)
+// F-SECTION : read-only fetch + bounds, no gh issue edit (AC1, AC3, AC6)
 // =====================================================================
 
 test('plan section on a valid issue ref fetches the body and prints bounds, read-only, matching the oracle', async () => {
@@ -250,7 +250,7 @@ test('plan section on a valid issue ref fetches the body and prints bounds, read
 });
 
 // =====================================================================
-// F-CHECK / F-CHECK-IDEMPOTENT / F-APPEND — fetch + engine + write-back
+// F-CHECK / F-CHECK-IDEMPOTENT / F-APPEND : fetch + engine + write-back
 // (AC3, AC5/S-SHAPE, AC6)
 // =====================================================================
 
@@ -299,7 +299,7 @@ test('plan append on a valid issue ref inserts after the section and writes the 
 });
 
 // =====================================================================
-// V-ACCEPT — valid refs route to the adapter and succeed (AC1, AC2)
+// V-ACCEPT : valid refs route to the adapter and succeed (AC1, AC2)
 // =====================================================================
 
 test('valid issue refs (#0, #1234567, and a valid issues URL) route to the adapter and succeed, matching the oracle', async () => {
@@ -314,7 +314,7 @@ test('valid issue refs (#0, #1234567, and a valid issues URL) route to the adapt
 });
 
 // =====================================================================
-// V-REJECT — issue-shaped but invalid refs fail-closed before any gh spawn
+// V-REJECT : issue-shaped but invalid refs fail-closed before any gh spawn
 // (AC2, AC5 security core)
 // =====================================================================
 
@@ -336,7 +336,7 @@ REJECTED_REFS.forEach((ref, i) => {
 });
 
 // =====================================================================
-// R-USAGE — issue-path usage strings (AC1)
+// R-USAGE : issue-path usage strings (AC1)
 // =====================================================================
 
 test('issue-path usage strings (missing trailing arg) are the <issue-ref>-worded variants, matching the oracle', async () => {
@@ -351,7 +351,7 @@ test('issue-path usage strings (missing trailing arg) are the <issue-ref>-worded
 });
 
 // =====================================================================
-// D-ABSENT — gh absent from PATH, jq present (AC4)
+// D-ABSENT : gh absent from PATH, jq present (AC4)
 // =====================================================================
 
 test('plan section with gh absent from PATH dies with the gh-required message and makes no write-back, matching the oracle', async () => {
@@ -372,7 +372,7 @@ test('plan section with gh absent from PATH dies with the gh-required message an
 });
 
 // =====================================================================
-// D-VIEW-FAIL / D-EDIT-FAIL — gh present but the call fails (AC4)
+// D-VIEW-FAIL / D-EDIT-FAIL : gh present but the call fails (AC4)
 // =====================================================================
 
 test("gh issue view failing dies with gh's stderr then the cook die line, no write-back, matching the oracle", async () => {
@@ -403,7 +403,7 @@ test("gh issue edit failing dies with gh's stderr then the cook die line, no orp
 });
 
 // =====================================================================
-// D-CHECK-NOMATCH / D-APPEND-NOANCHOR / D-SECTION-NOMATCH — engine die
+// D-CHECK-NOMATCH / D-APPEND-NOANCHOR / D-SECTION-NOMATCH : engine die
 // BEFORE any edit (AC3, AC6)
 // =====================================================================
 
@@ -445,7 +445,7 @@ test('plan section with no matching anchor dies, matching the oracle', async () 
 });
 
 // =====================================================================
-// L-FULL-REFUSE — issue write path is lite-only, refuses before any gh
+// L-FULL-REFUSE : issue write path is lite-only, refuses before any gh
 // call (AC7)
 // =====================================================================
 

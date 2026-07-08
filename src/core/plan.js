@@ -10,7 +10,7 @@
  * The awk of `plan_section_bounds` / `plan_check_file` / `plan_append_file` is
  * replicated in JS (no shelling out): the slug rule, the naive fence toggle, the
  * section-bounds walk, the first-match checkbox tick, and the verbatim section
- * append. `resolveRefPath` is a faithful port of `resolve_ref_path` — the
+ * append. `resolveRefPath` is a faithful port of `resolve_ref_path` : the
  * fail-closed, per-hop symlink containment guard (the security core): a plain
  * `fs.realpathSync` is deliberately REJECTED because it resolves an in→out→in
  * symlink chain the oracle refuses (a parity break AND a containment hole).
@@ -18,7 +18,7 @@
  * The GitHub-issue backend (`is_issue_ref` routing, slice 3d2) is `planIssueOp`
  * below: an issue-shaped ref is routed by `cook.js` past `resolveRefPath`
  * entirely, straight to `gh`, reusing the same `checkContent`/`appendContent`
- * transforms as the markdown verbs (no containment — a fetched issue body is
+ * transforms as the markdown verbs (no containment : a fetched issue body is
  * not a user path).
  */
 
@@ -111,7 +111,7 @@ function isFile(p) {
  * or null. Faithful port of `resolve_ref_path` (skills/cook/scripts/cook.sh:827):
  * the ref's PARENT must resolve inside ROOT; the leaf must exist; then the symlink
  * chain is followed hop by hop, re-checking containment at EVERY hop (a single
- * check is not enough — an in-ROOT chain whose final target lands outside ROOT
+ * check is not enough : an in-ROOT chain whose final target lands outside ROOT
  * escapes if we stop after one readlink), bounded by SYMLINK_MAX_HOPS so a cycle
  * fails CLOSED. A plain `fs.realpathSync(candidate)` is NOT used: it would resolve
  * (and thus accept) an in→out→in chain the oracle refuses.
@@ -124,7 +124,7 @@ function resolveRefPath(root, ref) {
   const rootdir = resolveDir(root);
   if (rootdir === null) return null;
 
-  // Absolute refs kept as-is; relative refs joined onto raw ROOT (NOT path.join —
+  // Absolute refs kept as-is; relative refs joined onto raw ROOT (NOT path.join :
   // that would normalize away the `..` the containment check must catch). The
   // parent is physically resolved below, so a lexical `..` is handled correctly.
   const candidate = ref.startsWith('/') ? ref : `${root}/${ref}`;
@@ -192,7 +192,7 @@ function splitLines(content) {
 
 /**
  * Rejoin records the way awk prints them: every record followed by ORS (`\n`),
- * including the last — so a file with a trailing newline round-trips, and one
+ * including the last : so a file with a trailing newline round-trips, and one
  * without gains a trailing newline exactly as the oracle's awk would.
  *
  * @param {string[]} lines
@@ -246,7 +246,7 @@ function sectionBounds(lines, anchor) {
 /**
  * Tick the FIRST `- [ ]` whose text after `- [x] ` (`substr($0,7)`) contains
  * `sub`; already-checked is idempotent. Every other byte preserved. Returns the
- * new content, or null if no checklist item matches (the caller dies — no write).
+ * new content, or null if no checklist item matches (the caller dies : no write).
  * The ONE copy of the check transform: both the markdown verb (`planCheck`, with
  * containment) and the issue adapter (`planIssueOp`, no containment) call it.
  * Port of plan_check_file (:932).
@@ -268,7 +268,7 @@ function checkContent(content, sub) {
       continue;
     }
     if (!matched && !infence && /^- \[[ xX]\] /.test(line)) {
-      const text = line.substring(6); // substr($0, 7) — text after `- [x] `
+      const text = line.substring(6); // substr($0, 7) : text after `- [x] `
       // index(text, needle) > 0 is 1-based: an empty needle is 0 → no match.
       if (sub !== '' && text.includes(sub)) {
         matched = true;
@@ -285,7 +285,7 @@ function checkContent(content, sub) {
  * Insert `text` as a new line AFTER the last non-blank line (`/[^ \t]/`) within
  * the section whose heading slug == `anchor`, so the trailing blank separator
  * before the next heading survives; `text` is inserted BYTE-VERBATIM. Returns the
- * new content, or null if no heading matches `anchor` (the caller dies — no
+ * new content, or null if no heading matches `anchor` (the caller dies : no
  * write). The ONE copy of the append transform, shared by `planAppend` (markdown,
  * containment) and `planIssueOp` (issue, no containment). Port of
  * plan_append_file (:977).
@@ -383,7 +383,7 @@ export async function planCheck(root, ...args) {
  * the last non-blank line (`/[^ \t]/`) within the section's bounds, so the
  * trailing blank separator before the next heading survives. `text` is inserted
  * BYTE-VERBATIM (the oracle passes it via ENVIRON, not awk `-v`, to skip escape
- * processing — a JS string arg is already verbatim). Anchor not found dies. Atomic,
+ * processing : a JS string arg is already verbatim). Anchor not found dies. Atomic,
  * containment FIRST. Parity with plan_append (:1012) + plan_append_file (:977).
  *
  * @param {string} root
@@ -420,7 +420,7 @@ export function isIssueRef(ref) {
  * Validate an issue-shaped REF fail-closed (SECURITY): accept ONLY a digits-only
  * `#<n>` or a strict `https://github.com/<owner>/<repo>/issues/<n>` URL. Returns
  * null when valid, or a die `Verdict` (three distinct messages, byte-exact with
- * the oracle). Called BEFORE any gh spawn — a rejected ref spawns NO gh. Port of
+ * the oracle). Called BEFORE any gh spawn : a rejected ref spawns NO gh. Port of
  * `issue_ref_validate` (:1087).
  *
  * @param {string} ref
@@ -448,7 +448,7 @@ export function issueRefValidate(ref) {
  * Classify a `gh` `spawnSync` result as ENOENT (gh absent) vs. a non-zero exit,
  * returning the matching die `Verdict`, or null on success (status 0). The ONE
  * copy of the error-classification shared by `ghFetchBody` (view) and
- * `ghWriteBody` (edit) — each supplies its own byte-exact messages; the oracle's
+ * `ghWriteBody` (edit) : each supplies its own byte-exact messages; the oracle's
  * die strings themselves start with a literal `cook: ` and `die` prepends
  * another → the frozen output is a double `cook: cook: ` prefix, replicated
  * verbatim by both callers (parity, not aesthetics). gh's stderr is inherited by
@@ -491,8 +491,8 @@ function ghFetchBody(ref) {
 
 /**
  * Write CONTENT back to issue REF as its new body via EXACTLY `gh issue edit
- * <ref> --body-file=<tmp> --` — annotate-only, NO state/label/assignee/milestone
- * flag — spawned as an argv ARRAY. CONTENT goes to a temp under `os.tmpdir()`,
+ * <ref> --body-file=<tmp> --` : annotate-only, NO state/label/assignee/milestone
+ * flag : spawned as an argv ARRAY. CONTENT goes to a temp under `os.tmpdir()`,
  * removed in `finally` even on edit failure (no orphan). Returns null on success
  * or a die `Verdict` (see `ghDie`). Port of `gh_issue_write_body` (:1120).
  *
@@ -520,7 +520,7 @@ function ghWriteBody(ref, content) {
 
 /**
  * Run a plan op (section|check|append) against an ISSUE REF, reusing the markdown
- * engine byte-for-byte on the FETCHED body (no `resolveRefPath` — the body is a
+ * engine byte-for-byte on the FETCHED body (no `resolveRefPath` : the body is a
  * trusted temp we fetched, not a user path). Lite-gated (writing a shared issue
  * is a lite-only act). Order: lite-gate → `issueRefValidate` → fetch → per-op
  * arg-count check + engine transform; section is read-only (bounds, no edit),

@@ -7,7 +7,7 @@
  *
  * Two tables + a tier indirection:
  *   - `STAGE_TIER`: stage → { tier, effort }. `tier → effort` is the durable,
- *     provider-agnostic invariant — effort comes from the stage/tier, NEVER the
+ *     provider-agnostic invariant : effort comes from the stage/tier, NEVER the
  *     provider column (spec §5.1). Covers the 6 dispatched stages only; `capture`
  *     is Jeff-run (no agent file, never dispatched) → out of domain, throws.
  *   - `PROVIDER_COLUMNS`: provider → { tier → model }. `anthropic` concrete (the
@@ -38,12 +38,12 @@ const STAGE_TIER = {
 /** @type {Record<string, Record<string, string>>} */
 const PROVIDER_COLUMNS = {
   anthropic: { judge: 'opus', build: 'opus', tidy: 'opus', encode: 'sonnet' },
-  // openai: §9/bench placeholder — intentionally unpinned (do NOT pin gpt-5.*);
+  // openai: §9/bench placeholder : intentionally unpinned (do NOT pin gpt-5.*);
   // resolves to opts.sessionModel like any untuned provider until a column lands.
   openai: {},
 };
 
-/** @type {Record<string, string[]>} — most → least capable, for the availability walk. */
+/** @type {Record<string, string[]>} : most → least capable, for the availability walk. */
 const MODEL_LADDER = {
   // `fable` is reachable only via topBrain, but belongs here so the fable→opus
   // degrade falls out of the same downward walk.
@@ -52,7 +52,7 @@ const MODEL_LADDER = {
 
 /**
  * The nearest available model scanning DOWN the provider ladder from `model`'s
- * position (never a silent UP-grade — that would be a cost surprise), else the
+ * position (never a silent UP-grade : that would be a cost surprise), else the
  * terminal floor `sessionModel`. A dispatch never hard-fails on availability.
  *
  * @param {string} provider
@@ -96,7 +96,7 @@ export function resolveBrain(sessionProvider, stage, opts = {}) {
   if (opts.topBrain === 'fable' && tier === 'judge') {
     // The one narrow opt-in (spec §5): elevate the judge tier to fable · xhigh.
     // Any other topBrain value is silently ignored (the deferred arbitrary
-    // override, §9) — no elevation, not an error.
+    // override, §9) : no elevation, not an error.
     model = 'fable';
     effort = 'xhigh';
   } else {

@@ -37,7 +37,7 @@ function jqStr(v) {
  * jq's `length` (cook.sh inv4 na-justification, skills/cook/scripts/cook.sh:431:
  * `(($t.tests.evidence // []) | length)`): array → element count, string →
  * codepoint count, number → absolute value, object → key count, null → 0. A jq
- * boolean has no length (`true | length` aborts), so this throws — the caller's
+ * boolean has no length (`true | length` aborts), so this throws : the caller's
  * fail-CLOSED trap then renders the verdict. Replaces `String(v).length`, which
  * diverged (e.g. numeric `0` → "0".length == 1 instead of jq's 0).
  * @param {any} v

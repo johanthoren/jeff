@@ -130,7 +130,7 @@ export async function collectTasks(root) {
     // at DIR" line, so throwing here reproduces that line. Without this guard JS
     // diverges: 42/true/"str" TypeError on the `_dir` assignment (generic line
     // only), and `[]` silently flows into the invariant pass emitting misleading
-    // spurious violations. `null` is rejected too — stricter than cook.sh, which
+    // spurious violations. `null` is rejected too : stricter than cook.sh, which
     // quirkily degrades `null` into a `{_dir}`-only object; deliberate fail-closed
     // strictness on untrusted input (Chef call 2026-07-03). Ceiling: cook.sh also
     // leaks a raw `jq: error (… absolute tmp path …)` line we do NOT replicate

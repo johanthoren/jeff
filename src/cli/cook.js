@@ -3,8 +3,8 @@
 
 /**
  * `cook.js`: the JS CLI entry for the ported verbs. Resolves the store root like
- * cook.sh (skills/cook/scripts/cook.sh:44) — `COOK_ROOT`, else
- * `git rev-parse --show-toplevel`, else cwd — dispatches to the pure verdict
+ * cook.sh (skills/cook/scripts/cook.sh:44) : `COOK_ROOT`, else
+ * `git rev-parse --show-toplevel`, else cwd : dispatches to the pure verdict
  * function for the verb, prints its streams, and exits with the verdict code.
  * Imports only node stdlib + `src/core/*` (no pi SDK): the §6 boundary.
  *
@@ -104,16 +104,16 @@ async function main() {
   if (sub === 'baseline') {
     // `baseline check [<hash>]` (like `show`/`plan`, NOT a VERBS entry): it
     // takes its own positional args. runBaseline does its own subcommand +
-    // arg-count usage checks — parity with cook.sh's cmd_baseline (:1470).
+    // arg-count usage checks : parity with cook.sh's cmd_baseline (:1470).
     return emit(await runBaseline(root, rest));
   }
 
   if (sub === 'plan') {
     // `plan <sub> <target> …` (like `show`, NOT a VERBS entry): validate the
-    // subcommand FIRST — parity with cook.sh's cmd_plan (:1024) — then dispatch
+    // subcommand FIRST : parity with cook.sh's cmd_plan (:1024) : then dispatch
     // to the core verb, which does its own arg-count usage check. When the first
     // plan positional (the target) is an issue ref (`#…`/`http(s)://…`), route to
-    // the github-issues adapter instead of the markdown path — parity with
+    // the github-issues adapter instead of the markdown path : parity with
     // cook.sh's cmd_plan (:1032). Markdown refs are unchanged.
     const psub = rest[0];
     const pargs = rest.slice(1);

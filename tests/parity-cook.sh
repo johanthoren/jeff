@@ -26,7 +26,7 @@ js_out="$(node "$JS_COOK" "$@" 2>&1)"
 js_rc=$?
 
 # Known ceiling (deliberate): comparing the SORTED merged (stdout+stderr) streams
-# cannot detect a stdout-vs-stderr swap or intra-stream reordering — only the set of
+# cannot detect a stdout-vs-stderr swap or intra-stream reordering : only the set of
 # lines and the exit code. Sufficient for the validator's parity (line identity +
 # exit code are the contract); a stream-faithful diff would be the upgrade path.
 sh_sorted="$(printf '%s\n' "$sh_out" | sort)"
