@@ -14,9 +14,9 @@
 # Payload prefixes (changes require a bump):
 #   skills/  agents/  commands/  hooks/  .claude-plugin/
 # Payload files:
-#   AGENTS.md  README.md
+#   AGENTS.md  package.json
 # Excluded (changes do NOT require a bump):
-#   .jeff/  tests/  .github/  docs/  Makefile  dotfiles
+#   .jeff/  tests/  .github/  docs/  README.md  Makefile  dotfiles
 
 set -euo pipefail
 
@@ -125,9 +125,9 @@ while IFS= read -r -d '' path; do
   done
 
   # Check payload files (literal match; git is case-sensitive and the tracked
-  # files are exactly AGENTS.md and README.md).
+  # files are exactly AGENTS.md and package.json).
   if [ "$matched" -eq 0 ]; then
-    if [ "$path" = "AGENTS.md" ] || [ "$path" = "README.md" ]; then
+    if [ "$path" = "AGENTS.md" ] || [ "$path" = "package.json" ]; then
       matched=1
     fi
   fi

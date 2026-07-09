@@ -57,5 +57,5 @@ A **task** moves through the pipeline `capture → plan → test → implement �
 ## Contributing to jeff itself
 
 - `skills/cook/scripts/cook.sh` is portable Bash + `jq` (no Bash-4 features; jq does the JSON work). Test changes against fixtures before committing: the validator gates its own repo.
-- Follow semver and consider a version cut for every user-visible fix or improvement. Prefer landing the version bump in the same commit as the releasable change; use a separate bump-only commit only for catch-up or release metadata cleanup. Do not bump for internal chores that do not change shipped payload or behavior.
+- Follow semver and consider a version cut for every user-visible shipped payload or behavior change. Prefer landing the version bump in the same commit as the releasable change; use a separate bump-only commit only for catch-up or release metadata cleanup. Do not bump for README-only/docs-only churn unless those docs are the released payload.
 - Skills and agents are prose. Keep them tight: frontier models supply the craft; the briefs convey role, separation, output contract, and which standards to honor.
