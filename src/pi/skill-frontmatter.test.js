@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const SKILL_FILES = ['../../skills/cook/SKILL.md'];
+const JUDGMENT_AGENT_FILES = ['../../agents/cook-review.md', '../../agents/cook-audit.md', '../../agents/cook-refute.md'];
 
 /**
  * @param {string} text
@@ -30,5 +31,15 @@ test('skill frontmatter descriptions with colon-space are quoted or block scalar
       true,
       `${relative} description must quote colon-space values for YAML parsers`,
     );
+  }
+});
+
+test('judgment agent frontmatter stays read-only', async () => {
+  for (const relative of JUDGMENT_AGENT_FILES) {
+    const file = new URL(relative, import.meta.url);
+    const text = await readFile(file, 'utf8');
+    const tools = frontmatterLines(text).find((line) => line.startsWith('tools:'));
+
+    assert.equal(tools, 'tools: Read, Grep, Glob', `${relative} must stay read-only`);
   }
 });
