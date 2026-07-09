@@ -1,6 +1,6 @@
 # AGENTS.md: jeff
 
-**jeff** is a lean, skill-based autonomous task system, distributed as a **Claude Code plugin**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through a fresh-context specialist pipeline, gated by a small Bash + `jq` validator. Built for a single trusted Chef on frontier models (Opus 4.8+, GPT-5.5+).
+**jeff** is a lean, skill-based autonomous task system, distributed as a **Claude Code plugin** and **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through a fresh-context specialist pipeline, gated by a small Bash + `jq` validator. Built for a single trusted Chef on frontier models (Opus 4.8+, GPT-5.5+).
 
 - Design spec: `docs/specs/jeff-design.md`
 - State schema: `skills/cook/reference/jeff-state-schema.md`
@@ -19,15 +19,17 @@ jeff ships with a kitchen persona. The voice is a render layer over a fixed subs
 
 The flavor toggle controls only how Jeff speaks to the Chef: kitchen voice (Fire / Sending it / Re-fire / Scrapped / Back to you, Chef / the tasting = the council) vs plain status words. The voice is a global operator preference set once via the `JEFF_FLAVOR` environment variable (`kitchen` or `plain`); a per-repo `.jeff/config.json` `"flavor"` (`true` = kitchen, `false` = plain) overrides it for that repo. Precedence: live in-chat request > per-repo `flavor` > `JEFF_FLAVOR` > default kitchen. `cook flavor` resolves the effective voice to one word (`kitchen|plain`). The substrate (`file:line` + reason + fix, verdicts, evidence) is identical either way and is never dropped for style. Canonical spec: `docs/brand.md`.
 
-## Repo = the plugin
+## Repo = the package
 
 ```
-.claude-plugin/plugin.json        # manifest
-.claude-plugin/marketplace.json   # self-marketplace for `/plugin install`
+.claude-plugin/plugin.json        # Claude Code manifest
+.claude-plugin/marketplace.json   # Claude Code self-marketplace for `/plugin install`
+package.json                      # Pi package manifest (`pi.extensions`, `pi.skills`)
+src/pi/                           # Pi extension + role-session dispatch bridge
 skills/cook/SKILL.md              # the loop + ambient entry
-agents/cook-*.md                  # the 6 dispatched stage specialists: plan, test, implement, refactor, review, audit (brain pinned in frontmatter; capture is Jeff-run, no file)
+agents/cook-*.md                  # dispatched stage specialists: plan, test, implement, refactor, review, audit, refute
 skills/cook/scripts/cook.sh       # validator + CLI: validate, ls, status, show, init, deinit, doctor (Bash + jq)
-.jeff/                       # THIS project's task state (each project carries its own)
+.jeff/                            # THIS project's task state (each project carries its own)
 docs/specs/                       # design rationale
 ```
 

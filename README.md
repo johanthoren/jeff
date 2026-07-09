@@ -45,6 +45,18 @@ Full method in [AGENTS.md](AGENTS.md).
 
 ## Install
 
+### Pi
+
+```
+pi install git:github.com/johanthoren/jeff
+```
+
+To pin a release, add a tag ref:
+
+```
+pi install git:github.com/johanthoren/jeff@X.Y.Z
+```
+
 ### Claude Code
 
 ```
