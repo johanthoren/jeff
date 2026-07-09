@@ -182,6 +182,18 @@ teardown() {
   [[ "$output" == *"package.json"* ]]
 }
 
+@test "package.json metadata change requires a version bump" {
+  init_fixture_repo "$FIX" "1.0.0"
+  printf '{"version":"1.0.0","description":"updated package metadata"}\n' > "$FIX/package.json"
+  git -C "$FIX" add package.json
+  git -C "$FIX" commit -q -m "update package metadata"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"package.json"* ]]
+}
+
 # ---------------------------------------------------------------------------
 # (d) version strictly below last tag (regression) → fail
 # ---------------------------------------------------------------------------
@@ -290,16 +302,13 @@ teardown() {
   [[ "$output" == *".claude-plugin/plugin.json"* ]] || [[ "$output" == *".claude-plugin"* ]]
 }
 
-@test "payload/README.md: change triggers fail and output names the file" {
+@test "README-only docs change does not require a version bump" {
   init_fixture_repo "$FIX" "1.0.0"
   commit_file "$FIX" "README.md" "# Updated readme"
 
   run_script "$FIX"
 
-  [ "$status" -ne 0 ]
-  local lower
-  lower="$(echo "$output" | tr '[:upper:]' '[:lower:]')"
-  [[ "$lower" == *"readme.md"* ]]
+  [ "$status" -eq 0 ]
 }
 
 @test "payload/AGENTS.md: change triggers fail and output names the file" {
