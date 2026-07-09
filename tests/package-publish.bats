@@ -13,8 +13,10 @@ setup_file() { cook_hermetic_git; }
   ' "$REPO/package.json"
   [ "$status" -eq 0 ]
 
-  run bash -c "cd $(printf '%q' "$REPO") && npm pack --dry-run --json | jq -e '.[0].files | map(.path) as \$files | ([\"package.json\",\"src/pi/extension.js\",\"skills/cook/SKILL.md\",\"agents/cook-plan.md\",\".claude-plugin/plugin.json\"] | all(. as \$p | \$files | index(\$p)))'"
+  run bash -c 'cd "$1" && npm pack --dry-run --json' _ "$REPO"
   [ "$status" -eq 0 ]
+
+  jq -e '.[0].files | map(.path) as $files | (["package.json","src/pi/extension.js","skills/cook/SKILL.md","agents/cook-plan.md",".claude-plugin/plugin.json"] | all(. as $p | $files | index($p)))' <<<"$output" >/dev/null
 }
 
 @test "README Pi install prefers npm and labels git as dev edge" {

@@ -11,8 +11,8 @@
 #   - version from .claude-plugin/plugin.json
 #   - Payload prefixes: skills/ agents/ commands/ hooks/ .claude-plugin/
 #     (bin/ dropped by task 0034; skills/ covers the CLI at its new location)
-#   - Payload files: AGENTS.md README.md
-#   - Excluded: .jeff/ tests/ .github/ docs/ Makefile dotfiles
+#   - Payload files: AGENTS.md package.json
+#   - Excluded: .jeff/ tests/ .github/ docs/ README.md Makefile dotfiles
 #   - Exit 0 = pass; non-zero = fail; reason on stderr
 #
 # Cases:
