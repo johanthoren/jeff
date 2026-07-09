@@ -71,6 +71,23 @@ if [ -z "$version" ] || [ "$version" = "null" ]; then
   die "version field missing or null in $plugin_json"
 fi
 
+package_json="$root/package.json"
+if [ -f "$package_json" ]; then
+  package_version="$(jq -r .version "$package_json")"
+  if [ "$package_version" != "$version" ]; then
+    die "version mismatch: .claude-plugin/plugin.json=$version but package.json=$package_version"
+  fi
+fi
+
+package_lock="$root/package-lock.json"
+if [ -f "$package_lock" ]; then
+  lock_version="$(jq -r .version "$package_lock")"
+  lock_root_version="$(jq -r '.packages[""].version' "$package_lock")"
+  if [ "$lock_version" != "$version" ] || [ "$lock_root_version" != "$version" ]; then
+    die "version mismatch: .claude-plugin/plugin.json=$version but package-lock.json=$lock_version and package-lock root=$lock_root_version"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # Regression check: version must not go backwards
 # ---------------------------------------------------------------------------

@@ -166,6 +166,23 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
+# Version metadata must stay in lockstep across shell package manifests.
+# ---------------------------------------------------------------------------
+
+@test "version mismatch: package.json version differs from plugin version" {
+  init_fixture_repo "$FIX" "1.0.0"
+  printf '{"version":"1.0.1"}\n' > "$FIX/package.json"
+  git -C "$FIX" add package.json
+  git -C "$FIX" commit -q -m "add mismatched package version"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"version mismatch"* ]]
+  [[ "$output" == *"package.json"* ]]
+}
+
+# ---------------------------------------------------------------------------
 # (d) version strictly below last tag (regression) → fail
 # ---------------------------------------------------------------------------
 

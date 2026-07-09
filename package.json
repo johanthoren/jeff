@@ -1,0 +1,16 @@
+{
+  "name": "jeff",
+  "version": "1.3.0",
+  "description": "jeff: a quality brigade for coding agents (pi shell core)",
+  "type": "module",
+  "private": true,
+  "license": "Apache-2.0",
+  "pi": {
+    "extensions": ["./src/pi/extension.js"],
+    "skills": ["./skills"]
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "typescript": "5.9.3"
+  }
+}
