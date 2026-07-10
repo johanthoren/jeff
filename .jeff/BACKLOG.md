@@ -6,19 +6,24 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Roadmap reset:** repo is on `main` at release `1.3.1`; Pi support is already merged. The old `pi-shell` / Phase 5a notes are historical and no longer drive the plan.
-- **Validation baseline:** `make validate` is green as of 2026-07-09 (`cook: validation OK`). Carry this as the known-good starting point for the next task unless the tree changes.
-- **Open local ledger:** `#26` exists in `.jeff/tasks/lite-26-*` at `capture`, but it is not on the TS-core critical path. Keep it deferred unless scanner breadth becomes urgent.
+- **Top priority — `#33`:** fix linked-worktree verification so a green `cook verify` run cannot exit non-zero when `.git` is a gitfile.
+- **Roadmap reset:** repo is on `main` at release `1.3.2`; Pi support is already merged. The old `pi-shell` / Phase 5a notes are historical and no longer drive the plan.
+- **Baseline:** `make test` is green at `bb1f751` after the npm-publishing workflow change.
+- **Deferred local ledger:** `#26` remains at capture and off the core path unless scanner breadth becomes urgent.
 
-## NEXT — path to the full TS model
+## NEXT
 
-### 0. Clean the map
+### 0. Fix stacked Pi thinking indicators
+
+- Handle `#37`: reproduce the repeated adjacent `Thinking...` rows, identify whether Jeff, Pi core, or the GPT-5.6 Sol provider stream owns them, then fix locally or track the upstream resolution.
+
+### 1. Clean the map
 
 - Close or mark shipped stale GitHub issues whose work is already in `1.3.1`: `#3`, `#4`, `#5`, `#6`, `#8`, `#16`, `#17`, `#19`, `#23`, `#24` if confirmed.
 - Recast remaining Bash-era issue wording toward the TS destination. In particular, `#27` and `#18` still describe Bash/jq acceptance even though the next core should be TS.
 - Decide whether `#26` should remain deferred or be closed/superseded by the later TS security-scanner pass.
 
-### 1. TS schema + validator core
+### 2. TS schema + validator core
 
 Goal: make the TS core the authoritative shape/check layer, not a mirror of `cook.sh`.
 
@@ -31,7 +36,7 @@ Goal: make the TS core the authoritative shape/check layer, not a mirror of `coo
   - INV-2 checks implementer differs from both reviewers;
   - single-review path remains null-tolerant and unchanged.
 
-### 2. TS transcription spine
+### 3. TS transcription spine
 
 Goal: stop relying on Jeff/the model to manually transcribe stage outcomes.
 
@@ -42,7 +47,7 @@ Goal: stop relying on Jeff/the model to manually transcribe stage outcomes.
   - `cook verify --task <id>` records `tests.gate` directly into the task.
 - This becomes the mechanical bridge between fresh specialist contexts and durable state.
 
-### 3. Host-neutral CLI + cook.sh retirement path
+### 4. Host-neutral CLI + cook.sh retirement path
 
 Goal: `cook.sh` becomes test oracle only, then disappears from shipped paths.
 
@@ -51,7 +56,7 @@ Goal: `cook.sh` becomes test oracle only, then disappears from shipped paths.
 - Add a no-live-reference guard: shipped skills/hooks/src must not call `cook.sh`.
 - Retire `cook.sh` from the payload only after TS CLI, Pi, and Claude Code all pass smoke tests.
 
-### 4. Dispatch/host adapter seam
+### 5. Dispatch/host adapter seam
 
 Goal: one core, thin host adapters.
 
@@ -59,7 +64,7 @@ Goal: one core, thin host adapters.
 - Host adapters own only how a fresh specialist context is started and how its structured return is collected.
 - Keep existing Pi adapter thin; keep Claude Code wiring thin; do not bake either into the core.
 
-### 5. Cursor support after the seam exists
+### 6. Cursor support after the seam exists
 
 Goal: Cursor is an adapter, not a fork.
 
@@ -70,10 +75,5 @@ Goal: Cursor is an adapter, not a fork.
 ## DEFERRED / NON-CRITICAL
 
 - `#26` long-tail `review-security` scanners: useful breadth, not blocking the TS migration.
+- `#36` conditional npm-publishing hardening: revisit only if the release-check, pinned npm toolchain, or single-maintainer trust boundary changes.
 - Remaining old code cleanup notes from the previous backlog: `writeFileAtomic`/`writeTask` dedup, `reporters.js` dead `else`, `plan.js` empty-needle comment, widen `tsconfig` if script typechecks become relevant, and ledger effort translation at recording boundary.
-
-## DONE / HISTORICAL
-
-- JS CLI scaffold and parity slices through `validate`, `ls/status/show`, `verify`, `doctor/init`, plan markdown/GitHub adapters, `flavor`, and `baseline`.
-- Brain table + `resolveBrain` + Pi package/extension/dispatch support.
-- Release `1.3.1` includes Pi support.
