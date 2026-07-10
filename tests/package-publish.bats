@@ -8,6 +8,7 @@ setup_file() { cook_hermetic_git; }
   run bash -c 'jq -e '\''
     .name == "@johanthoren/jeff" and
     .private != true and
+    .publishConfig.access == "public" and
     ((.keywords // []) | index("pi-package")) and
     (.peerDependencies["@earendil-works/pi-coding-agent"] == "*") and
     (.pi.extensions == ["./src/pi/extension.js"]) and

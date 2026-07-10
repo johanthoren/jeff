@@ -4,6 +4,9 @@
   "description": "jeff: a quality brigade for coding agents (pi shell core)",
   "type": "module",
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": ["pi-package"],
   "files": [
     ".claude-plugin",
