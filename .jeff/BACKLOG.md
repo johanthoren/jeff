@@ -6,16 +6,16 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Top priority — `#35`:** run the bounded final full-suite and independent quality pass, then open the publishing PR.
+- **Top priority — `#33`:** fix linked-worktree verification so a green `cook verify` run cannot exit non-zero when `.git` is a gitfile.
 - **Roadmap reset:** repo is on `main` at release `1.3.2`; Pi support is already merged. The old `pi-shell` / Phase 5a notes are historical and no longer drive the plan.
-- **Baseline:** `make test` was green before `#35` began; re-establish the full gate after its last code change.
+- **Baseline:** `make test` is green at `bb1f751` after the npm-publishing workflow change.
 - **Deferred local ledger:** `#26` remains at capture and off the core path unless scanner breadth becomes urgent.
 
 ## NEXT
 
-### 0. Repair linked-worktree verification
+### 0. Fix stacked Pi thinking indicators
 
-- Fix `#33`: a green `cook verify` run must not exit non-zero when `.git` is a linked-worktree gitfile.
+- Handle `#37`: reproduce the repeated adjacent `Thinking...` rows, identify whether Jeff, Pi core, or the GPT-5.6 Sol provider stream owns them, then fix locally or track the upstream resolution.
 
 ### 1. Clean the map
 
