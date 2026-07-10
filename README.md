@@ -45,30 +45,43 @@ Full method in [AGENTS.md](AGENTS.md).
 
 ## Install
 
-### Pi
+Jeff is one versioned package with separate host install paths. Install only the
+shells you use; Pi and Claude Code do not install or activate each other.
+
+### Pi — recommended stable path
+
+Use the npm package for normal Pi installs. This gives you semver releases.
 
 ```
 pi install npm:@johanthoren/jeff
 ```
 
-To pin a release, include the semver version:
+To pin a release:
 
 ```
 pi install npm:@johanthoren/jeff@X.Y.Z
 ```
 
-For dev/edge installs from the live repository:
+For dogfooding or dev/edge installs from the live repository:
 
 ```
 pi install git:github.com/johanthoren/jeff
 ```
 
-### Claude Code
+Use the git path only when you intentionally want latest commit behavior instead
+of a stable release.
+
+### Claude Code — recommended path
+
+Use Claude Code's plugin marketplace flow:
 
 ```
 /plugin marketplace add johanthoren/jeff
 /plugin install jeff@jeff
 ```
+
+Plain `npm install @johanthoren/jeff` only downloads the artifact into
+`node_modules`; it does not activate Jeff in Pi or Claude Code.
 
 ## Set up
 
