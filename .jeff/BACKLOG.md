@@ -6,7 +6,7 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Top priority — `#35`:** run the final full gate and independent security/correctness checks, then open the publishing PR.
+- **Top priority — `#35`:** bind the executable tag/version guard to pre-publish ordering, then run the bounded final quality pass.
 - **Roadmap reset:** repo is on `main` at release `1.3.2`; Pi support is already merged. The old `pi-shell` / Phase 5a notes are historical and no longer drive the plan.
 - **Baseline:** `make test` was green before `#35` began; re-establish the full gate after its last code change.
 - **Deferred local ledger:** `#26` remains at capture and off the core path unless scanner breadth becomes urgent.
