@@ -11,12 +11,18 @@ setup_file() { cook_hermetic_git; }
     .publishConfig.access == "public" and
     ((.keywords // []) | index("pi-package")) and
     (.peerDependencies["@earendil-works/pi-coding-agent"] == "*") and
+    (.peerDependenciesMeta["@earendil-works/pi-coding-agent"].optional == true) and
+    ((.dependencies // {}) | has("@earendil-works/pi-coding-agent") | not) and
     (.pi.extensions == ["./src/pi/extension.js"]) and
     (.pi.skills == ["./skills"])
   '\'' "$1/package.json" >/dev/null &&
   jq -e '\''
-    .name == "@johanthoren/jeff" and .packages[""].name == "@johanthoren/jeff"
-  '\'' "$1/package-lock.json" >/dev/null || { echo "package metadata must publish as @johanthoren/jeff with Pi metadata and peerDependency @earendil-works/pi-coding-agent:*"; exit 1; }' _ "$REPO"
+    .name == "@johanthoren/jeff" and
+    .packages[""].name == "@johanthoren/jeff" and
+    .packages[""].peerDependencies["@earendil-works/pi-coding-agent"] == "*" and
+    .packages[""].peerDependenciesMeta["@earendil-works/pi-coding-agent"].optional == true and
+    ((.packages[""].dependencies // {}) | has("@earendil-works/pi-coding-agent") | not)
+  '\'' "$1/package-lock.json" >/dev/null || { echo "package metadata must publish as @johanthoren/jeff with Pi metadata and optional peerDependency @earendil-works/pi-coding-agent:*"; exit 1; }' _ "$REPO"
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
 
   run bash -c 'cd "$1" && npm pack --dry-run --json' _ "$REPO"
