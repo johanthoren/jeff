@@ -6,7 +6,7 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Top priority — `#35`:** run the full quality gate and independent security/correctness checks before opening the publishing PR.
+- **Top priority — `#35`:** strengthen the executable fail-closed tag/version checks, then re-run the quality gate and independent review.
 - **Roadmap reset:** repo is on `main` at release `1.3.2`; Pi support is already merged. The old `pi-shell` / Phase 5a notes are historical and no longer drive the plan.
 - **Baseline:** `make test` was green before `#35` began; re-establish the full gate after its last code change.
 - **Deferred local ledger:** `#26` remains at capture and off the core path unless scanner breadth becomes urgent.
@@ -75,4 +75,5 @@ Goal: Cursor is an adapter, not a fork.
 ## DEFERRED / NON-CRITICAL
 
 - `#26` long-tail `review-security` scanners: useful breadth, not blocking the TS migration.
+- `#36` conditional npm-publishing hardening: revisit only if the release-check, pinned npm toolchain, or single-maintainer trust boundary changes.
 - Remaining old code cleanup notes from the previous backlog: `writeFileAtomic`/`writeTask` dedup, `reporters.js` dead `else`, `plan.js` empty-needle comment, widen `tsconfig` if script typechecks become relevant, and ledger effort translation at recording boundary.
