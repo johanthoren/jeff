@@ -14,6 +14,20 @@ assert_workflow_order() {
   done
 }
 
+validate_release_tag() {
+  local script fixture
+  script="$(awk '
+    /^      - name: Validate release tag$/ { step = 1; next }
+    step && /^      - name:/ { exit }
+    step && /^        run: \|$/ { run = 1; next }
+    run { sub(/^          /, ""); print }
+  ' "$WORKFLOW")"
+  [ -n "$script" ] || return 1
+  fixture="$(mktemp -d "$BATS_TEST_TMPDIR/release-tag.XXXXXX")"
+  jq -n --arg version "$2" '{ version: $version }' > "$fixture/package.json"
+  (cd "$fixture" && GITHUB_REF_NAME="$1" bash -euo pipefail -c "$script")
+}
+
 selected_channel() {
   local script env_file="$BATS_TEST_TMPDIR/github-env"
   script="$(awk '
@@ -32,23 +46,23 @@ selected_channel() {
   grep -F -- "- '[0-9]+.[0-9]+.[0-9]+'" "$WORKFLOW"
   grep -F -- "- '[0-9]+.[0-9]+.[0-9]+-*'" "$WORKFLOW"
 
-  local semver_re tag
-  semver_re="$(sed -nE "s/^[[:space:]]*semver_re='([^']+)'$/\1/p" "$WORKFLOW")"
-  [ -n "$semver_re" ]
-  grep -Eq 'GITHUB_REF_NAME.*=~.*semver_re' "$WORKFLOW"
-
+  local tag
   for tag in 0.0.0 1.2.3 1.2.3-rc.1 10.20.30-alpha-7; do
-    [[ "$tag" =~ $semver_re ]]
+    run validate_release_tag "$tag" "$tag"
+    [ "$status" -eq 0 ]
   done
   for tag in v1.2.3 1.2 1.2.3+build 01.2.3 1.02.3 1.2.03 1.2.3-01 latest; do
-    ! [[ "$tag" =~ $semver_re ]]
+    run validate_release_tag "$tag" "$tag"
+    [ "$status" -ne 0 ]
   done
 }
 
 @test "publish workflow rejects package version mismatch and retains release checks" {
   [ -f "$WORKFLOW" ]
-  grep -F 'jq -r .version package.json' "$WORKFLOW"
-  grep -Eq 'GITHUB_REF_NAME.*(!=|==| = ).*package_version|package_version.*(!=|==| = ).*GITHUB_REF_NAME' "$WORKFLOW"
+  run validate_release_tag 1.2.3 1.2.4
+  [ "$status" -ne 0 ]
+  run validate_release_tag 1.2.3-rc.1 1.2.3-rc.2
+  [ "$status" -ne 0 ]
   assert_workflow_order 'make release-check' 'npm publish'
 }
 
