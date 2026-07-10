@@ -11,8 +11,8 @@
 #   - version from .claude-plugin/plugin.json
 #   - Payload prefixes: skills/ agents/ commands/ hooks/ .claude-plugin/
 #     (bin/ dropped by task 0034; skills/ covers the CLI at its new location)
-#   - Payload files: AGENTS.md README.md
-#   - Excluded: .jeff/ tests/ .github/ docs/ Makefile dotfiles
+#   - Payload files: AGENTS.md package.json
+#   - Excluded: .jeff/ tests/ .github/ docs/ README.md Makefile dotfiles
 #   - Exit 0 = pass; non-zero = fail; reason on stderr
 #
 # Cases:
@@ -182,6 +182,18 @@ teardown() {
   [[ "$output" == *"package.json"* ]]
 }
 
+@test "package.json metadata change requires a version bump" {
+  init_fixture_repo "$FIX" "1.0.0"
+  printf '{"version":"1.0.0","description":"updated package metadata"}\n' > "$FIX/package.json"
+  git -C "$FIX" add package.json
+  git -C "$FIX" commit -q -m "update package metadata"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"package.json"* ]]
+}
+
 # ---------------------------------------------------------------------------
 # (d) version strictly below last tag (regression) → fail
 # ---------------------------------------------------------------------------
@@ -277,6 +289,16 @@ teardown() {
   [[ "$lower" == *"agents/agents.md"* ]] || [[ "$lower" == *"agents/"* ]]
 }
 
+@test "payload/src: Pi runtime change requires a version bump" {
+  init_fixture_repo "$FIX" "1.0.0"
+  commit_file "$FIX" "src/pi/extension.js" "export function activate() {}"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"src/pi/extension.js"* ]]
+}
+
 @test "payload/claude-plugin: non-version field change triggers fail and output names the path" {
   init_fixture_repo "$FIX" "1.0.0"
   printf '{"version":"1.0.0","name":"jeff"}\n' > "$FIX/.claude-plugin/plugin.json"
@@ -290,16 +312,13 @@ teardown() {
   [[ "$output" == *".claude-plugin/plugin.json"* ]] || [[ "$output" == *".claude-plugin"* ]]
 }
 
-@test "payload/README.md: change triggers fail and output names the file" {
+@test "README-only docs change does not require a version bump" {
   init_fixture_repo "$FIX" "1.0.0"
   commit_file "$FIX" "README.md" "# Updated readme"
 
   run_script "$FIX"
 
-  [ "$status" -ne 0 ]
-  local lower
-  lower="$(echo "$output" | tr '[:upper:]' '[:lower:]')"
-  [[ "$lower" == *"readme.md"* ]]
+  [ "$status" -eq 0 ]
 }
 
 @test "payload/AGENTS.md: change triggers fail and output names the file" {

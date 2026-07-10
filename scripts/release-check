@@ -12,11 +12,11 @@
 # Exit 0 = pass; non-zero = fail; reason on stderr.
 #
 # Payload prefixes (changes require a bump):
-#   skills/  agents/  commands/  hooks/  .claude-plugin/
+#   skills/  agents/  commands/  hooks/  .claude-plugin/  src/
 # Payload files:
-#   AGENTS.md  README.md
+#   AGENTS.md  package.json
 # Excluded (changes do NOT require a bump):
-#   .jeff/  tests/  .github/  docs/  Makefile  dotfiles
+#   .jeff/  tests/  .github/  docs/  README.md  Makefile  dotfiles
 
 set -euo pipefail
 
@@ -100,41 +100,15 @@ fi
 # Collect payload changes since last tag (NUL-delimited)
 # ---------------------------------------------------------------------------
 
-# Payload prefixes and exact filenames.
-# We match: paths starting with these prefixes, or exact top-level files.
-payload_prefixes=(
-  "skills/"
-  "agents/"
-  "commands/"
-  "hooks/"
-  ".claude-plugin/"
-)
-
+# Payload paths: prefixed directories or exact top-level files.
 changed_payload=()
 
 while IFS= read -r -d '' path; do
-  [ -z "$path" ] && continue
-
-  # Check payload prefixes.
-  matched=0
-  for prefix in "${payload_prefixes[@]}"; do
-    if [[ "$path" == "$prefix"* ]]; then
-      matched=1
-      break
-    fi
-  done
-
-  # Check payload files (literal match; git is case-sensitive and the tracked
-  # files are exactly AGENTS.md and README.md).
-  if [ "$matched" -eq 0 ]; then
-    if [ "$path" = "AGENTS.md" ] || [ "$path" = "README.md" ]; then
-      matched=1
-    fi
-  fi
-
-  if [ "$matched" -eq 1 ]; then
-    changed_payload+=("$path")
-  fi
+  case "$path" in
+    skills/*|agents/*|commands/*|hooks/*|.claude-plugin/*|src/*|AGENTS.md|package.json)
+      changed_payload+=("$path")
+      ;;
+  esac
 done < <(git -C "$root" diff --name-only -z "${last_tag}..HEAD")
 
 # ---------------------------------------------------------------------------
