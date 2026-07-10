@@ -6,9 +6,9 @@ setup_file() { cook_hermetic_git; }
 WORKFLOW="$REPO/.github/workflows/publish.yml"
 
 assert_workflow_order() {
-  local previous=0 command line
-  for command in "$@"; do
-    line="$(grep -nF "$command" "$WORKFLOW" | head -1 | cut -d: -f1)"
+  local previous=0 marker line
+  for marker in "$@"; do
+    line="$(grep -nF "$marker" "$WORKFLOW" | head -1 | cut -d: -f1)"
     [ -n "$line" ] && [ "$line" -gt "$previous" ] || return 1
     previous="$line"
   done
@@ -32,7 +32,7 @@ validate_release_tag() {
   (cd "$fixture" && GITHUB_REF_NAME="$1" bash -euo pipefail -c "$script")
 }
 
-selected_channel() {
+select_dist_tag() {
   local script env_file="$BATS_TEST_TMPDIR/github-env"
   script="$(extract_workflow_step_script 'Select npm dist-tag')"
   [ -n "$script" ] || return 1
@@ -56,19 +56,18 @@ selected_channel() {
   done
 }
 
-@test "publish workflow rejects package version mismatch and retains release checks" {
+@test "publish workflow rejects package version mismatch" {
   [ -f "$WORKFLOW" ]
   run validate_release_tag 1.2.3 1.2.4
   [ "$status" -ne 0 ]
   run validate_release_tag 1.2.3-rc.1 1.2.3-rc.2
   [ "$status" -ne 0 ]
-  assert_workflow_order 'name: Validate release tag' 'npm publish'
-  assert_workflow_order 'make release-check' 'npm publish'
 }
 
-@test "publish workflow runs install and all quality gates before publication" {
+@test "publish workflow runs release guard, install, and all quality gates before publication" {
   [ -f "$WORKFLOW" ]
   assert_workflow_order \
+    'name: Validate release tag' \
     'npm ci --ignore-scripts' \
     'make typecheck' \
     'make validate' \
@@ -91,7 +90,7 @@ selected_channel() {
 
 @test "stable versions publish with npm dist-tag latest" {
   [ -f "$WORKFLOW" ]
-  run selected_channel 1.2.3
+  run select_dist_tag 1.2.3
   [ "$status" -eq 0 ]
   [ "$output" = latest ]
   grep -F 'npm publish --provenance --tag "$NPM_DIST_TAG"' "$WORKFLOW"
@@ -99,7 +98,7 @@ selected_channel() {
 
 @test "prerelease versions publish only with npm dist-tag next" {
   [ -f "$WORKFLOW" ]
-  run selected_channel 1.2.3-rc.1
+  run select_dist_tag 1.2.3-rc.1
   [ "$status" -eq 0 ]
   [ "$output" = next ]
   [ "$output" != latest ]
