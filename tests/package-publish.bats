@@ -62,6 +62,7 @@ selected_channel() {
   [ "$status" -ne 0 ]
   run validate_release_tag 1.2.3-rc.1 1.2.3-rc.2
   [ "$status" -ne 0 ]
+  assert_workflow_order 'name: Validate release tag' 'npm publish'
   assert_workflow_order 'make release-check' 'npm publish'
 }
 
