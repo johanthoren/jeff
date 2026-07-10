@@ -2,6 +2,7 @@
 
 import { lstat, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { readMode, readConfig } from './store.js';
@@ -78,15 +79,20 @@ export async function doctorReport(root) {
 }
 
 /**
- * Whether `root` is a real Git work tree, including a linked worktree whose
- * `.git` is a file. Matches cook.sh's `is_git_work_tree` probe.
+ * Whether `root` is the top level of a real Git work tree, including a linked
+ * worktree whose `.git` is a file. Matches cook.sh's `is_git_work_tree` probe.
  *
  * @param {string} root
  * @returns {boolean}
  */
 function isGitRepo(root) {
-  const result = git(root, ['rev-parse', '--is-inside-work-tree']);
-  return result.status === 0 && (result.stdout ?? '').trim() === 'true';
+  const result = git(root, ['rev-parse', '--show-toplevel']);
+  if (result.status !== 0) return false;
+  try {
+    return realpathSync(root) === realpathSync((result.stdout ?? '').replace(/\r?\n$/, ''));
+  } catch {
+    return false;
+  }
 }
 
 /**

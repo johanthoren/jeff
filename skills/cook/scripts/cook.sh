@@ -164,11 +164,13 @@ tree_dirty() {
   [ -n "$(git -C "$ROOT" status --porcelain -- ':(exclude).jeff' 2>/dev/null)" ]
 }
 
-# Exit 0 only when ROOT is a real Git work tree (ordinary or linked).
+# Exit 0 only when ROOT is the top level of a real Git work tree (ordinary or linked).
 is_git_work_tree() {
-  local inside
-  inside="$(git -C "$ROOT" rev-parse --is-inside-work-tree 2>/dev/null)" || return 1
-  [ "$inside" = "true" ]
+  local root top
+  root="$(resolve_dir "$ROOT")" || return 1
+  top="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  top="$(resolve_dir "$top")" || return 1
+  [ "$root" = "$top" ]
 }
 
 # Echo Git's info/exclude path, anchoring ordinary repos' relative result at ROOT.
