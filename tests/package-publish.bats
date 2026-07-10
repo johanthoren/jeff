@@ -14,14 +14,18 @@ assert_workflow_order() {
   done
 }
 
-validate_release_tag() {
-  local script fixture
-  script="$(awk '
-    /^      - name: Validate release tag$/ { step = 1; next }
+extract_workflow_step_script() {
+  awk -v heading="      - name: $1" '
+    $0 == heading { step = 1; next }
     step && /^      - name:/ { exit }
     step && /^        run: \|$/ { run = 1; next }
     run { sub(/^          /, ""); print }
-  ' "$WORKFLOW")"
+  ' "$WORKFLOW"
+}
+
+validate_release_tag() {
+  local script fixture
+  script="$(extract_workflow_step_script 'Validate release tag')"
   [ -n "$script" ] || return 1
   fixture="$(mktemp -d "$BATS_TEST_TMPDIR/release-tag.XXXXXX")"
   jq -n --arg version "$2" '{ version: $version }' > "$fixture/package.json"
@@ -30,12 +34,7 @@ validate_release_tag() {
 
 selected_channel() {
   local script env_file="$BATS_TEST_TMPDIR/github-env"
-  script="$(awk '
-    /^      - name: Select npm dist-tag$/ { step = 1; next }
-    step && /^      - name:/ { exit }
-    step && /^        run: \|$/ { run = 1; next }
-    run { sub(/^          /, ""); print }
-  ' "$WORKFLOW")"
+  script="$(extract_workflow_step_script 'Select npm dist-tag')"
   [ -n "$script" ] || return 1
   GITHUB_REF_NAME="$1" GITHUB_ENV="$env_file" bash -euo pipefail -c "$script"
   sed -n 's/^NPM_DIST_TAG=//p' "$env_file"
