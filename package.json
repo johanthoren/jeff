@@ -1,5 +1,5 @@
 {
-  "name": "jeff",
+  "name": "@johanthoren/jeff",
   "version": "1.3.2",
   "description": "jeff: a quality brigade for coding agents (pi shell core)",
   "type": "module",

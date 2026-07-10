@@ -23,7 +23,7 @@ and rebased onto current pi (`0.71`).
 1. **Single repo, single root package.** No per-shell repos, no separate modules.
 2. **Transparent native install, no external step.** Claude Code installs via the
    `johanthoren/jeff` marketplace exactly as today. pi installs via
-   `npm:jeff` in `~/.pi/agent/settings.json` packages for normal semver releases.
+   `npm:@johanthoren/jeff` in `~/.pi/agent/settings.json` packages for normal semver releases.
    The `git:github.com/johanthoren/jeff` package ref remains dev/edge only. No
    "also run brew/npm install jeff" step for either. Existing `jeff@jeff` users
    change nothing in usage.

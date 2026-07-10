@@ -48,13 +48,13 @@ Full method in [AGENTS.md](AGENTS.md).
 ### Pi
 
 ```
-pi install npm:jeff
+pi install npm:@johanthoren/jeff
 ```
 
 To pin a release, include the semver version:
 
 ```
-pi install npm:jeff@X.Y.Z
+pi install npm:@johanthoren/jeff@X.Y.Z
 ```
 
 For dev/edge installs from the live repository:
