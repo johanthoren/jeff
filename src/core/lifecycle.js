@@ -1,11 +1,11 @@
 // @ts-check
 
 import { lstat, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
-import { statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { readMode, readConfig } from './store.js';
+import { git } from './git.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -78,19 +78,15 @@ export async function doctorReport(root) {
 }
 
 /**
- * Whether `<root>/.git` is a directory : the `[ -d "$ROOT/.git" ]` guard. A
- * `.git` FILE (submodule/worktree) or a missing `.git` both read false, matching
- * cook.sh's `cmd_init` (:711).
+ * Whether `root` is a real Git work tree, including a linked worktree whose
+ * `.git` is a file. Matches cook.sh's `is_git_work_tree` probe.
  *
  * @param {string} root
  * @returns {boolean}
  */
 function isGitRepo(root) {
-  try {
-    return statSync(join(root, '.git')).isDirectory();
-  } catch {
-    return false;
-  }
+  const result = git(root, ['rev-parse', '--is-inside-work-tree']);
+  return result.status === 0 && (result.stdout ?? '').trim() === 'true';
 }
 
 /**

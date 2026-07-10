@@ -3,7 +3,7 @@
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync, lstatSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, isAbsolute, resolve } from 'node:path';
 import { readMode, readConfig } from './store.js';
 import { git, treeDirty, testRunsLogPath } from './git.js';
 
@@ -103,7 +103,9 @@ function logTestRun(root, cmd, result) {
   if (!hash) return;
   const line = JSON.stringify({ hash, dirty: treeDirty(root), result, suite: cmd, at: utcSecond() });
   appendFileSync(testRunsLogPath(root), `${line}\n`);
-  appendLineOnce(join(root, '.git', 'info', 'exclude'), '.jeff/test-runs.jsonl');
+  const exclude = git(root, ['rev-parse', '--git-path', 'info/exclude']);
+  const gitPath = exclude.status === 0 ? (exclude.stdout ?? '').replace(/\r?\n$/, '') : '';
+  if (gitPath) appendLineOnce(isAbsolute(gitPath) ? gitPath : resolve(root, gitPath), '.jeff/test-runs.jsonl');
 }
 
 /**
