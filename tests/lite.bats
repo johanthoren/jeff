@@ -297,6 +297,24 @@ patch_field() {
   [ "$status" -eq 0 ]
 }
 
+@test "root boundary: init rejects a nested COOK_ROOT before writing" {
+  local nested="$TMP/nested-init"
+  mkdir -p "$nested"
+
+  run env COOK_ROOT="$nested" "$COOK" init
+  [ ! -e "$nested/.jeff" ]
+  [ "$status" -ne 0 ]
+}
+
+@test "root boundary: lite rejects a nested COOK_ROOT before writing" {
+  local nested="$TMP/nested-lite"
+  mkdir -p "$nested"
+
+  run env COOK_ROOT="$nested" "$COOK" lite
+  [ ! -e "$nested/.jeff" ]
+  [ "$status" -ne 0 ]
+}
+
 @test "worktree AC3: init succeeds and writes its scaffold in a linked worktree" {
   make_linked_worktree
 

@@ -198,6 +198,21 @@ test('init in a non-git dir dies before any write, matching the oracle', async (
   }
 });
 
+test('init rejects a nested COOK_ROOT before writing', async () => {
+  const repository = await makeGitRoot('jeff-lifecycle-nested-root-');
+  const root = join(repository, 'nested');
+  try {
+    await mkdir(root);
+
+    const js = runJs(root, ['init']);
+
+    await assertNoScaffold(root);
+    assert.notEqual(js.code, 0);
+  } finally {
+    await rm(repository, { recursive: true, force: true });
+  }
+});
+
 // --- I6: reject before write (AC3/AC6) ---
 test('init rejects a stray argument before any write, matching the oracle', async () => {
   const root = await makeGitRoot('jeff-lifecycle-parity-i6-');
