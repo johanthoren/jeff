@@ -44,6 +44,7 @@ setup() {
 
 teardown() {
   rm -rf "$TMP"
+  [ -z "${LINKED_TMP:-}" ] || rm -rf "$LINKED_TMP"
 }
 
 # Shorthand: run cook with $TMP as COOK_ROOT
@@ -294,6 +295,26 @@ patch_field() {
   [ "$status" -eq 0 ]
   run cook lite
   [ "$status" -eq 0 ]
+}
+
+@test "worktree AC3: init succeeds and writes its scaffold in a linked worktree" {
+  make_linked_worktree
+
+  run env COOK_ROOT="$LINKED_ROOT" "$COOK" init
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.active' "$LINKED_ROOT/.jeff/config.json")" = "true" ]
+  [ -f "$LINKED_ROOT/.jeff/tasks/.gitkeep" ]
+}
+
+@test "worktree AC3: lite succeeds and writes config plus Git-reported exclusion" {
+  make_linked_worktree
+  local exclude
+  exclude="$(git -C "$LINKED_ROOT" rev-parse --git-path info/exclude)"
+
+  run env COOK_ROOT="$LINKED_ROOT" "$COOK" lite
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.mode, .active' "$LINKED_ROOT/.jeff/config.json")" = $'lite\ntrue' ]
+  [ "$(grep -cFx '.jeff/' "$exclude")" -eq 1 ]
 }
 
 # ---------------------------------------------------------------------------

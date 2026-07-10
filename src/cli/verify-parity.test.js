@@ -134,6 +134,24 @@ async function makeFullRootWithConfig(config) {
   return root;
 }
 
+/** @param {string} testCommand */
+async function makeLinkedFullRoot(testCommand) {
+  const base = await mkdtemp(join(tmpdir(), 'jeff-verify-parity-worktree-'));
+  const main = join(base, 'main');
+  const root = join(base, 'worktree');
+  await mkdir(main);
+  runGit(main, ['init', '-q']);
+  runGit(main, ['config', 'user.email', 'jeff-verify-parity@example.com']);
+  runGit(main, ['config', 'user.name', 'Jeff Verify Parity']);
+  await writeFile(join(main, 'seed.txt'), 'seed\n', 'utf8');
+  runGit(main, ['add', 'seed.txt']);
+  runGit(main, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'seed']);
+  runGit(main, ['worktree', 'add', '--detach', '-q', root, 'HEAD']);
+  await mkdir(join(root, '.jeff'));
+  await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify({ testCommand }), 'utf8');
+  return { base, root };
+}
+
 /** @param {string} root */
 function logPath(root) {
   return join(root, '.jeff', 'test-runs.jsonl');
@@ -387,6 +405,42 @@ test('git-exclude append for the run log stays idempotent across oracle and JS r
     assert.equal(matches.length, 1, `expected exactly one exclude line, got ${matches.length}: ${JSON.stringify(excludeRaw)}`);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('linked-worktree Bash and JS verify run the suite and preserve green and exit-7 statuses', async () => {
+  const { base, root } = await makeLinkedFullRoot('true');
+  try {
+    const greenRuns = [runOracle(root, ['verify']), runJs(root, ['verify'])];
+    assert.deepEqual(greenRuns.map(({ code }) => code), [0, 0]);
+    for (const green of greenRuns) assert.match(green.stdout, /verify green/);
+
+    const marker = join(root, 'exit-7-ran');
+    await writeFile(
+      join(root, '.jeff', 'config.json'),
+      JSON.stringify({ testCommand: `printf ran > '${marker}'; exit 7` }),
+      'utf8',
+    );
+    for (const run of [runOracle, runJs]) {
+      const red = run(root, ['verify']);
+      assert.equal(red.code, 7);
+      assert.equal(await readFile(marker, 'utf8'), 'ran');
+    }
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("linked-worktree Bash and JS verifies exclude the run log once at Git's reported path", async () => {
+  const { base, root } = await makeLinkedFullRoot('true');
+  try {
+    const runs = [runOracle(root, ['verify']), runJs(root, ['verify'])];
+    assert.deepEqual(runs.map(({ code }) => code), [0, 0]);
+    const exclude = runGit(root, ['rev-parse', '--git-path', 'info/exclude']).stdout.trim();
+    const raw = await readFile(exclude, 'utf8');
+    assert.equal(raw.split('\n').filter((line) => line === '.jeff/test-runs.jsonl').length, 1);
+  } finally {
+    await rm(base, { recursive: true, force: true });
   }
 });
 

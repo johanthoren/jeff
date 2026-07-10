@@ -101,6 +101,22 @@ async function makeGitRoot(prefix) {
   return root;
 }
 
+/** @param {string} prefix */
+async function makeLinkedGitRoot(prefix) {
+  const base = await mkdtemp(join(tmpdir(), prefix));
+  const main = join(base, 'main');
+  const root = join(base, 'worktree');
+  await mkdir(main);
+  runGit(main, ['init', '-q']);
+  runGit(main, ['config', 'user.email', 'jeff-lifecycle-parity@example.com']);
+  runGit(main, ['config', 'user.name', 'Jeff Lifecycle Parity']);
+  await writeFile(join(main, 'seed.txt'), 'seed\n', 'utf8');
+  runGit(main, ['add', 'seed.txt']);
+  runGit(main, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'seed']);
+  runGit(main, ['worktree', 'add', '--detach', '-q', root, 'HEAD']);
+  return { base, root };
+}
+
 /**
  * @param {string} root
  * @param {unknown} config
@@ -307,6 +323,22 @@ function runInitPairAndAssertStdoutParity(aRoot, bRoot) {
   assert.equal(js.stdout, oracle.stdout.split(aRoot).join(bRoot), 'normalized stdout mismatch for init');
   return { oracle, js };
 }
+
+test('linked-worktree init exits zero and scaffolds identically in Bash and JS', async () => {
+  const a = await makeLinkedGitRoot('jeff-lifecycle-worktree-a-');
+  const b = await makeLinkedGitRoot('jeff-lifecycle-worktree-b-');
+  try {
+    const oracle = runOracle(a.root, ['init']);
+    const js = runJs(b.root, ['init']);
+    assert.deepEqual([oracle.code, js.code], [0, 0]);
+    assert.equal(js.stderr, oracle.stderr.split(a.root).join(b.root));
+    assert.equal(js.stdout, oracle.stdout.split(a.root).join(b.root));
+    await assertScaffoldSubtreeParity(a.root, b.root);
+  } finally {
+    await rm(a.base, { recursive: true, force: true });
+    await rm(b.base, { recursive: true, force: true });
+  }
+});
 
 // --- I1: absent config (AC4) ---
 test('init scaffolds an absent config with the jq-form pretty-print, matching the oracle', async () => {
