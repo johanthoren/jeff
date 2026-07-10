@@ -80,12 +80,12 @@ export async function doctorReport(root) {
 
 /**
  * Whether `root` is the top level of a real Git work tree, including a linked
- * worktree whose `.git` is a file. Matches cook.sh's `is_git_work_tree` probe.
+ * worktree whose `.git` is a file. Matches cook.sh's `is_git_root` probe.
  *
  * @param {string} root
  * @returns {boolean}
  */
-function isGitRepo(root) {
+function isGitRoot(root) {
   const result = git(root, ['rev-parse', '--show-toplevel']);
   if (result.status !== 0) return false;
   try {
@@ -134,7 +134,7 @@ export async function writeFileAtomic(target, json) {
  * @returns {Promise<Verdict>}
  */
 export async function initProject(root) {
-  if (!isGitRepo(root)) {
+  if (!isGitRoot(root)) {
     return { code: 1, stdout: [], stderr: [`cook: not a git repository: ${root}`] };
   }
 

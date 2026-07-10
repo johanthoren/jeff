@@ -165,7 +165,7 @@ tree_dirty() {
 }
 
 # Exit 0 only when ROOT is the top level of a real Git work tree (ordinary or linked).
-is_git_work_tree() {
+is_git_root() {
   local root top
   root="$(resolve_dir "$ROOT")" || return 1
   top="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" || return 1
@@ -729,7 +729,7 @@ ensure_scaffold() {
 
 cmd_init() {
   reject_unknown_args init "$@"
-  is_git_work_tree || die "not a git repository: $ROOT"
+  is_git_root || die "not a git repository: $ROOT"
   ensure_scaffold
   printf 'cook: jeff activated in %s (scaffold + marked active).\n' "$ROOT"
 }
@@ -768,7 +768,7 @@ append_line_once() {
 # exclude line is added at most once.
 cmd_lite() {
   reject_unknown_args lite "$@"
-  is_git_work_tree || die "not a git repository: $ROOT (cook lite needs git to exclude .jeff/ locally)"
+  is_git_root || die "not a git repository: $ROOT (cook lite needs git to exclude .jeff/ locally)"
   local exclude
   exclude="$(git_info_exclude)" || die "could not resolve Git info/exclude: $ROOT"
   require_jq
