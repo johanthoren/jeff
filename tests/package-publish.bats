@@ -6,12 +6,16 @@ setup_file() { cook_hermetic_git; }
 
 @test "npm pack dry-run exposes a publishable Pi package payload" {
   run bash -c 'jq -e '\''
+    .name == "@johanthoren/jeff" and
     .private != true and
     ((.keywords // []) | index("pi-package")) and
     (.peerDependencies["@earendil-works/pi-coding-agent"] == "*") and
     (.pi.extensions == ["./src/pi/extension.js"]) and
     (.pi.skills == ["./skills"])
-  '\'' "$1" >/dev/null || { echo "package.json is missing Pi package metadata or peerDependency @earendil-works/pi-coding-agent:*"; exit 1; }' _ "$REPO/package.json"
+  '\'' "$1/package.json" >/dev/null &&
+  jq -e '\''
+    .name == "@johanthoren/jeff" and .packages[""].name == "@johanthoren/jeff"
+  '\'' "$1/package-lock.json" >/dev/null || { echo "package metadata must publish as @johanthoren/jeff with Pi metadata and peerDependency @earendil-works/pi-coding-agent:*"; exit 1; }' _ "$REPO"
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
 
   run bash -c 'cd "$1" && npm pack --dry-run --json' _ "$REPO"
@@ -48,6 +52,14 @@ setup_file() { cook_hermetic_git; }
         exit bad
       }
     '\'' $(git ls-files "*.md")
+  ' _ "$REPO"
+  [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
+
+  run bash -c '
+    cd "$1"
+    ! grep -R "npm:jeff" $(git ls-files "*.md")
+    grep -R "npm:@johanthoren/jeff" README.md docs/specs/pi-shell-initiative.md
+    grep -F "npm:@johanthoren/jeff@X.Y.Z" README.md
   ' _ "$REPO"
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
 }
