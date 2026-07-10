@@ -6,74 +6,57 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Top priority — `#33`:** fix linked-worktree verification so a green `cook verify` run cannot exit non-zero when `.git` is a gitfile.
-- **Roadmap reset:** repo is on `main` at release `1.3.2`; Pi support is already merged. The old `pi-shell` / Phase 5a notes are historical and no longer drive the plan.
-- **Baseline:** `make test` is green at `bb1f751` after the npm-publishing workflow change.
-- **Deferred local ledger:** `#26` remains at capture and off the core path unless scanner breadth becomes urgent.
+- **In progress — `#33`:** fix linked-worktree verification so a green `cook verify` run cannot exit non-zero when `.git` is a gitfile.
+- **Parallel/non-blocking — `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
+- **Baseline:** `cook verify` is green on merged `main` at `36c3603`.
 
 ## NEXT
 
-### 0. Fix stacked Pi thinking indicators
+### 1. Correct simple-task commit semantics
 
-- Handle `#37`: reproduce the repeated adjacent `Thinking...` rows, identify whether Jeff, Pi core, or the GPT-5.6 Sol provider stream owns them, then fix locally or track the upstream resolution.
+- **`#38`**: full-mode simple tasks make one final green commit; intentionally red tests never land on trunk. Complex and lite integration paths stay unchanged.
 
-### 1. Clean the map
+### 2. Remove dead task brain metadata
 
-- Close or mark shipped stale GitHub issues whose work is already in `1.3.1`: `#3`, `#4`, `#5`, `#6`, `#8`, `#16`, `#17`, `#19`, `#23`, `#24` if confirmed.
-- Recast remaining Bash-era issue wording toward the TS destination. In particular, `#27` and `#18` still describe Bash/jq acceptance even though the next core should be TS.
-- Decide whether `#26` should remain deferred or be closed/superseded by the later TS security-scanner pass.
+- **`#39`**: stop writing `task.json.brains`; remove it from the canonical shape while tolerating historical ledgers. Keep Claude Code pins and Pi's actual dispatch-brain return unchanged.
 
-### 2. TS schema + validator core
+### 3. Collapse the plan-to-test handoff
 
-Goal: make the TS core the authoritative shape/check layer, not a mirror of `cook.sh`.
+- **`#40`**: one fresh specialist designs the approach and authors red tests; preserve test-author ≠ implementer and implementer ≠ reviewer mechanically. Remove the separate encoder stage and its serialization grammar with an explicit compatibility path.
 
-- Formalize task schema/types in TS.
-- Keep state read/write simple and file-backed.
-- Port/own validator invariants in TS as the source of truth.
-- Fold in **`#27` dual-review mechanics** here:
-  - `agents.reviewer2_agent_id`;
-  - second-review verdict recording shape;
-  - INV-2 checks implementer differs from both reviewers;
-  - single-review path remains null-tolerant and unchanged.
+### 4. Authoritative typed schema + validator core
 
-### 3. TS transcription spine
+- **`#27`**: make the existing zero-dependency plain-JS/checkJs core authoritative after `#39`–`#40`; fold in dual-review recording and separation. `cook.sh` remains only a transition oracle. No TypeScript build layer.
 
-Goal: stop relying on Jeff/the model to manually transcribe stage outcomes.
+### 5. Mechanical transcription spine
 
-- Recast **`#18` as TS-first**:
-  - `cook record <stage> <id> <file>` validates structured specialist returns;
-  - writes verdicts/findings/agent ids into `task.json`;
-  - rejects malformed returns and separation violations with named errors;
-  - `cook verify --task <id>` records `tests.gate` directly into the task.
-- This becomes the mechanical bridge between fresh specialist contexts and durable state.
+- **`#18`**: validate and atomically record structured specialist returns and `verify --task` evidence against the authoritative `#27` schema. Keep it a deterministic bridge, not a workflow runtime.
 
-### 4. Host-neutral CLI + cook.sh retirement path
+### 6. Host-neutral CLI + cook.sh retirement path
 
-Goal: `cook.sh` becomes test oracle only, then disappears from shipped paths.
-
-- Keep Node/TS CLI behavior host-neutral: no Claude/Pi/Cursor assumptions in core.
-- Preserve `cook.sh` only long enough to prove parity where parity still matters.
+- Keep the Node CLI host-neutral: no Claude/Pi/Cursor assumptions in core.
+- Preserve `cook.sh` only long enough to prove parity where behavior is intentionally unchanged.
 - Add a no-live-reference guard: shipped skills/hooks/src must not call `cook.sh`.
-- Retire `cook.sh` from the payload only after TS CLI, Pi, and Claude Code all pass smoke tests.
+- Retire `cook.sh` only after the CLI, Pi, and Claude Code pass smoke tests.
 
-### 5. Dispatch/host adapter seam
+### 7. Trial conditional refactor
 
-Goal: one core, thin host adapters.
+- **`#41`**: after mechanical recording and the one-core cutover, dispatch refactor only for a concrete specialist-identified dedup/harmonization opportunity; record run/skip evidence and evaluate after 10 substantive code tasks. Do not encode the provisional trial into `#27` first.
 
-- Core owns state, validation, record, verify, git/test helpers, and stage contracts.
-- Host adapters own only how a fresh specialist context is started and how its structured return is collected.
-- Keep existing Pi adapter thin; keep Claude Code wiring thin; do not bake either into the core.
+### 8. Dispatch/host adapter seam
 
-### 6. Cursor support after the seam exists
+- Core owns state, validation, recording, verification, git/test helpers, and stage contracts.
+- Host adapters own only fresh-context launch and structured-return collection.
+- Keep Pi and Claude Code adapters thin.
 
-Goal: Cursor is an adapter, not a fork.
+### 9. Cursor support after the seam exists
 
-- First useful version may be a manual/rules-based adapter, but full-fidelity Cursor needs fresh-context dispatch and structured return capture.
+- Cursor is an adapter, not a fork.
 - Do not build Cursor-specific glue around `cook.sh`.
-- Add Cursor only after TS core + record spine exist, so the adapter can stay small.
+- Add it only after the authoritative core and recording boundary exist.
 
 ## DEFERRED / NON-CRITICAL
 
-- `#26` long-tail `review-security` scanners: useful breadth, not blocking the TS migration.
-- `#36` conditional npm-publishing hardening: revisit only if the release-check, pinned npm toolchain, or single-maintainer trust boundary changes.
-- Remaining old code cleanup notes from the previous backlog: `writeFileAtomic`/`writeTask` dedup, `reporters.js` dead `else`, `plan.js` empty-needle comment, widen `tsconfig` if script typechecks become relevant, and ledger effort translation at recording boundary.
+- **`#36`** conditional npm-publishing hardening: revisit only if the release-check, pinned npm toolchain, or single-maintainer trust boundary changes.
+- Long-tail security scanners are frozen. `#26` is closed; reopen or supersede only when run history shows a new engine catches unique actionable findings.
+- Remaining cleanup notes: `writeFileAtomic`/`writeTask` dedup, `reporters.js` dead `else`, `plan.js` empty-needle comment, widen `tsconfig` only if script typechecking becomes relevant, and ledger effort translation at the recording boundary.
