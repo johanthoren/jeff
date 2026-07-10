@@ -289,6 +289,16 @@ teardown() {
   [[ "$lower" == *"agents/agents.md"* ]] || [[ "$lower" == *"agents/"* ]]
 }
 
+@test "payload/src: Pi runtime change requires a version bump" {
+  init_fixture_repo "$FIX" "1.0.0"
+  commit_file "$FIX" "src/pi/extension.js" "export function activate() {}"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"src/pi/extension.js"* ]]
+}
+
 @test "payload/claude-plugin: non-version field change triggers fail and output names the path" {
   init_fixture_repo "$FIX" "1.0.0"
   printf '{"version":"1.0.0","name":"jeff"}\n' > "$FIX/.claude-plugin/plugin.json"
