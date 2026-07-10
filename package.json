@@ -20,6 +20,9 @@
     "extensions": ["./src/pi/extension.js"],
     "skills": ["./skills"]
   },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
   "devDependencies": {
     "@types/node": "20.19.43",
     "typescript": "5.9.3"
