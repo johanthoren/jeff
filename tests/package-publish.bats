@@ -3,6 +3,104 @@
 REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
 setup_file() { cook_hermetic_git; }
+WORKFLOW="$REPO/.github/workflows/publish.yml"
+
+assert_workflow_order() {
+  local previous=0 command line
+  for command in "$@"; do
+    line="$(grep -nF "$command" "$WORKFLOW" | head -1 | cut -d: -f1)"
+    [ -n "$line" ] && [ "$line" -gt "$previous" ] || return 1
+    previous="$line"
+  done
+}
+
+selected_channel() {
+  local script env_file="$BATS_TEST_TMPDIR/github-env"
+  script="$(awk '
+    /^      - name: Select npm dist-tag$/ { step = 1; next }
+    step && /^      - name:/ { exit }
+    step && /^        run: \|$/ { run = 1; next }
+    run { sub(/^          /, ""); print }
+  ' "$WORKFLOW")"
+  [ -n "$script" ] || return 1
+  GITHUB_REF_NAME="$1" GITHUB_ENV="$env_file" bash -euo pipefail -c "$script"
+  sed -n 's/^NPM_DIST_TAG=//p' "$env_file"
+}
+
+@test "publish workflow admits only unprefixed stable and prerelease SemVer tags" {
+  [ -f "$WORKFLOW" ]
+  grep -F -- "- '[0-9]+.[0-9]+.[0-9]+'" "$WORKFLOW"
+  grep -F -- "- '[0-9]+.[0-9]+.[0-9]+-*'" "$WORKFLOW"
+
+  local semver_re tag
+  semver_re="$(sed -nE "s/^[[:space:]]*semver_re='([^']+)'$/\1/p" "$WORKFLOW")"
+  [ -n "$semver_re" ]
+  grep -Eq 'GITHUB_REF_NAME.*=~.*semver_re' "$WORKFLOW"
+
+  for tag in 0.0.0 1.2.3 1.2.3-rc.1 10.20.30-alpha-7; do
+    [[ "$tag" =~ $semver_re ]]
+  done
+  for tag in v1.2.3 1.2 1.2.3+build 01.2.3 1.02.3 1.2.03 1.2.3-01 latest; do
+    ! [[ "$tag" =~ $semver_re ]]
+  done
+}
+
+@test "publish workflow rejects package version mismatch and retains release checks" {
+  [ -f "$WORKFLOW" ]
+  grep -F 'jq -r .version package.json' "$WORKFLOW"
+  grep -Eq 'GITHUB_REF_NAME.*(!=|==| = ).*package_version|package_version.*(!=|==| = ).*GITHUB_REF_NAME' "$WORKFLOW"
+  assert_workflow_order 'make release-check' 'npm publish'
+}
+
+@test "publish workflow runs install and all quality gates before publication" {
+  [ -f "$WORKFLOW" ]
+  assert_workflow_order \
+    'npm ci --ignore-scripts' \
+    'make typecheck' \
+    'make validate' \
+    'make test' \
+    'make release-check' \
+    'npm publish'
+}
+
+@test "publish workflow uses only least-privilege OIDC permissions" {
+  [ -f "$WORKFLOW" ]
+  run bash -c 'awk '\''
+    /^permissions:$/ { permissions = 1; next }
+    permissions && /^[^ ]/ { exit }
+    permissions && NF { sub(/^[[:space:]]*/, ""); print }
+  '\'' "$1" | sort' _ "$WORKFLOW"
+  [ "$status" -eq 0 ]
+  [ "$output" = $'contents: read\nid-token: write' ]
+  ! grep -Eqi 'NPM_TOKEN|NODE_AUTH_TOKEN|secrets\.|npm[_-]?token|auth[_-]?token' "$WORKFLOW"
+}
+
+@test "stable versions publish with npm dist-tag latest" {
+  [ -f "$WORKFLOW" ]
+  run selected_channel 1.2.3
+  [ "$status" -eq 0 ]
+  [ "$output" = latest ]
+  grep -F 'npm publish --provenance --tag "$NPM_DIST_TAG"' "$WORKFLOW"
+}
+
+@test "prerelease versions publish only with npm dist-tag next" {
+  [ -f "$WORKFLOW" ]
+  run selected_channel 1.2.3-rc.1
+  [ "$status" -eq 0 ]
+  [ "$output" = next ]
+  [ "$output" != latest ]
+  grep -F 'npm publish --provenance --tag "$NPM_DIST_TAG"' "$WORKFLOW"
+}
+
+@test "publish workflow pins every GitHub Action to a full commit SHA" {
+  [ -f "$WORKFLOW" ]
+  run awk '/^[[:space:]]*uses:/ { print $2 }' "$WORKFLOW"
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+  while IFS= read -r action; do
+    [[ "$action" =~ ^[^@]+@[0-9a-f]{40}$ ]]
+  done <<<"$output"
+}
 
 @test "npm pack dry-run exposes a publishable Pi package payload" {
   run bash -c 'jq -e '\''
