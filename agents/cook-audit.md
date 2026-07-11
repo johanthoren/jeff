@@ -42,7 +42,7 @@ findings:                      # empty list when verdict is pass or na
     severity: critical | high | medium | low
     class: blocking | follow-up
     cwe: <CWE-id or null>
-    kickTo: plan | test | implement | refactor
+    kickTo: plan | implement | refactor
     what: <one sentence: the exploit path>
     why: <one sentence: the impact>
 evidence:

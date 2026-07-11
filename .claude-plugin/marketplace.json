@@ -5,7 +5,7 @@
     {
       "name": "jeff",
       "source": "./",
-      "description": "Your sous chef, Jeff: a thin orchestrator that drives atomic tasks through a fresh-context brigade (plan, test, implement, refactor, review, audit) under a Bash/jq validator. Nothing leaves the pass until it's worthy."
+      "description": "Your sous chef, Jeff: a thin orchestrator that drives atomic tasks through a fresh-context brigade (plan + tests, implement, refactor, review, audit) under a Bash/jq validator. Nothing leaves the pass until it's worthy."
     }
   ]
 }

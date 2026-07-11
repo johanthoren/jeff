@@ -18,14 +18,13 @@ You give the order. Jeff runs it down the line, one specialist to a station,
 and brings back the plate only when it's worthy.
 
 ```
-Capture > Plan > Test > Implement > Refactor > Review > (Audit) > Done
+Capture > Plan + Tests > Implement > Refactor > Review > (Audit) > Done
 ```
 
 - **Capture:** Jeff pins the order down with you: what *done* means, what's out
   of scope, before a pan gets hot.
-- **Plan:** the approach and the test design: what to prove, and where, traced
-  to your acceptance criteria.
-- **Test:** the tests go on the line first, all red. On purpose.
+- **Plan + tests:** one fresh cook designs the approach and proof, then puts the
+  tests on the line first, all red. On purpose.
 - **Implement:** the smallest change that turns them green. Nothing fancier.
 - **Refactor:** tidy the station while the tests stay green: simpler, deduped,
   up to standard.

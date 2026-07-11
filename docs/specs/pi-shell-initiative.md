@@ -151,7 +151,7 @@ this core is plain JS, and the code needed the 0.11 -> 0.71 rebase and slimming 
 
 Trim: `statusline/` (7 files), `migrations/forge`, `clarification/`, and bakehouse's
 8-phase set (`order..served`). Remap to jeff's phases
-`capture -> plan -> test -> implement -> refactor -> review -> audit -> done`.
+`capture -> plan -> implement -> refactor -> review -> audit -> done` (plan also designs and authors the targeted-red tests).
 
 Attribution: pi-bakehouse is the author's own code (Apache-2.0); still record any
 close adaptation in `NOTICE` / `THIRD_PARTY_NOTICES` as pi-bakehouse's own order #17

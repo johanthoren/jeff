@@ -206,7 +206,7 @@ export default function jeffExtension(pi) {
     name: 'cook_dispatch',
     label: 'Cook Dispatch',
     description: 'Dispatch a jeff specialist in a fresh Pi role session.',
-    promptSnippet: 'Dispatch a jeff plan, test, implement, refactor, review, audit, or refute role session.',
+    promptSnippet: 'Dispatch a jeff plan, implement, refactor, review, audit, or refute role session.',
     parameters: DispatchParams,
     renderCall: renderDispatchCall,
     renderResult: renderDispatchResult,

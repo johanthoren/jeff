@@ -16,7 +16,7 @@ This is **not** a trust / anti-forgery system (single Chef, nothing public). It 
 ## 2. Principles
 
 1. **Thin orchestrator that never judges.** The main session routes work and transcribes specialist verdicts; it never decides "good enough." Every act of judgment happens in a fresh specialist context. Jeff may not override a `needs-work`.
-2. **Separation by fresh context.** Each stage is a separate subagent in a fresh window. Two separations are mechanically enforced: `test-author ≠ implementer`, `implementer ≠ reviewer`.
+2. **Separation by fresh context.** Each stage is a separate subagent in a fresh window. Two separations are mechanically enforced: combined test-author ≠ implementer, and implementer ≠ every reviewer.
 3. **One model, role-specific effort.** Every specialist inherits the orchestrator provider/model unchanged; role frontmatter prescribes effort only.
 4. **Forward-only completion (ratchet on `done`).** A task reaches `done` only with recorded passing review (+ audit when required) and green non-implementer tests. *Any* stage may kick back to *any* earlier stage with a recorded reason; only completion is locked, not revisiting.
 5. **Durable truth on disk.** State lives in git-tracked files, re-read each loop, never trusted to Jeff's context. Survives compaction and restarts.
@@ -41,13 +41,12 @@ Linear by default; kickback to any earlier stage allowed, recorded.
 | # | stage | does | effort | separation |
 |---|---|---|---|---|
 | 1 | `capture` | interrogate intent (one question at a time), drive good architecture, confirm alignment, produce crisp acceptance criteria + scope/non-goals | orchestrator setting | n/a |
-| 2 | `plan` | approach, slices, deps, which tests, whether an audit is needed (sensitive surface) | xhigh | n/a |
-| 3 | `test` | author failing tests (red) | medium | ≠ implementer |
-| 4 | `implement` | make tests green; may **not** author/weaken tests | high | ≠ test-author, ≠ reviewer |
-| 5 | `refactor` | **always when code changed**: simplify, align to standards, dedup; may reach beyond the diff in service of this change; tests stay green | xhigh | n/a |
-| 6 | `review` | independent code review | xhigh | ≠ implementer |
-| 7 | `audit` | **conditional** (plan flags a security-relevant surface): adversarial security audit | xhigh | n/a |
-| 8 | `done` | terminal state (not an active stage); gated by validator invariants | n/a | n/a |
+| 2 | `plan` | approach, slices, deps, design and author failing tests (targeted red), whether an audit is needed | xhigh | ≠ implementer |
+| 3 | `implement` | make tests green; may **not** author/weaken tests | high | ≠ test-author, ≠ every reviewer |
+| 4 | `refactor` | **always when code changed**: simplify, align to standards, dedup; may reach beyond the diff in service of this change; tests stay green | xhigh | n/a |
+| 5 | `review` | independent code review | xhigh | ≠ implementer |
+| 6 | `audit` | **conditional** (plan flags a security-relevant surface): adversarial security audit | xhigh | n/a |
+| 7 | `done` | terminal state (not an active stage); gated by validator invariants | n/a | n/a |
 
 `capture` is the highest-leverage stage (see Principle 7) and runs in the orchestrator session.
 
@@ -55,7 +54,7 @@ Linear by default; kickback to any earlier stage allowed, recorded.
 
 ## 5. Model inheritance and effort
 
-Every dispatched specialist inherits the orchestrator's provider/model unchanged on every host. Jeff does not choose that orchestrator model and has no alias map, provider table, ranking, fallback, elevation knob, or per-task model setting. `agents/cook-<stage>.md` frontmatter supplies only role effort: plan/refactor/review/audit/refute `xhigh`, implement `high`, test `medium`. Dispatch reports the child session's actual `{provider, model, effort}` as execution evidence.
+Every dispatched specialist inherits the orchestrator's provider/model unchanged on every host. Jeff does not choose that orchestrator model and has no alias map, provider table, ranking, fallback, elevation knob, or per-task model setting. `agents/cook-<stage>.md` frontmatter supplies only role effort: plan/refactor/review/audit/refute `xhigh`, implement `high`. Dispatch reports the child session's actual `{provider, model, effort}` as execution evidence.
 
 ## 6. State & schema
 
@@ -71,10 +70,10 @@ Plus `memory/` (project memory). The task dirs themselves are the registry; ther
 
 - `id`, `slug`, `title`
 - `status`: `pending | in_progress | blocked | done | abandoned` (+ optional `abandonReason`)
-- `stage`: `capture | plan | test | implement | refactor | review | audit | done`
+- `stage`: `capture | plan | implement | refactor | review | audit | done` (readers also accept historical persisted `test` for compatibility resume)
 - `priority`: `p0..p4`
 - `deps`: `[taskId]` (blockers)
-- `agents`: `{ test_author_agent_id, implementer_agent_id, reviewer_agent_id, audit_agent_id }`
+- `agents`: `{ implementer_agent_id, reviewer_agent_id, reviewer2_agent_id, audit_agent_id }` (historical plan/test identity fields accepted and ignored)
 - `tests`: `{ authored_by_agent_id, green: bool, evidence: [commands] }`
 - `review`: `{ verdict: pass|needs-work, reviewer_agent_id, evidence: [...] }`
 - `audit`: `{ required: bool, verdict: pass|needs-work|na, audit_agent_id, evidence: [...] }`
@@ -125,7 +124,7 @@ Specialists are held to jeff's **bundled first-party** `code-standards`/`testing
 
 - the `cook` orchestration/loop skill (+ embedded schema doc + validator script),
 - the Jeff-run `capture` stage prose (the sole Chef-in-the-loop, method-defining stage),
-- dispatch briefs for the fresh-context specialists `plan`/`test`/`implement`/`refactor`/`review`/`audit` (`plan` is the dispatched test-designer; the rest are thinner doers/judges).
+- dispatch briefs for the fresh-context specialists `plan`/`implement`/`refactor`/`review`/`audit` (`plan` designs and authors tests; the rest are doers/judges).
 
 Specialists may **use** official tools (`/code-review`, `/simplify`, `/verify`) and the bundled `security-auditor` skill as accelerators: tools, not method, so they don't taint the pipeline or override the standards floor. No dependency on method-imposing third-party packs (superpowers uninstalled).
 

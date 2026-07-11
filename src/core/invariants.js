@@ -112,7 +112,7 @@ export function gatePreflight(tasks) {
 
 /**
  * Main invariant pass (cook.sh:382-605): per-task field/registry checks,
- * inv1/inv2/plan-sep, inv4 done-gate, inv5a dep-exists, `[prune]`, the inv7-11
+ * inv1/inv2, inv4 done-gate, inv5a dep-exists, `[prune]`, the inv7-11
  * convergence block, status-conditional fields, plus the cross-task duplicate-id
  * and inv5b dependency-cycle (Kahn) checks. `lite` drops the registry-only
  * checks (id-type, inv5, duplicate-id, `[prune]`).
@@ -151,7 +151,7 @@ export function runInvariants(tasks, { lite }) {
     const ta = (t.tests && t.tests.authored_by_agent_id != null) ? t.tests.authored_by_agent_id : null;
     const im = agents.implementer_agent_id != null ? agents.implementer_agent_id : null;
     const rv = agents.reviewer_agent_id != null ? agents.reviewer_agent_id : null;
-    const pl = agents.plan_agent_id != null ? agents.plan_agent_id : null;
+    const rv2 = agents.reviewer2_agent_id != null ? agents.reviewer2_agent_id : null;
 
     // id-type: registry invariant (full only). Lite ledgers may carry a string id.
     if (!lite && typeof t.id !== 'number') {
@@ -175,13 +175,9 @@ export function runInvariants(tasks, { lite }) {
     if (ta !== null && im !== null && ta === im) {
       out.push(`task ${id}: test author == implementer (${jqStr(ta)}) [inv1]`);
     }
-    // inv2: implementer != reviewer
-    if (im !== null && rv !== null && im === rv) {
+    // inv2: implementer != every reviewer
+    if (im !== null && (im === rv || im === rv2)) {
       out.push(`task ${id}: implementer == reviewer (${jqStr(im)}) [inv2]`);
-    }
-    // plan-sep: plan agent != implementer
-    if (pl !== null && im !== null && pl === im) {
-      out.push(`task ${id}: plan agent == implementer (${jqStr(pl)}) [plan-sep]`);
     }
 
     // inv4: done-gate quality invariant
