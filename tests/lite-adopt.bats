@@ -144,6 +144,23 @@ count_ledgers() {
   [ "$status" -eq 0 ]
 }
 
+@test "adopt/ledger-shape: new ledger omits legacy author identities and reserves reviewer2" {
+  write_lite_config
+  printf '# Plan\n' > "$TMP/PLAN.md"
+
+  run cook on "PLAN.md"
+  [ "$status" -eq 0 ]
+
+  local ledger
+  ledger="$(find_ledger_by_ref "PLAN.md")"
+  run jq -e '
+    (.agents | has("plan_agent_id") | not)
+    and (.agents | has("test_author_agent_id") | not)
+    and (.agents | has("reviewer2_agent_id"))
+  ' "$ledger"
+  [ "$status" -eq 0 ]
+}
+
 @test "adopt/section-anchor: cook on PLAN.md#feature-x creates ledger in lite mode" {
   # AC: section-anchor ref adopts and creates a ledger keyed to the full ref.
   # RED now: unknown subcommand.

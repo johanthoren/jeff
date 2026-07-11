@@ -410,61 +410,46 @@ patch_field() {
   [[ "$output" == *"inv2"* ]] || true
 }
 
-# ---------------------------------------------------------------------------
-# SEPARATION: plan (test-designer) != implement
-#
-# Task 0041: `plan` is dispatched and designs the test contract (behaviors +
-# seams). The load-bearing property: the implementer must not have shaped the
-# tests it has to pass. A new `plan_agent_id` is recorded in `task.json.agents`
-# and a new invariant rejects plan_agent_id == implementer_agent_id, alongside
-# the existing inv1 (test-author != implementer) and inv2 (implementer !=
-# reviewer).
-#
-# RED now: there is no such field/check, so a task with the two ids equal
-# currently passes validate (exit 0): the "must fail" assertion below fails.
-# GREEN after slice 1 adds the invariant.
-# ---------------------------------------------------------------------------
-
-@test "lite-keep/plan-sep: plan agent == implementer fails validate under mode:lite" {
+@test "lite-keep/inv2: reviewer2 == implementer fails validate under mode:lite" {
   write_lite_config "$BK"
-  write_baseline_task_numeric "$BK" 1 "lite-plan-sep-same"
-  # Record a plan agent equal to the implementer (violates plan != implement).
-  patch_field "$BK/tasks/1-lite-plan-sep-same/task.json" '
-    .agents.plan_agent_id        = "agent-planner-009"
-    | .agents.implementer_agent_id = "agent-planner-009"
+  write_baseline_task_numeric "$BK" 1 "lite-inv2-reviewer2-same"
+  patch_field "$BK/tasks/1-lite-inv2-reviewer2-same/task.json" '
+    .agents.implementer_agent_id = "agent-impl-002"
+    | .agents.reviewer2_agent_id = "agent-impl-002"
   '
   run cook validate
   [ "$status" -ne 0 ]
-  # The message must name the violation (mirrors inv1/inv2 prose style, which
-  # spells out "test author == implementer"). Assert for real: no `|| true`.
-  [[ "$output" == *"plan"* ]]
-  [[ "$output" == *"implement"* ]]
+  [[ "$output" == *"inv2"* ]]
 }
 
-@test "full-mode guard: plan agent == implementer fails in full mode" {
-  # No config.json => full mode. The plan != implement invariant must fire here too.
-  write_baseline_task_numeric "$BK" 1 "full-plan-sep-same"
-  patch_field "$BK/tasks/1-full-plan-sep-same/task.json" '
-    .agents.plan_agent_id        = "agent-planner-009"
-    | .agents.implementer_agent_id = "agent-planner-009"
+@test "full-mode guard: reviewer2 == implementer fails validate" {
+  write_baseline_task_numeric "$BK" 1 "full-inv2-reviewer2-same"
+  patch_field "$BK/tasks/1-full-inv2-reviewer2-same/task.json" '
+    .status = "in_progress"
+    | .stage = "implement"
+    | .agents.implementer_agent_id = "agent-impl-002"
+    | .agents.reviewer2_agent_id = "agent-impl-002"
   '
   run cook validate
   [ "$status" -ne 0 ]
-  [[ "$output" == *"plan"* ]]
-  [[ "$output" == *"implement"* ]]
+  [[ "$output" == *"inv2"* ]]
 }
 
-@test "lite-keep/plan-sep: distinct plan agent + clean task passes validate (regression guard)" {
-  # Regression guard: a recorded plan_agent_id distinct from the implementer on
-  # an otherwise-clean task must PASS. Today this passes because the field is
-  # ignored; after the invariant lands it must still pass (only equality fails).
+@test "legacy test-stage ledger with historical identities validates and remains listed" {
   write_lite_config "$BK"
-  write_baseline_task_numeric "$BK" 1 "lite-plan-sep-ok"
-  patch_field "$BK/tasks/1-lite-plan-sep-ok/task.json" '
-    .agents.plan_agent_id = "agent-planner-009"
+  write_baseline_task_numeric "$BK" 1 "legacy-test-stage"
+  patch_field "$BK/tasks/1-legacy-test-stage/task.json" '
+    .status = "in_progress"
+    | .stage = "test"
+    | .agents.plan_agent_id = "agent-impl-002"
+    | .agents.test_author_agent_id = "agent-tester-001"
   '
+
   run cook validate
   [ "$status" -eq 0 ]
+  run cook ls
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'1\tin_progress\ttest\t'* ]]
 }
 
 @test "lite-keep/inv4: done without tests.green fails validate under mode:lite" {

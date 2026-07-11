@@ -17,10 +17,7 @@
 # are real (it cannot judge whether a spec is good or a review thorough).
 # Invariants: see docs/specs/2026-06-13-jeff-v1-lean-schema.md:
 #   1. test author != implementer
-#   2. implementer != reviewer
-#   plan-sep. plan agent != implementer (task 0041; the dispatched plan
-#       specialist designs the test contract, the implementer must not have
-#       shaped the tests it has to pass). Skipped when either id is null.
+#   2. implementer != every reviewer
 #   4. no status=done without (non-implementer tests green + review pass + audit pass|na).
 #       tests.green is boolean true (a real green gate) OR the string "na" (task
 #       0049's None/terminal disposition: a declarative AC with no consumer-
@@ -296,7 +293,7 @@ Audit triggers: destructive ops, prompt-injection surfaces, security-sensitive p
 
 Vocabulary:
 - task = Jeff task (maps to team tracker issue)
-- stage = pipeline phase (capture/plan/test/implement/refactor/review/audit/done)'
+- stage = pipeline phase (capture/plan/implement/refactor/review/audit/done)'
 
 cmd_profile() {
   local sub="${1:-}"
@@ -401,6 +398,7 @@ cmd_validate() {
     printf '%s' "$tasks" | jq -r --argjson lite "$lite" '
       . as $tasks |
       ["pending","in_progress","blocked","done","abandoned"] as $statuses |
+      # "test" is accepted only as a legacy persisted-ledger resume state.
       ["capture","plan","test","implement","refactor","review","audit","done"] as $stages |
       ["p0","p1","p2","p3","p4"] as $prios |
       ($tasks | map(.id)) as $ids |
@@ -424,19 +422,11 @@ cmd_validate() {
               | if ($ta != null and $im != null and $ta == $im)
                 then "task \($t.id): test author == implementer (\($ta)) [inv1]" else empty end),
 
-            # inv 2: implementer != reviewer
-            ( ($t.agents.implementer_agent_id) as $im | ($t.agents.reviewer_agent_id) as $rv
-              | if ($im != null and $rv != null and $im == $rv)
+            # inv 2: implementer != every reviewer
+            ( ($t.agents.implementer_agent_id) as $im
+              | [$t.agents.reviewer_agent_id, $t.agents.reviewer2_agent_id] as $reviewers
+              | if ($im != null and ($reviewers | index($im)) != null)
                 then "task \($t.id): implementer == reviewer (\($im)) [inv2]" else empty end),
-
-            # plan-sep: plan agent != implementer (task 0041). The dispatched plan
-            # specialist designs the test contract (behaviors + seams); the
-            # implementer must not have shaped the tests it has to pass. Fires only
-            # when BOTH ids are recorded and equal (absent ⇒ null ⇒ skipped, so
-            # existing task.jsons without plan_agent_id stay valid).
-            ( ($t.agents.plan_agent_id) as $pl | ($t.agents.implementer_agent_id) as $im
-              | if ($pl != null and $im != null and $pl == $im)
-                then "task \($t.id): plan agent == implementer (\($pl)) [plan-sep]" else empty end),
 
             # inv 4: done-gate: applies to every done task.
             ( if ($t.status == "done") then
@@ -1298,10 +1288,9 @@ cmd_on_create_ledger() {
     createdAt: $now,
     updatedAt: $now,
     agents: {
-      plan_agent_id:        null,
-      test_author_agent_id: null,
       implementer_agent_id: null,
       reviewer_agent_id:    null,
+      reviewer2_agent_id:   null,
       audit_agent_id:       null
     },
     tests:  { authored_by_agent_id: null, green: false, evidence: [] },

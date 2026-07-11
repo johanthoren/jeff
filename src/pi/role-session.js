@@ -6,11 +6,9 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const STAGES = ['plan', 'test', 'implement', 'refactor', 'review', 'audit', 'refute'];
+export const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refute'];
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
-const PLAN_TOOLS = ['read', 'grep', 'find', 'ls', 'write'];
-const JUDGMENT_TOOLS = ['read', 'grep', 'find', 'ls'];
 const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -19,9 +17,8 @@ const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
  * @returns {string[]}
  */
 function toolsForStage(stage) {
-  if (stage === 'plan') return PLAN_TOOLS;
-  if (stage === 'test' || stage === 'implement' || stage === 'refactor') return EDIT_TOOLS;
-  return JUDGMENT_TOOLS;
+  if (stage === 'plan' || stage === 'implement' || stage === 'refactor') return EDIT_TOOLS;
+  return READ_TOOLS;
 }
 
 /** @returns {string} */

@@ -28,7 +28,6 @@ frontmatter_field() {
     [ "$(frontmatter_field "$file" effort)" = "$effort" ] || { echo "stage=$stage effort must be $effort"; return 1; }
   done <<'CASES'
 plan|xhigh
-test|medium
 implement|high
 refactor|xhigh
 review|xhigh
