@@ -6,10 +6,9 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Release — `#54`:** native Codex manifests/instructions and isolated install/update/dispatch smoke are green; publish 3.1.0.
-- **Switch checkpoint:** after 3.1.0 is installed in a new Codex thread, make Codex the primary dogfood host; Pi and Claude remain supported.
+- **Primary dogfood host:** native Jeff 3.1.0 is installed for Codex; start `#27` in a new Codex thread. Pi and Claude remain supported.
 - **Parallel/non-blocking — `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
-- **Baseline:** task #54's full gate is green at `b0c4c26`; 3.1.0 is pending integration.
+- **Baseline:** 3.1.0 is published from merged `main` at `f77c67f`.
 
 ## NEXT
 
