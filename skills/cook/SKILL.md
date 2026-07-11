@@ -122,7 +122,7 @@ There is **no** `cook new`/`create`/`add` verb, and none is planned (a deliberat
 - **Next id** = `max(id) + 1` over `.jeff/tasks/` (scan the dir names / `cook ls`); cross-check BACKLOG's "Next free id" line.
 - **Create `.jeff/tasks/00NN-<slug>/`** with three files: `task.json` (canonical shape in `skills/cook/reference/jeff-state-schema.md` §`task.json`), `task.md` (goal / acceptance criteria / non-goals / audit), and `notes.md`.
 - **Register it:** add the task to `BACKLOG.md` and bump BACKLOG's "Next free id" line. (The new `task.json` dir is itself the registry entry; there is no separate index to append to.)
-- **Validate, then commit:** run `cook validate`, then commit on the trunk (capture/backlog commits land directly on trunk).
+- **Validate, then preserve:** run `cook validate` before integration and preserve the capture/backlog changes durably through the repository/context-selected checkpoint. Do not require a separate trunk commit: completed work lands as one green task commit.
 
 This covers only the **mechanical scaffolding**. The interrogation → acceptance-criteria judgement stays in the Jeff-run `capture` stage; these steps are not a bypass of it.
 
