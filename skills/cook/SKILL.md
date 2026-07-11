@@ -190,7 +190,7 @@ For each *dispatched* stage (`plan`, `implement`, `refactor`, `review`, `audit`,
 
 Read `agents/cook-<stage>.md` and inject its full role body into the child message. Choose a unique task-scoped `task_name`, then call `spawn_agent` with exactly `task_name`, `fork_turns: "none"`, and `message`; never pass model or effort because both inherit from the orchestrator. Persist the returned native task path/id and actual provider/model/effort when exposed.
 
-For parallel judgments, spawn every review and audit child before the first `wait_agent`. Repeatedly wait for addressed `FINAL_ANSWER` messages, correlate each sender with its native task path/id, and collect every structured return independently. Persist the `close_agent` request and result plus its linked shutdown or cancel notification. A bare `not_found` is never evidence of cancel or cancellation.
+For parallel judgments, spawn every review and audit child before the first `wait_agent`. Repeatedly wait for addressed `FINAL_ANSWER` messages, correlate each sender with its native task path/id, and collect every structured return independently. Persist whichever native lifecycle request (`interrupt_agent` or `close_agent`) the host exposes and its result. If a linked shutdown or cancel notification later arrives, correlate it; do not require one. A bare `not_found` never proves cancellation.
 
 ### Combined plan + test authorship
 

@@ -58,7 +58,8 @@ CASES
   grep -E 'FINAL_ANSWER.*independent' <<<"$contract"
   grep -E 'structured return' <<<"$contract"
   grep -E 'native.*(path|id)' <<<"$contract"
-  grep -E 'close_agent.*(result|response)' <<<"$contract"
-  grep -E '(shutdown|cancel).*notification' <<<"$contract"
-  grep -E 'not_found.*(cancel|cancellation)' <<<"$contract"
+  grep -E '(interrupt_agent|close_agent).*(result|response)' <<<"$contract"
+  grep -E '(shutdown|cancel).*notification.*correlate' <<<"$contract"
+  grep -E 'notification.*do not require' <<<"$contract"
+  grep -E 'not_found.*(prove|evidence).*(cancel|cancellation)' <<<"$contract"
 }
