@@ -115,6 +115,14 @@ select_dist_tag() {
   done <<<"$output"
 }
 
+@test "root package manifest provides canonical npm repository links" {
+  jq -e '
+    .repository == {"type":"git","url":"git+https://github.com/johanthoren/jeff.git"} and
+    .homepage == "https://github.com/johanthoren/jeff#readme" and
+    .bugs.url == "https://github.com/johanthoren/jeff/issues"
+  ' "$REPO/package.json"
+}
+
 @test "npm pack dry-run exposes a publishable Pi package payload" {
   run bash -c 'jq -e '\''
     .name == "@johanthoren/jeff" and
