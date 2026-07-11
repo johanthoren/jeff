@@ -6,16 +6,11 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Release recovery — `#44`:** npm rejected the immutable 1.3.3 tag because root package provenance metadata was absent; add the canonical repository field and publish 1.3.4 without rewriting 1.3.3.
-- **Completed — `#33`:** linked-worktree verification/activation merged in PR #43; its 1.3.3 package publish was superseded by #44 after provenance rejection.
+- **In progress — `#38`:** make full-mode simple tasks commit once, green, at completion; no red stage commit may land on trunk.
 - **Parallel/non-blocking — `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
-- **Baseline:** PR #43 CI and the local full suite were green on merged `main` at `e022edc`.
+- **Baseline:** task #44's local full gate and release workflow were green; 1.3.4 published with provenance from merged `main` at `bc03b58`.
 
 ## NEXT
-
-### 1. Correct simple-task commit semantics
-
-- **`#38`**: full-mode simple tasks make one final green commit; intentionally red tests never land on trunk. Complex and lite integration paths stay unchanged.
 
 ### 2. Remove dead task brain metadata
 
