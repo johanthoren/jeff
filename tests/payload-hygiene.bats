@@ -1,14 +1,14 @@
 #!/usr/bin/env bats
 # tests/payload-hygiene.bats: task 0033: shipped payload must carry no machine-specific
-# paths and no operationally-broken forge/Codex identity references.
+# paths, local Codex artifacts, or operationally-broken forge identity references.
 #
 # Covers:
-#   AC6: guard test: payload free of $HOME/code, /Users/, Codex, and forge path/identity
-#         tokens; RED now against current tree (four confirmed offenders); GREEN after
-#         implementer removes them (slices 2-4 of the plan).
+#   AC6: guard test: payload free of $HOME/code, /Users/, local Codex cache/session
+#         artifacts, and forge path/identity tokens.
 #
 # Payload scan set (mirrors release-check.bats payload prefix list):
-#   skills/  agents/  commands/  hooks/  .claude-plugin/  AGENTS.md  README.md
+#   skills/  agents/  commands/  hooks/  .claude-plugin/  .codex-plugin/
+#   .agents/plugins/  AGENTS.md  README.md
 #   commands/ and hooks/ are optional: grep returns 1 (no match) on absent dirs,
 #   which we treat as passing.  docs/, tests/, .jeff/, Makefile are excluded
 #   by construction (AC5: historical forge refs in docs/ must survive).
@@ -32,7 +32,7 @@ setup_file() { cook_hermetic_git; }
 
 _payload_args() {
   local args=()
-  for dir in skills agents commands hooks .claude-plugin; do
+  for dir in skills agents commands hooks .claude-plugin .codex-plugin .agents/plugins; do
     [ -d "$REPO/$dir" ] && args+=("$REPO/$dir")
   done
   for f in AGENTS.md README.md; do
@@ -70,15 +70,16 @@ _payload_args() {
 }
 
 # ---------------------------------------------------------------------------
-# AC6: no wrong-identity provenance: Codex (case-insensitive)
-#
-# RED now: skills/security-auditor/SKILL.md:8: "Codex-native security audit skill."
+# AC6: no local Codex cache/session provenance in the public payload.
+# Public Codex support and manifests are expected; only internal artifact paths
+# and concrete rollout logs are forbidden.
 # ---------------------------------------------------------------------------
 
-@test "payload: no Codex occurrence (wrong-identity provenance)" {
+@test "payload: no local Codex cache or session provenance" {
   local -a targets
   mapfile -t targets < <(_payload_args)
-  run grep -r -i --include="*" -l 'Codex' "${targets[@]}"
+  local pattern='\.codex/(plugins/cache|sessions)(/|[^[:alnum:]_-]|$)|\.codex/session_index\.jsonl|rollout-[0-9]{4}-[0-9]{2}-[0-9]{2}T[^/[:space:]]+\.jsonl'
+  run grep -rE --include="*" -l "$pattern" "${targets[@]}"
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
