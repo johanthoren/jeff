@@ -1,7 +1,7 @@
 ---
 name: cook
 description: >-
-  Drive the jeff task pipeline. Use when the Chef addresses Jeff, mentions jeff/cook, asks to set up, initialize, turn on, deinit, validate, or check status/tasks; runs `cook` or `cook <taskId>`; wants to adopt or work a task; asks to implement/build a plan (not merely read/review it); or describes real engineering work in an active jeff project. Routes capture→plan→test→implement→refactor→review→audit→done through fresh specialist contexts and a Bash+jq validator. Always confirm the task definition with the Chef before locking capture.
+  Drive the jeff task pipeline. Use when the Chef addresses Jeff, mentions jeff/cook, asks to set up, initialize, turn on, deinit, validate, or check status/tasks; runs `cook` or `cook <taskId>`; wants to adopt or work a task; asks to implement/build a plan (not merely read/review it); or describes real engineering work in an active jeff project. Routes capture→plan→implement→refactor→review→audit→done through fresh specialist contexts and a Bash+jq validator. Always confirm the task definition with the Chef before locking capture.
 ---
 
 # cook: the orchestration loop
@@ -100,7 +100,7 @@ In lite mode the team's plan **is** the task store. `cook on <ref>` adopts a tas
 
 #### Running the pipeline + the lite integration terminal
 
-Run the full method on an adopted lite task (test → implement → refactor → review → audit) under the **lite validator** and the profile. Standards are the team's lint/format/CI floor plus the Chef `code-standards` ceiling.
+Run the full method on an adopted lite task (plan → implement → refactor → review → audit) under the **lite validator** and the profile. Standards are the team's lint/format/CI floor plus the Chef `code-standards` ceiling.
 
 - **Refactor is in-diff only.** In someone else's repo a refactor must not reach beyond the change's own diff. After the lite refactor stage, run `cook indiff <base-ref> <pre-ref>` (`base-ref` = the branch point; `pre-ref` = the implement commit): it passes iff the files the refactor touched are a subset of the files implement changed, and fails (non-zero, naming each offending path on stderr) otherwise. Treat a failure as a kickback: pull the out-of-diff edit out, do not widen the scope.
 - **The integration terminal is inferred, never a verb.** How the team integrates is judgement, so you produce the terminal by reading the profile's **`Integration:`** convention and handing the work off in the team's shape and voice (a PR, a trunk commit after CI, a fork-and-PR, …), leaving **no jeff crumb** (per `[[jeff-no-crumbs-shared-spaces]]`). You perform **only reversible actions**: at most a feature-branch push (`git push -u origin <feature-branch>`) and **opening the PR**; both are reversible (the branch is deletable, the PR closable, and neither advances a protected base). For the **irreversible** integration step (pushing the protected base, or merging): **never run it without the operator's explicit per-change approval.** Absent that approval, print the exact command(s) for the human and stop; this holds in every team shape, even when the profile names trunk-based integration. Safety holds by construction because no jeff path performs the irreversible shared write unapproved; do not infer your way around it by running the trunk push or merge directly.

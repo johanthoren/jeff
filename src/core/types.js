@@ -11,7 +11,7 @@
  */
 
 /** @typedef {'pending' | 'in_progress' | 'blocked' | 'done' | 'abandoned'} TaskStatus */
-/** @typedef {'capture' | 'plan' | 'test' | 'implement' | 'refactor' | 'review' | 'audit' | 'done'} TaskStage */
+/** Persisted stages; `test` is legacy resume-only. @typedef {'capture' | 'plan' | 'test' | 'implement' | 'refactor' | 'review' | 'audit' | 'done'} TaskStage */
 /** @typedef {'p0' | 'p1' | 'p2' | 'p3' | 'p4'} TaskPriority */
 /** @typedef {'simple' | 'complex'} TaskComplexity */
 /** @typedef {'pass' | 'needs-work' | null} ReviewVerdict */

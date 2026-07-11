@@ -16,7 +16,7 @@ This is **not** a trust / anti-forgery system (single Chef, nothing public). It 
 ## 2. Principles
 
 1. **Thin orchestrator that never judges.** The main session routes work and transcribes specialist verdicts; it never decides "good enough." Every act of judgment happens in a fresh specialist context. Jeff may not override a `needs-work`.
-2. **Separation by fresh context.** Each stage is a separate subagent in a fresh window. Two separations are mechanically enforced: combined test-author ≠ implementer, and implementer ≠ every reviewer.
+2. **Separation by fresh context.** Each dispatched stage uses a fresh subagent. Two separations are mechanically enforced: combined test-author ≠ implementer, and implementer ≠ every reviewer.
 3. **One model, role-specific effort.** Every specialist inherits the orchestrator provider/model unchanged; role frontmatter prescribes effort only.
 4. **Forward-only completion (ratchet on `done`).** A task reaches `done` only with recorded passing review (+ audit when required) and green non-implementer tests. *Any* stage may kick back to *any* earlier stage with a recorded reason; only completion is locked, not revisiting.
 5. **Durable truth on disk.** State lives in git-tracked files, re-read each loop, never trusted to Jeff's context. Survives compaction and restarts.

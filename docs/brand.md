@@ -5,8 +5,8 @@ substrate**. The substance (`file:line` + reason + fix) never changes with the
 voice, and is never dropped for style.
 
 > Status: APPROVED (operator sign-off 2026-06-29). This is the canonical
-> voice/world spec for authoring `skills/cook/SKILL.md`, the five
-> `agents/cook-*.md` stations, README, AGENTS.md, and PLAN's persona section.
+> voice/world spec for authoring `skills/cook/SKILL.md`, the five pipeline
+> stations in `agents/cook-*.md`, README, AGENTS.md, and PLAN's persona section.
 > Applied to SKILL.md + the six stations in commit `49b4918` (slice 3).
 
 ## The seating chart

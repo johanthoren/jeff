@@ -17,7 +17,7 @@
 # are real (it cannot judge whether a spec is good or a review thorough).
 # Invariants: see docs/specs/2026-06-13-jeff-v1-lean-schema.md:
 #   1. test author != implementer
-#   2. implementer != reviewer
+#   2. implementer != every reviewer
 #   4. no status=done without (non-implementer tests green + review pass + audit pass|na).
 #       tests.green is boolean true (a real green gate) OR the string "na" (task
 #       0049's None/terminal disposition: a declarative AC with no consumer-
@@ -398,6 +398,7 @@ cmd_validate() {
     printf '%s' "$tasks" | jq -r --argjson lite "$lite" '
       . as $tasks |
       ["pending","in_progress","blocked","done","abandoned"] as $statuses |
+      # "test" is accepted only as a legacy persisted-ledger resume state.
       ["capture","plan","test","implement","refactor","review","audit","done"] as $stages |
       ["p0","p1","p2","p3","p4"] as $prios |
       ($tasks | map(.id)) as $ids |

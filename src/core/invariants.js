@@ -72,6 +72,7 @@ function assertContainerType(v, type, name) {
 }
 
 const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
+// `test` is accepted only as a legacy persisted-ledger resume state.
 const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'audit', 'done'];
 const PRIOS = ['p0', 'p1', 'p2', 'p3', 'p4'];
 
