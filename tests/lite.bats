@@ -467,38 +467,6 @@ patch_field() {
   [ "$status" -eq 0 ]
 }
 
-@test "lite-keep/no-inv3: review brain weaker than implement now passes validate (inv3 floor removed)" {
-  # AC: inv3 floor is gone; a task with review < implement must pass, not fail.
-  # RED now: validate still enforces inv3 (exits non-zero, prints "inv3").
-  # GREEN after inv3 is removed from the CLI.
-  write_lite_config "$BK"
-  write_baseline_task_numeric "$BK" 1 "lite-inv3-low-review"
-  # implement=opus+high, review=haiku+low: previously a violation
-  patch_field "$BK/tasks/1-lite-inv3-low-review/task.json" '
-    .brains.implement = { model: "opus", effort: "high" }
-    | .brains.review  = { model: "haiku", effort: "low" }
-  '
-  run cook validate
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"inv3"* ]]
-}
-
-@test "lite-keep/no-inv3-audit: audit brain weaker than implement now passes validate (inv3 floor removed)" {
-  # AC: inv3 applied to both review and audit; both are gone.
-  # RED now: validate still enforces inv3 for audit (exits non-zero, prints "inv3").
-  # GREEN after inv3 is removed from the CLI.
-  write_lite_config "$BK"
-  write_baseline_task_numeric "$BK" 1 "lite-inv3-low-audit"
-  # implement=opus+high, audit=haiku+low: previously a violation
-  patch_field "$BK/tasks/1-lite-inv3-low-audit/task.json" '
-    .brains.implement = { model: "opus", effort: "high" }
-    | .brains.audit   = { model: "haiku", effort: "low" }
-  '
-  run cook validate
-  [ "$status" -eq 0 ]
-  [[ "$output" != *"inv3"* ]]
-}
-
 @test "lite-keep/inv4: done without tests.green fails validate under mode:lite" {
   write_lite_config "$BK"
   write_baseline_task_numeric "$BK" 1 "lite-inv4-notgreen"

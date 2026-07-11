@@ -149,7 +149,7 @@ export async function collectTasks(root) {
  * Read and parse `<root>/.jeff/config.json`, or `null` on a missing or
  * unparseable file (never throws). The shared degrade-to-null primitive
  * every soft config reader builds on: `readMode` below, `verify`'s
- * test-command resolver, `doctor`'s active check, `topbrain`, and `flavor`
+ * test-command resolver, `doctor`'s active check, and `flavor`
  * all read+parse this same file and fall back to their own per-caller
  * default when it's absent or corrupt. `init`'s read-modify-write is
  * deliberately NOT one of these callers: it must tell "absent" (fresh

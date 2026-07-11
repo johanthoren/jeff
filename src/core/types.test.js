@@ -1,12 +1,5 @@
 // @ts-check
 
-/** @type {import('./types.js').TaskJson['brains']} */
-const badBrains = {
-  // @ts-expect-error - 'done' is not a BrainStage; brains never keys the terminal stage
-  done: { model: 'opus', effort: 'high' },
-};
-void badBrains;
-
 /** @type {import('./types.js').TaskJson['review']} */
 const badReview = {
   // @ts-expect-error - verdict must be ReviewVerdict ('pass' | 'needs-work' | null)

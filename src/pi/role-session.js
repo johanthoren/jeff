@@ -135,7 +135,7 @@ export async function dispatchRoleSession(opts) {
   const role = parseRoleFile(rawRole);
   const agentId = (opts.generateAgentId ?? generateAgentId)();
   const current = modelParts(opts.currentModel);
-  const model = current.provider || current.id ? opts.currentModel : undefined;
+  if (!current.id) throw new Error('cook_dispatch: orchestrator model is unavailable');
   const sdk = await loadSdk(opts.sdk);
   const prompt = buildRolePrompt({
     stage: opts.stage,
@@ -150,7 +150,7 @@ export async function dispatchRoleSession(opts) {
   const sessionManager = sdk.SessionManager?.inMemory?.(opts.cwd);
   const { session } = await sdk.createAgentSession({
     cwd: opts.cwd,
-    model,
+    model: opts.currentModel,
     thinkingLevel: role.frontmatter.effort,
     tools: toolsForStage(opts.stage),
     sessionManager,

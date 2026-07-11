@@ -20,7 +20,6 @@ import { runVerify } from '../core/verify.js';
 import { doctorReport, initProject } from '../core/lifecycle.js';
 import { planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../core/plan.js';
 import { runBaseline } from '../core/baseline.js';
-import { topbrainReport } from '../core/topbrain.js';
 import { flavorReport } from '../core/flavor.js';
 import { git } from '../core/git.js';
 
@@ -72,7 +71,6 @@ const VERBS = {
   verify: runVerify,
   doctor: doctorReport,
   init: initProject,
-  topbrain: topbrainReport,
   flavor: flavorReport,
 };
 

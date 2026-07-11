@@ -27,14 +27,12 @@ and rebased onto current pi (`0.71`).
    The `git:github.com/johanthoren/jeff` package ref remains dev/edge only. No
    "also run brew/npm install jeff" step for either. Existing `jeff@jeff` users
    change nothing in usage.
-3. **No regression, per-stage effort.** Claude Code keeps per-stage `{model, effort}`
-   from agent frontmatter. pi is model-agnostic: it inherits the current pi
-   provider/model and applies only the stage `effort` as thinking level.
+3. **One model, per-stage effort.** On both hosts, specialists inherit the
+   orchestrator provider/model and role frontmatter supplies only `effort`.
 4. **One core, not two.** A single shared implementation of the validator, state,
    gates, and dispatch. No parallel Bash and JS systems to keep in sync.
-5. **Single stage-effort definition.** Agent frontmatter remains the source for
-   stage effort. pi ignores `model:` frontmatter by design; no provider ranking,
-   alias mapping, or cross-provider switching happens in pi dispatch.
+5. **Single stage-effort definition.** Agent frontmatter is the source for stage
+   effort. No provider ranking, alias mapping, or cross-provider switching exists.
 
 ## 3. Why single-root-package (constraint 1 + 2)
 
@@ -53,11 +51,11 @@ root; each host reads only the files it understands and ignores the rest.
 /                       one repo = Claude Code plugin AND pi package
 ├─ .claude-plugin/      Claude Code reads (ignores package.json#pi)
 ├─ package.json         pi reads "pi": {extensions, skills}; also "type": "module"
-├─ agents/cook-*.md     Claude Code subagents, hand-authored, drift-checked vs table
+├─ agents/cook-*.md     shared role briefs with hand-authored effort
 ├─ hooks/hooks.json     Claude Code hooks
 ├─ skills/              shared SKILL.md, both hosts
 └─ src/                 plain ESM JS, run directly by both hosts (no build, no dist)
-    ├─ core/            validator/state/gates/brains (imports no pi SDK)
+    ├─ core/            validator/state/gates (imports no pi SDK)
     ├─ cli/cook.js      CLI entry (imports no pi SDK)
     └─ pi/extension.js  pi extension: the only module that imports the pi SDK
 ```
@@ -66,7 +64,7 @@ root; each host reads only the files it understands and ignores the rest.
 
 jeff's philosophy holds: the method is the product, not a runtime. The shared core is
 **not** an autonomous runtime. It is the validator, the state/registry model, the
-gates, the single brain table, and one dispatch primitive. The host's orchestrator
+gates, and one dispatch primitive. The host's orchestrator
 model still drives the pipeline in-loop, calling dispatch once per stage. This keeps
 both shells feeling identical and the core small.
 
@@ -84,34 +82,9 @@ in-process replacement for pi-bakehouse's subprocess adapter). Claude Code's dis
 stays its native Task tool. Chef-facing behavior is identical on both: order in, line
 fired, fresh cook per station, plate back.
 
-## 5. Brains on pi: inherit model, apply effort (constraint 3 + 5)
+## 5. Inherit model, apply effort (constraint 3 + 5)
 
-Claude Code keeps the existing contract: each `agents/cook-*.md` frontmatter pins
-`model:` and `effort:` and Claude Code loads both through its native Task tool.
-
-pi deliberately does less. It starts a fresh `createAgentSession` for each stage,
-passes the current pi model/provider through unchanged, and applies only the stage
-`effort:` as `thinkingLevel`. The `model:` field remains in the shared agent files for
-Claude Code compatibility and drift checks, but pi ignores it.
-
-This is the approved pi policy for this branch:
-
-- no Claude alias mapping (`opus`/`sonnet` are not translated in pi);
-- no provider/model ranking;
-- no cross-provider switching;
-- no `JEFF_TOP_BRAIN`/Fable behavior in pi dispatch;
-- return the child session's actual `{provider, model, effort}` when pi exposes it,
-  falling back to the requested effort only when the host does not report a value.
-
-The hard invariant that remains cross-shell is fresh-context separation plus the stage
-thinking level. Model selection belongs to the pi session the Chef chose.
-
-### 5.1 Source of truth: checked frontmatter, host-specific use
-
-`agents/cook-*.md` frontmatter stays hand-authored and drift-checked against the settled
-Claude Code table. pi reads the same files for role text and `effort:` only. This keeps
-one set of role briefs without inventing a provider abstraction layer the branch no
-longer needs.
+Both hosts follow one rule: every specialist inherits the orchestrator's provider/model unchanged, and `agents/cook-*.md` frontmatter supplies only stage `effort`. There is no provider abstraction, alias mapping, ranking, fallback, elevation, or cross-provider switching. Pi passes the current model directly to `createAgentSession`, applies `effort` as `thinkingLevel`, fails closed if no orchestrator model exists, and returns the child session's actual `{provider, model, effort}` when exposed (falling back only to requested effort when the host omits it).
 
 ## 6. Build and dependency policy (constraint 2 + 4)
 
@@ -155,8 +128,7 @@ Turn "if it works" into machine-checkable gates, not a promise:
 - **pi dispatch test:** `createAgentSession` receives the current pi model unchanged
   and the stage `effort:` as `thinkingLevel`; returned results include the child
   session's actual `{provider, model, effort}` when pi reports it.
-- **Drift check:** hand-authored `agents/cook-*.md` frontmatter must match the settled
-  Claude Code table (`model` + `effort` per stage) or CI fails (§5.1).
+- **Frontmatter contract:** focused tests assert every role omits `model` and pins its settled effort.
 - **Parity check:** the JS validator reproduces the current Bash+jq validator's verdicts
   on the existing `tests/*.bats` fixtures before `main`'s validator is retired on this
   branch.
@@ -187,8 +159,7 @@ process required.
 
 ## 9. Non-goals / deferred (ponytail-cut)
 
-- Arbitrary model/effort override config (swap any stage to any model). Revisit only
-  if operator experience proves the fixed stage efforts insufficient.
+- Arbitrary model/effort override config. Revisit only if operator experience proves the fixed stage efforts insufficient.
 - Cross-provider best-of-breed dispatch. pi dispatch deliberately inherits the active
   pi model/provider; selecting different providers per stage is out of scope.
 - Per-OS compiled binary.
@@ -199,7 +170,7 @@ process required.
 
 - pi dispatch inherits the active pi model/provider and only applies stage effort.
 - The core is plain zero-dependency ESM JS, no build step and no committed `dist/` (§6).
-- Frontmatter stays hand-authored with a drift check, no generator (§5.1).
+- Frontmatter stays hand-authored with effort-only contract tests, no generator (§5).
 - `.jeff/` needs no new structure and no `role-runs/` directories.
 - The gate hook uses ponytail's guarded-direct-node pattern (§6).
 
@@ -210,7 +181,7 @@ process required.
 2. Port the validator (`cook validate` and friends) to JS; parity check vs `tests/*.bats`.
 3. Port the remaining CLI verbs (`ls`, `status`, `show`, `verify`, `init`, `doctor`,
    `plan section/check/append`).
-4. Frontmatter effort reader + drift check; pi inherits the active model/provider.
+4. Frontmatter effort reader; pi inherits the active model/provider.
 5. Swap Claude Code SKILL.md / hooks invocations from `cook.sh` to `node src/cli/cook.js`;
    retire `cook.sh` on this branch; `doctor` checks node.
 6. pi package manifest (`package.json#pi`) + extension entrypoint (commands + activation).

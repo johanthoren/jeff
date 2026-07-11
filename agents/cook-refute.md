@@ -1,7 +1,6 @@
 ---
 name: cook-refute
 description: jeff `refute` pass. Adversarially test exactly ONE blocking review/audit finding before it triggers a kickback: is it actually reachable, is its severity honest? Verdict survives or refuted, with evidence. Do not edit code.
-model: opus
 effort: xhigh
 tools: Read, Grep, Glob
 ---
