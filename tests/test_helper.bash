@@ -39,3 +39,17 @@ EOF
   export GIT_CONFIG_GLOBAL="$cfg"
   export GIT_CONFIG_SYSTEM=/dev/null
 }
+
+# Create a committed repository and a real detached linked worktree beneath one
+# isolated temp directory. Exports LINKED_TMP, LINKED_MAIN, and LINKED_ROOT.
+make_linked_worktree() {
+  LINKED_TMP="$(mktemp -d)"
+  LINKED_MAIN="$LINKED_TMP/main"
+  LINKED_ROOT="$LINKED_TMP/worktree"
+  mkdir -p "$LINKED_MAIN"
+  git -C "$LINKED_MAIN" init -q
+  printf 'seed\n' > "$LINKED_MAIN/seed.txt"
+  git -C "$LINKED_MAIN" add seed.txt
+  git -C "$LINKED_MAIN" commit -q -m seed
+  git -C "$LINKED_MAIN" worktree add --detach -q "$LINKED_ROOT" HEAD
+}

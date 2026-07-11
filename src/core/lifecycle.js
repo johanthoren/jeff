@@ -1,11 +1,12 @@
 // @ts-check
 
 import { lstat, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
-import { statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { readMode, readConfig } from './store.js';
+import { git } from './git.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -78,16 +79,17 @@ export async function doctorReport(root) {
 }
 
 /**
- * Whether `<root>/.git` is a directory : the `[ -d "$ROOT/.git" ]` guard. A
- * `.git` FILE (submodule/worktree) or a missing `.git` both read false, matching
- * cook.sh's `cmd_init` (:711).
+ * Whether `root` is the top level of a real Git work tree, including a linked
+ * worktree whose `.git` is a file. Matches cook.sh's `is_git_root` probe.
  *
  * @param {string} root
  * @returns {boolean}
  */
-function isGitRepo(root) {
+function isGitRoot(root) {
+  const result = git(root, ['rev-parse', '--show-toplevel']);
+  if (result.status !== 0) return false;
   try {
-    return statSync(join(root, '.git')).isDirectory();
+    return realpathSync(root) === realpathSync((result.stdout ?? '').replace(/\r?\n$/, ''));
   } catch {
     return false;
   }
@@ -132,7 +134,7 @@ export async function writeFileAtomic(target, json) {
  * @returns {Promise<Verdict>}
  */
 export async function initProject(root) {
-  if (!isGitRepo(root)) {
+  if (!isGitRoot(root)) {
     return { code: 1, stdout: [], stderr: [`cook: not a git repository: ${root}`] };
   }
 

@@ -38,6 +38,7 @@ setup() {
 
 teardown() {
   rm -rf "$TMP"
+  [ -z "${LINKED_TMP:-}" ] || rm -rf "$LINKED_TMP"
 }
 
 cook() {
@@ -249,6 +250,22 @@ clean_tree() {
   [ ! -f "$sentinel" ]
 }
 
+@test "verify/worktree AC1: configured suites keep their exact status in a linked worktree" {
+  make_linked_worktree
+  mkdir -p "$LINKED_ROOT/.jeff"
+
+  jq -n '{testCommand:"true"}' > "$LINKED_ROOT/.jeff/config.json"
+  run env COOK_ROOT="$LINKED_ROOT" "$COOK" verify
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"green"* ]]
+
+  local marker="$LINKED_ROOT/exit-7-ran"
+  jq -n --arg cmd "printf ran > '$marker'; exit 7" '{testCommand:$cmd}' > "$LINKED_ROOT/.jeff/config.json"
+  run env COOK_ROOT="$LINKED_ROOT" "$COOK" verify
+  [ "$status" -eq 7 ]
+  [ "$(cat "$marker")" = "ran" ]
+}
+
 # ---------------------------------------------------------------------------
 # B: test-runs.jsonl log + .git/info/exclude
 # ---------------------------------------------------------------------------
@@ -323,6 +340,20 @@ clean_tree() {
   local count
   count="$(grep -cF ".jeff/test-runs.jsonl" "$exclude")"
   [ "$count" -eq 1 ]
+}
+
+@test "verify/worktree AC2: two verifies exclude the run log once at Git's reported path" {
+  make_linked_worktree
+  mkdir -p "$LINKED_ROOT/.jeff"
+  jq -n '{testCommand:"true"}' > "$LINKED_ROOT/.jeff/config.json"
+  local exclude
+  exclude="$(git -C "$LINKED_ROOT" rev-parse --git-path info/exclude)"
+
+  run env COOK_ROOT="$LINKED_ROOT" "$COOK" verify
+  [ "$status" -eq 0 ]
+  run env COOK_ROOT="$LINKED_ROOT" "$COOK" verify
+  [ "$status" -eq 0 ]
+  [ "$(grep -cFx '.jeff/test-runs.jsonl' "$exclude")" -eq 1 ]
 }
 
 # ---------------------------------------------------------------------------

@@ -164,6 +164,27 @@ tree_dirty() {
   [ -n "$(git -C "$ROOT" status --porcelain -- ':(exclude).jeff' 2>/dev/null)" ]
 }
 
+# Exit 0 only when ROOT is the top level of a real Git work tree (ordinary or linked).
+is_git_root() {
+  local root top
+  root="$(resolve_dir "$ROOT")" || return 1
+  top="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  top="$(resolve_dir "$top")" || return 1
+  [ "$root" = "$top" ]
+}
+
+# Echo Git's info/exclude path, anchoring ordinary repos' relative result at ROOT.
+git_info_exclude() {
+  local path
+  path="$(git -C "$ROOT" rev-parse --git-path info/exclude 2>/dev/null)" || return 1
+  [ -n "$path" ] || return 1
+  case "$path" in
+    /*) ;;
+    *) path="$ROOT/$path" ;;
+  esac
+  printf '%s\n' "$path"
+}
+
 # profile_conformance <file>: single source of truth for profile schema checks.
 # Checks:
 #   1. Front-matter: a parseable fenced ```json block at the top of the file.
@@ -708,7 +729,7 @@ ensure_scaffold() {
 
 cmd_init() {
   reject_unknown_args init "$@"
-  [ -d "$ROOT/.git" ] || die "not a git repository: $ROOT"
+  is_git_root || die "not a git repository: $ROOT"
   ensure_scaffold
   printf 'cook: jeff activated in %s (scaffold + marked active).\n' "$ROOT"
 }
@@ -725,7 +746,7 @@ cmd_deinit() {
 
 # Append a single line to a file idempotently, creating it (and its parent) if
 # absent. Never touches the file if the exact line is already present. Used by
-# cmd_lite to add .jeff/ to .git/info/exclude without ever duplicating it.
+# cmd_lite to add .jeff/ to Git's info/exclude without ever duplicating it.
 # The line is matched whole (fixed-string, anchored) so a substring or a longer
 # pattern that merely contains it does not count as already-present.
 append_line_once() {
@@ -742,12 +763,14 @@ append_line_once() {
 # Lite mode runs Jeff's quality pipeline inside a SHARED repo without
 # imposing its task registry: it scaffolds .jeff/, writes config.json with
 # mode:"lite"+active:true, and git-excludes .jeff/ locally
-# (.git/info/exclude: never a tracked file). No git hook is installed in any mode.
+# (Git's info/exclude: never a tracked file). No git hook is installed in any mode.
 # Re-running is a safe no-op: config is re-stamped to the lite shape and the
 # exclude line is added at most once.
 cmd_lite() {
   reject_unknown_args lite "$@"
-  [ -d "$ROOT/.git" ] || die "not a git repository: $ROOT (cook lite needs git to exclude .jeff/ locally)"
+  is_git_root || die "not a git repository: $ROOT (cook lite needs git to exclude .jeff/ locally)"
+  local exclude
+  exclude="$(git_info_exclude)" || die "could not resolve Git info/exclude: $ROOT"
   require_jq
   mkdir -p "$BK/tasks" "$BK/memory"
   [ -f "$BK/tasks/.gitkeep" ] || : > "$BK/tasks/.gitkeep"
@@ -764,8 +787,8 @@ cmd_lite() {
   mv -f "$tmp" "$BK/config.json"
 
   # Git-exclude .jeff/ locally and idempotently. Never edits a tracked file:
-  # .git/info/exclude is per-clone and never committed. Created if absent.
-  append_line_once "$ROOT/.git/info/exclude" ".jeff/"
+  # info/exclude is per-clone and never committed. Created if absent.
+  append_line_once "$exclude" ".jeff/"
 
   printf 'cook: lite mode active in %s: quality pipeline on, registry off (.jeff/ git-excluded locally).\n' "$ROOT"
 }
@@ -1439,7 +1462,7 @@ cmd_verify() {
   # so the log is a full-mode entry-state mechanism only.
   if [ "$(bake_mode)" != "lite" ] \
      && git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1; then
-    local head dirty at log
+    local head dirty at log exclude
     head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" || head=""
     if [ -n "$head" ]; then
       tree_dirty && dirty=true || dirty=false
@@ -1455,7 +1478,8 @@ cmd_verify() {
         '{hash:$hash, dirty:$dirty, result:$result, suite:$suite, at:$at}' \
         >> "$log"
       # Git-exclude the log locally + idempotently (per-clone, never committed).
-      append_line_once "$ROOT/.git/info/exclude" ".jeff/test-runs.jsonl"
+      exclude="$(git_info_exclude)" || exclude=""
+      [ -z "$exclude" ] || append_line_once "$exclude" ".jeff/test-runs.jsonl"
     fi
   fi
 
