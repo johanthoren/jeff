@@ -21,8 +21,6 @@
 #   plan-sep. plan agent != implementer (task 0041; the dispatched plan
 #       specialist designs the test contract, the implementer must not have
 #       shaped the tests it has to pass). Skipped when either id is null.
-#   (3. review/audit brain >= implement brain: REMOVED in task 0026; brain
-#       tiering is now pinned assignment in agents/*.md, not a validator floor)
 #   4. no status=done without (non-implementer tests green + review pass + audit pass|na).
 #       tests.green is boolean true (a real green gate) OR the string "na" (task
 #       0049's None/terminal disposition: a declarative AC with no consumer-
@@ -298,8 +296,7 @@ Audit triggers: destructive ops, prompt-injection surfaces, security-sensitive p
 
 Vocabulary:
 - task = Jeff task (maps to team tracker issue)
-- stage = pipeline phase (capture/plan/test/implement/refactor/review/audit/done)
-- brain = model + effort tier dispatched for a stage'
+- stage = pipeline phase (capture/plan/test/implement/refactor/review/audit/done)'
 
 cmd_profile() {
   local sub="${1:-}"
@@ -436,8 +433,7 @@ cmd_validate() {
             # specialist designs the test contract (behaviors + seams); the
             # implementer must not have shaped the tests it has to pass. Fires only
             # when BOTH ids are recorded and equal (absent ⇒ null ⇒ skipped, so
-            # existing task.jsons without plan_agent_id stay valid). A distinct
-            # marker: NOT inv3, which task 0026 removed; reusing it would mislead.
+            # existing task.jsons without plan_agent_id stay valid).
             ( ($t.agents.plan_agent_id) as $pl | ($t.agents.implementer_agent_id) as $im
               | if ($pl != null and $im != null and $pl == $im)
                 then "task \($t.id): plan agent == implementer (\($pl)) [plan-sep]" else empty end),

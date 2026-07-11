@@ -1,7 +1,7 @@
 # Maintaining jeff
 
 Read this before changing the system itself: the method, the skills, the agents,
-the validator, the brains. `code-standards` is the baseline for any code change
+the validator, the dispatch policy. `code-standards` is the baseline for any code change
 and `AGENTS.md` is the operating iron-rules; this is the slower layer they don't
 carry: how jeff is meant to age, and the model-drift lens for deciding what
 to add, keep, or retire.
@@ -23,7 +23,7 @@ coupled so each can move without tearing the others apart. Sort every part of
 jeff by how its change is governed, fast to slow:
 
 - **Output**: a task run and its ledger. Per-task, disposable.
-- **Harness**: the skills, agents, prompts, and brains. Reviewed per model-era;
+- **Harness**: the skills, agents, prompts, and role settings. Reviewed per model-era;
   built for deletion.
 - **Structure**: the validator's invariants, the task schema, stable ids.
   Changed only by recorded migration.

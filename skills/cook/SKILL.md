@@ -70,7 +70,7 @@ A closed verb set means anything off it is a task id (or "no such task"), never 
 
 ### Lite mode (shared repos)
 
-For a **shared repo** the team owns the task tracker (Jira, GitHub issues, `docs/*.md` plans) and git/merge policy. **Lite mode** runs the quality pipeline there without imposing the registry: `.jeff/config.json` carries `"mode": "lite"`, the store is git-excluded locally (`.git/info/exclude`). No git hook is installed in any mode. The validator keeps the quality invariants (separation, the done-gate, the convergence council) and drops the registry-only ones (dep DAG, duplicate ids, index/disk consistency); a task `id` may be an external tracker ref (a string). Brain tiering is now pure assignment (pinned per-stage in `agents/cook-*.md` frontmatter), not a validator invariant.
+For a **shared repo** the team owns the task tracker (Jira, GitHub issues, `docs/*.md` plans) and git/merge policy. **Lite mode** runs the quality pipeline there without imposing the registry: `.jeff/config.json` carries `"mode": "lite"`, the store is git-excluded locally (`.git/info/exclude`). No git hook is installed in any mode. The validator keeps the quality invariants (separation, the done-gate, the convergence council) and drops the registry-only ones (dep DAG, duplicate ids, index/disk consistency); a task `id` may be an external tracker ref (a string). Stage effort lives in `agents/cook-*.md` frontmatter, not in the validator.
 
 **Lite activation has two equivalent forms, and only these activate it:**
 

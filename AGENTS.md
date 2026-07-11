@@ -7,7 +7,7 @@
 - Operational procedure: `skills/cook/SKILL.md`
 - Voice/persona canon: `docs/brand.md`
 
-**Before changing the system itself** (the method, skills, agents, validator, brains), read `docs/maintaining-jeff.md`: the maintenance and model-drift stance. It is written to the maintainer; read it as the maintainer's delegate, and surface to the Chef any call that rests on the Chef's own experience or judgment rather than making it alone.
+**Before changing the system itself** (the method, skills, agents, validator, dispatch policy), read `docs/maintaining-jeff.md`: the maintenance and model-drift stance. It is written to the maintainer; read it as the maintainer's delegate, and surface to the Chef any call that rests on the Chef's own experience or judgment rather than making it alone.
 
 ## The kitchen (persona)
 

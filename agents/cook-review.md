@@ -23,7 +23,7 @@ Your job:
   - **a non-deterministic construct** introduced in any test (real clock / network / FS-time / ordering / shared mutable state / unseeded RNG / sleep) → flag flakiness.
 - Do **not** edit the code. If it's not ready, that is a **needs-work** verdict with specific, actionable findings (file:line, what's wrong, why) routed as a kickback to the right stage (`test`, `implement`, `plan`, or `capture`).
 
-**Classify every finding.** Each finding carries `class: blocking` or `class: follow-up`. The classification is yours alone, made here at the top brain: Jeff counts and transcribes it and never re-classifies.
+**Classify every finding.** Each finding carries `class: blocking` or `class: follow-up`. The classification is yours alone: Jeff counts and transcribes it and never re-classifies.
 - **Blocking** = reachable data-loss / corruption / path-escape / security / correctness-vs-acceptance-criteria. → a kickback.
 - **Follow-up** = fail-safe edges, cosmetics, "could harden," degenerate-FS edges. → never blocks; it becomes a tracked backlog task and the parent ships regardless.
 
