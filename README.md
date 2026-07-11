@@ -45,7 +45,7 @@ Full method in [AGENTS.md](AGENTS.md).
 ## Install
 
 Jeff is one versioned package with separate host install paths. Install only the
-shells you use; Pi and Claude Code do not install or activate each other.
+shells you use; host installs do not activate one another.
 
 ### Pi — recommended stable path
 

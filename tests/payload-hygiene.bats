@@ -6,12 +6,11 @@
 #   AC6: guard test: payload free of $HOME/code, /Users/, local Codex cache/session
 #         artifacts, and forge path/identity tokens.
 #
-# Payload scan set (mirrors release-check.bats payload prefix list):
-#   skills/  agents/  commands/  hooks/  .claude-plugin/  .codex-plugin/
-#   .agents/plugins/  AGENTS.md  README.md
-#   commands/ and hooks/ are optional: grep returns 1 (no match) on absent dirs,
-#   which we treat as passing.  docs/, tests/, .jeff/, Makefile are excluded
-#   by construction (AC5: historical forge refs in docs/ must survive).
+# Public payload scan set:
+#   skills/  agents/  commands/  hooks/  src/  assets/  .claude-plugin/
+#   .codex-plugin/  .agents/plugins/  AGENTS.md  README.md  NOTICE  package.json
+#   Optional paths are skipped. docs/, tests/, .jeff/, Makefile are excluded by
+#   construction (AC5: historical forge refs in docs/ must survive).
 #
 # fire-and-forget safety:
 #   skills/cook/SKILL.md contains "fire-and-forget": the substring "forge" appears
@@ -25,20 +24,14 @@ REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
 setup_file() { cook_hermetic_git; }
 
-# ---------------------------------------------------------------------------
-# Helper: collect payload paths into an array suitable for grep.
-# We pass them explicitly so absent optional dirs are silently skipped.
-# ---------------------------------------------------------------------------
-
-_payload_args() {
-  local args=()
-  for dir in skills agents commands hooks .claude-plugin .codex-plugin .agents/plugins; do
-    [ -d "$REPO/$dir" ] && args+=("$REPO/$dir")
+setup() {
+  PAYLOAD_ARGS=()
+  for dir in skills agents commands hooks src assets .claude-plugin .codex-plugin .agents/plugins; do
+    [ -d "$REPO/$dir" ] && PAYLOAD_ARGS+=("$REPO/$dir")
   done
-  for f in AGENTS.md README.md; do
-    [ -f "$REPO/$f" ] && args+=("$REPO/$f")
+  for file in AGENTS.md README.md NOTICE package.json; do
+    [ -f "$REPO/$file" ] && PAYLOAD_ARGS+=("$REPO/$file")
   done
-  printf '%s\n' "${args[@]}"
 }
 
 # ---------------------------------------------------------------------------
@@ -48,9 +41,7 @@ _payload_args() {
 # ---------------------------------------------------------------------------
 
 @test "payload: no \$HOME/code occurrence (machine-specific path)" {
-  local -a targets
-  mapfile -t targets < <(_payload_args)
-  run grep -r --include="*" -l '\$HOME/code' "${targets[@]}"
+  run grep -r --include="*" -l '\$HOME/code' "${PAYLOAD_ARGS[@]}"
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
@@ -62,9 +53,7 @@ _payload_args() {
 # ---------------------------------------------------------------------------
 
 @test "payload: no /Users/ occurrence (machine-specific absolute path)" {
-  local -a targets
-  mapfile -t targets < <(_payload_args)
-  run grep -r --include="*" -l '/Users/' "${targets[@]}"
+  run grep -r --include="*" -l '/Users/' "${PAYLOAD_ARGS[@]}"
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
@@ -76,10 +65,8 @@ _payload_args() {
 # ---------------------------------------------------------------------------
 
 @test "payload: no local Codex cache or session provenance" {
-  local -a targets
-  mapfile -t targets < <(_payload_args)
   local pattern='\.codex/(plugins/cache|sessions)(/|[^[:alnum:]_-]|$)|\.codex/session_index\.jsonl|rollout-[0-9]{4}-[0-9]{2}-[0-9]{2}T[^/[:space:]]+\.jsonl'
-  run grep -rE --include="*" -l "$pattern" "${targets[@]}"
+  run grep -rE --include="*" -l "$pattern" "${PAYLOAD_ARGS[@]}"
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
@@ -99,10 +86,8 @@ _payload_args() {
 # ---------------------------------------------------------------------------
 
 @test "payload: no forge path-or-identity token (fire-and-forget safe)" {
-  local -a targets
-  mapfile -t targets < <(_payload_args)
   local pattern='\$HOME/code/forge|code/forge/|[Ff]orge repo|for Forge|/forge/'
-  run grep -rE --include="*" -l "$pattern" "${targets[@]}"
+  run grep -rE --include="*" -l "$pattern" "${PAYLOAD_ARGS[@]}"
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }

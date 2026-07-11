@@ -1,6 +1,6 @@
 # AGENTS.md: jeff
 
-**jeff** is a lean, skill-based autonomous task system, distributed as a **Claude Code plugin** and **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through a fresh-context specialist pipeline, gated by a small Bash + `jq` validator. Built for a single trusted Chef on frontier models (Opus 4.8+, GPT-5.5+).
+**jeff** is a lean, skill-based autonomous task system, distributed as **Claude Code and Codex plugins** and a **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through a fresh-context specialist pipeline, gated by a small Bash + `jq` validator. Built for a single trusted Chef on frontier models (Opus 4.8+, GPT-5.5+).
 
 - Design spec: `docs/specs/jeff-design.md`
 - State schema: `skills/cook/reference/jeff-state-schema.md`
