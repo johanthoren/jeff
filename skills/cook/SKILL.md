@@ -141,7 +141,7 @@ When stale, refresh before picking up the task: correct NOW/NEXT, reconcile any 
 1. **Strip satisfied deps.** Remove the finishing task's id from the `deps` array of every still-live (pending/in_progress/blocked) task that referenced it, so no surviving task dangles a dependency on a removed dir.
 2. **`git rm -r` the task dir** (`.jeff/tasks/0NNN-<slug>/`).
 3. **Refresh BACKLOG.md.** **Remove** the finished task from BACKLOG entirely (NOW/NEXT/TODO) and write **no** done-record or release narrative: the archive is git tags/history and memory, not BACKLOG. Optionally promote NEXT→NOW for the next task, and file newly-spun follow-up ids into TODO (or NEXT if imminent).
-4. **Validate the terminal bookkeeping, then integrate as specified in Git.** The one green task commit on trunk carries the outcome message: `task <id> · done: <outcome (+ release tag)>` or `task <id> · abandoned: <why; superseded by …>`. It is the task's permanent, greppable trail (`git log --grep 'task .* · done'`).
+4. **Validate the terminal bookkeeping, then satisfy the Git contract below.**
 
 Keep BACKLOG current so each fresh context starts with honest orientation rather than stale state.
 
@@ -253,11 +253,10 @@ A task must start from a **known-green baseline** (the full suite passing before
 
 Run `cook validate` before each commit (CI also runs it on push). It enforces separation + completeness structurally: it cannot tell you whether a spec is good or a review thorough; that is the specialists' job. A task may not reach `done` without non-implementer tests green, a passing review, and audit pass-or-not-required. The **`[gate]`** check additionally refuses a `done` task whose recorded `tests.gate` is not green+clean with a recorded hash (so `tests.green` is always backed by a real full-suite run); it is **null-tolerant**: a task without `tests.gate` validates exactly as before.
 
-The **`[prune]`** check is a **full-mode registry invariant**: a `done`/`abandoned` task dir must **not** rest in the store (the archive is git history/tags, not a resting dir). Like the other registry invariants (numeric id, INV-5 deps, duplicate-id), lite mode drops it: a lite Chef's external tracker owns the lifecycle and a lite run-ledger may legitimately retain a local `done` record. Full-mode completion must satisfy all of these outcomes:
-- the present task record earns `done` under the done-gate before removal;
-- the terminal tree strips satisfied dependencies, removes the task dir, refreshes BACKLOG, and passes `cook validate`;
-- shipped non-state content matches the clean, immutable gate checkpoint, with differences limited to validated terminal bookkeeping; and
-- trunk receives one green task commit and never contains the transient terminal record.
+The **`[prune]`** check is a **full-mode registry invariant**: a `done`/`abandoned` task dir must **not** rest in the store (the archive is git history/tags, not a resting dir). Like the other registry invariants (numeric id, INV-5 deps, duplicate-id), lite mode drops it: a lite Chef's external tracker owns the lifecycle and a lite run-ledger may legitimately retain a local `done` record. In addition to the Git outcomes above, full-mode completion requires:
+- the present task record to earn `done` under the done-gate before removal;
+- the terminal tree to strip satisfied dependencies, remove the task dir, refresh BACKLOG, and pass `cook validate`; and
+- trunk never to contain the transient terminal record.
 
 Choose repository-appropriate mechanics that make those outcomes inspectable.
 
