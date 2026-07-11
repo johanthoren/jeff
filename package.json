@@ -1,6 +1,6 @@
 {
   "name": "@johanthoren/jeff",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "description": "jeff: a quality brigade for coding agents (pi shell core)",
   "type": "module",
   "license": "Apache-2.0",
