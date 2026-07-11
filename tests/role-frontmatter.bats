@@ -20,6 +20,14 @@ frontmatter_field() {
   awk '/^---$/{if(++n==2)exit} n==1 && /^'"$field"':/{gsub(/^'"$field"':[[:space:]]*/,""); print}' "$file"
 }
 
+codex_dispatch_contract() {
+  awk '
+    /^### Codex native v2 dispatch$/ { found = 1 }
+    found && /^### / && $0 != "### Codex native v2 dispatch" { exit }
+    found { print }
+  ' "$REPO/skills/cook/SKILL.md"
+}
+
 @test "role frontmatter: agents inherit model and pin settled effort" {
   while IFS='|' read -r stage effort; do
     local file="$REPO/agents/cook-${stage}.md"
@@ -34,4 +42,23 @@ review|xhigh
 audit|xhigh
 refute|xhigh
 CASES
+}
+
+@test "Codex native v2 instructions preserve the orchestration contract without child overrides" {
+  local contract
+  contract="$(codex_dispatch_contract)"
+  [ -n "$contract" ]
+
+  grep -F 'agents/cook-<stage>.md' <<<"$contract"
+  grep -E 'unique.*task_name' <<<"$contract"
+  grep -F 'fork_turns' <<<"$contract" | grep -F 'none'
+  grep -E 'spawn_agent.*task_name.*fork_turns.*message' <<<"$contract"
+  grep -E 'never pass.*model.*effort' <<<"$contract"
+  grep -E 'spawn.*review.*audit.*before.*wait_agent' <<<"$contract"
+  grep -E 'FINAL_ANSWER.*independent' <<<"$contract"
+  grep -E 'structured return' <<<"$contract"
+  grep -E 'native.*(path|id)' <<<"$contract"
+  grep -E 'close_agent.*(result|response)' <<<"$contract"
+  grep -E '(shutdown|cancel).*notification' <<<"$contract"
+  grep -E 'not_found.*(cancel|cancellation)' <<<"$contract"
 }

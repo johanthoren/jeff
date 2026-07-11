@@ -133,7 +133,8 @@ select_dist_tag() {
     (.peerDependenciesMeta["@earendil-works/pi-coding-agent"].optional == true) and
     ((.dependencies // {}) | has("@earendil-works/pi-coding-agent") | not) and
     (.pi.extensions == ["./src/pi/extension.js"]) and
-    (.pi.skills == ["./skills"])
+    (.pi.skills == ["./skills"]) and
+    ((.dependencies // {}) | length == 0)
   '\'' "$1/package.json" >/dev/null &&
   jq -e '\''
     .name == "@johanthoren/jeff" and
@@ -147,7 +148,7 @@ select_dist_tag() {
   run bash -c 'cd "$1" && npm pack --dry-run --json' _ "$REPO"
   [ "$status" -eq 0 ]
 
-  jq -e '.[0].files | map(.path) as $files | (["package.json","src/pi/extension.js","skills/cook/SKILL.md","agents/cook-plan.md",".claude-plugin/plugin.json"] | all(. as $p | $files | index($p)))' <<<"$output" >/dev/null
+  jq -e '.[0].files | map(.path) as $files | (["package.json","src/pi/extension.js","skills/cook/SKILL.md","agents/cook-plan.md",".claude-plugin/plugin.json",".codex-plugin/plugin.json",".agents/plugins/marketplace.json"] | all(. as $p | $files | index($p)))' <<<"$output" >/dev/null
 }
 
 @test "Pi-facing docs prefer npm and label git as dev edge" {

@@ -10,6 +10,7 @@
 #   - last_tag = highest tag matching ^[0-9]+\.[0-9]+\.[0-9]+$
 #   - version from .claude-plugin/plugin.json
 #   - Payload prefixes: skills/ agents/ commands/ hooks/ .claude-plugin/
+#     .codex-plugin/ .agents/plugins/
 #     (bin/ dropped by task 0034; skills/ covers the CLI at its new location)
 #   - Payload files: AGENTS.md package.json
 #   - Excluded: .jeff/ tests/ .github/ docs/ README.md Makefile dotfiles
@@ -34,17 +35,18 @@ SCRIPT="$REPO/scripts/release-check"
 
 # init_fixture_repo <dir> <version>
 #
-# Initialises a minimal git repo with a .claude-plugin/plugin.json at <version>,
-# commits it, and tags the commit with the version string (plain semver).
+# Initialises a minimal git repo with Claude and Codex plugin manifests at
+# <version>, commits them, and tags the commit with the version string (plain semver).
 # Sets local git user so commits work without global config.
 init_fixture_repo() {
   local dir="$1" version="$2"
   git -C "$dir" init -q
   git -C "$dir" config user.email "test@fixture.example"
   git -C "$dir" config user.name "Fixture Test"
-  mkdir -p "$dir/.claude-plugin"
+  mkdir -p "$dir/.claude-plugin" "$dir/.codex-plugin"
   printf '{"version":"%s"}\n' "$version" > "$dir/.claude-plugin/plugin.json"
-  git -C "$dir" add .claude-plugin/plugin.json
+  printf '{"version":"%s"}\n' "$version" > "$dir/.codex-plugin/plugin.json"
+  git -C "$dir" add .claude-plugin/plugin.json .codex-plugin/plugin.json
   git -C "$dir" commit -q -m "initial"
   git -C "$dir" tag "$version"
 }
@@ -64,11 +66,12 @@ commit_file() {
 
 # bump_version <dir> <new_version>
 #
-# Updates .claude-plugin/plugin.json to <new_version> and commits the change.
+# Updates both host plugin manifests to <new_version> and commits the change.
 bump_version() {
   local dir="$1" new_version="$2"
   printf '{"version":"%s"}\n' "$new_version" > "$dir/.claude-plugin/plugin.json"
-  git -C "$dir" add .claude-plugin/plugin.json
+  printf '{"version":"%s"}\n' "$new_version" > "$dir/.codex-plugin/plugin.json"
+  git -C "$dir" add .claude-plugin/plugin.json .codex-plugin/plugin.json
   git -C "$dir" commit -q -m "bump version to $new_version"
 }
 
@@ -180,6 +183,19 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"version mismatch"* ]]
   [[ "$output" == *"package.json"* ]]
+}
+
+@test "version mismatch: Codex plugin version differs from Claude plugin version" {
+  init_fixture_repo "$FIX" "1.0.0"
+  printf '{"version":"1.0.1"}\n' > "$FIX/.codex-plugin/plugin.json"
+  git -C "$FIX" add .codex-plugin/plugin.json
+  git -C "$FIX" commit -q -m "add mismatched Codex plugin version"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"version mismatch"* ]]
+  [[ "$output" == *".codex-plugin/plugin.json"* ]]
 }
 
 @test "package.json metadata change requires a version bump" {
@@ -310,6 +326,28 @@ teardown() {
   [ "$status" -ne 0 ]
   # ".claude-plugin/plugin.json" cannot appear in the scripts/release-check not-found error
   [[ "$output" == *".claude-plugin/plugin.json"* ]] || [[ "$output" == *".claude-plugin"* ]]
+}
+
+@test "payload/codex-plugin: non-version field change requires a version bump" {
+  init_fixture_repo "$FIX" "1.0.0"
+  printf '{"version":"1.0.0","name":"jeff"}\n' > "$FIX/.codex-plugin/plugin.json"
+  git -C "$FIX" add .codex-plugin/plugin.json
+  git -C "$FIX" commit -q -m "add Codex plugin name"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".codex-plugin/plugin.json"* ]]
+}
+
+@test "payload/codex marketplace: source metadata change requires a version bump" {
+  init_fixture_repo "$FIX" "1.0.0"
+  commit_file "$FIX" ".agents/plugins/marketplace.json" '{"name":"jeff","plugins":[]}'
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".agents/plugins/marketplace.json"* ]]
 }
 
 @test "README-only docs change does not require a version bump" {
