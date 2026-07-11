@@ -410,6 +410,48 @@ patch_field() {
   [[ "$output" == *"inv2"* ]] || true
 }
 
+@test "lite-keep/inv2: reviewer2 == implementer fails validate under mode:lite" {
+  write_lite_config "$BK"
+  write_baseline_task_numeric "$BK" 1 "lite-inv2-reviewer2-same"
+  patch_field "$BK/tasks/1-lite-inv2-reviewer2-same/task.json" '
+    .agents.implementer_agent_id = "agent-impl-002"
+    | .agents.reviewer2_agent_id = "agent-impl-002"
+  '
+  run cook validate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"inv2"* ]]
+}
+
+@test "full-mode guard: reviewer2 == implementer fails validate" {
+  write_baseline_task_numeric "$BK" 1 "full-inv2-reviewer2-same"
+  patch_field "$BK/tasks/1-full-inv2-reviewer2-same/task.json" '
+    .status = "in_progress"
+    | .stage = "implement"
+    | .agents.implementer_agent_id = "agent-impl-002"
+    | .agents.reviewer2_agent_id = "agent-impl-002"
+  '
+  run cook validate
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"inv2"* ]]
+}
+
+@test "legacy test-stage ledger with historical identities validates and remains listed" {
+  write_lite_config "$BK"
+  write_baseline_task_numeric "$BK" 1 "legacy-test-stage"
+  patch_field "$BK/tasks/1-legacy-test-stage/task.json" '
+    .status = "in_progress"
+    | .stage = "test"
+    | .agents.plan_agent_id = "agent-planner-009"
+    | .agents.test_author_agent_id = "agent-tester-001"
+  '
+
+  run cook validate
+  [ "$status" -eq 0 ]
+  run cook ls
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'1\tin_progress\ttest\t'* ]]
+}
+
 # ---------------------------------------------------------------------------
 # SEPARATION: plan (test-designer) != implement
 #

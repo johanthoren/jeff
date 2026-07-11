@@ -108,6 +108,9 @@ test('extension registers /jeff-status and cook_dispatch', () => {
   assert.equal(commands.get('jeff-status').description, 'Report that the jeff Pi package is active');
   assert.equal(tools.has('cook_dispatch'), true);
   assert.deepEqual(tools.get('cook_dispatch').parameters.required, ['stage', 'brief']);
+  assert.deepEqual(tools.get('cook_dispatch').parameters.properties.stage.enum, [
+    'plan', 'implement', 'refactor', 'review', 'audit', 'refute',
+  ]);
 });
 
 test('completed cook_dispatch results render as compact feed rows', () => {

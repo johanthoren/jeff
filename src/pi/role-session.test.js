@@ -119,6 +119,8 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
 
     /** @type {Record<string, string[]>} */
     const toolsByStage = {};
+    /** @type {Record<string, string>} */
+    const effortByStage = {};
     const sdk = {
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (/** @type {any} */ options) => {
@@ -136,18 +138,46 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
         currentModel: { provider: 'local', id: 'qwen-dev' },
         sdk: {
           ...sdk,
-          createAgentSession: async (/** @type {any} */ options) => sdk.createAgentSession({ ...options, stageForTest: stage }),
+          createAgentSession: async (/** @type {any} */ options) => {
+            effortByStage[stage] = options.thinkingLevel;
+            return sdk.createAgentSession({ ...options, stageForTest: stage });
+          },
         },
         generateAgentId: () => `agent-${stage}`,
       });
     }
 
     assert.deepEqual(toolsByStage, {
-      plan: ['read', 'grep', 'find', 'ls', 'write'],
+      plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       review: ['read', 'grep', 'find', 'ls'],
       audit: ['read', 'grep', 'find', 'ls'],
       refute: ['read', 'grep', 'find', 'ls'],
     });
+    assert.equal(effortByStage.plan, 'xhigh');
+  });
+});
+
+test('dispatchRoleSession refuses the removed test stage', async () => {
+  await withRepo(async (repoRoot) => {
+    await writeFile(join(repoRoot, 'agents', 'cook-test.md'), '---\nname: cook-test\neffort: medium\n---\nTest body.');
+    const sdk = {
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({
+        session: { subscribe() {}, async prompt() {}, dispose() {} },
+      }),
+    };
+
+    await assert.rejects(
+      dispatchRoleSession({
+        stage: 'test',
+        brief: 'Encode tests.',
+        cwd: repoRoot,
+        repoRoot,
+        currentModel: { provider: 'local', id: 'qwen-dev' },
+        sdk,
+      }),
+      /unknown stage 'test'/,
+    );
   });
 });
 
