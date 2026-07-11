@@ -26,7 +26,6 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
   "createdAt": "2026-06-13T12:00:00.000Z",
   "updatedAt": "2026-06-13T12:00:00.000Z",
   "complexity": "complex",
-  "branch": null,
   "brains": {
     "capture":   { "model": "opus", "effort": "xhigh" },
     "plan":      { "model": "opus", "effort": "xhigh" },
@@ -63,8 +62,8 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - `priority` ∈ `p0 | p1 | p2 | p3 | p4`.
 - `createdAt` / `updatedAt`: ISO-8601 datetimes.
 - `deps`: array of existing task ids; the graph must be acyclic.
-- `complexity`: `"simple" | "complex"` (absent ⇒ `"complex"`): drives branch-vs-direct commit (Principle 9). Set or refined at plan by whether the change complects (braids concerns, couples previously-separate things, crosses subsystem boundaries, or has non-local side effects); classify by complecting, not difficulty; deployment / non-local side-effects ⇒ `"complex"`; default `"complex"` when unsure.
-- `branch`: `task/<NNNN>-<slug>` when `complex`, else `null` (commits land on trunk directly).
+- `complexity`: `"simple" | "complex"` (absent ⇒ `"complex"`). Set or refine it at plan by whether the change complects or carries risk: braids concerns, couples previously separate things, crosses subsystem boundaries, or has non-local side effects. Classify by complecting, not difficulty; deployment or other non-local side effects ⇒ `"complex"`; default `"complex"` when unsure. It does not select Git topology.
+- `branch` (optional, deprecated): ignored legacy state. New records omit it; validators continue to accept old records containing it without migration.
 - `brains`: per-stage `{ model, effort }`, an **informational record** of plan-time intent. `model` ∈ `haiku|sonnet|opus|fable`; `effort` ∈ `low|med|high|xhigh`. The validator no longer reads it (the old `review/audit ≥ implement` floor is gone); the brain that actually dispatches each stage is pinned in `agents/cook-<stage>.md` frontmatter.
 - `agents.*`: harness agent ids recorded by Jeff from each specialist dispatch. `plan_agent_id` is the dispatched `plan` specialist (the test-designer); it shapes the test contract (behaviors + seams), so it must differ from `implementer_agent_id` (the implementer must not have shaped the tests it has to pass). Absent / `null` is allowed (tasks captured before this field, or before `plan` runs); the plan ≠ implement invariant only fires when both are recorded and equal.
 - `tests`: `authored_by_agent_id` set by the `test` stage; `green` is boolean `true`/`false` (set `true` only with cited command `evidence`) **or** the string `"na"` (task 0049). `"na"` is the justified-terminal-no-test done-state: a `None`-disposition acceptance criterion (terminal/declarative, with no consumer-observable behavior to test) records `tests.green == "na"` instead of a manufactured green. On a `done` task the `[inv4]` check accepts `"na"` only when `tests.evidence` is non-empty (the cited justification, reusing the same evidence slot a `true` green uses: no new field) **and** `review.verdict == "pass"` (reviewer-agreed); such a task has no test author (`authored_by_agent_id == null` is allowed). Only the literal `"na"` is accepted; boolean `false` and any other value stay refused. Optional `tests.gate` (the `"gate"` key under `"tests"`) records the full-suite gate result that backs `green`: `{ "hash": "<sha>", "clean": true, "green": true, "command": "<cmd>", "at": "<iso>" }`, written by Jeff from a `cook verify` run. Absent on tasks captured before this field; when present on a `done` task the `[gate]` validator check enforces it (green+clean with a non-empty hash, and `tests.green` backed by `gate.green`).

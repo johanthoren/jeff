@@ -1299,7 +1299,6 @@ cmd_on_create_ledger() {
     priority: "p2",
     deps: [],
     complexity: "complex",
-    branch: null,
     createdAt: $now,
     updatedAt: $now,
     brains: {

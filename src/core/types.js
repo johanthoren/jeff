@@ -63,7 +63,7 @@
  * @property {string} createdAt
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]
- * @property {string | null} branch
+ * @property {string | null} [branch] Deprecated legacy state; ignored when present.
  * @property {Partial<Record<BrainStage, Brain>>} [brains]
  * @property {Object} [agents]
  * @property {Object} [tests]
