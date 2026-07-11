@@ -45,7 +45,7 @@ Full method in [AGENTS.md](AGENTS.md).
 ## Install
 
 Jeff is one versioned package with separate host install paths. Install only the
-shells you use; Pi and Claude Code do not install or activate each other.
+shells you use; host installs do not activate one another.
 
 ### Pi — recommended stable path
 
@@ -79,8 +79,25 @@ Use Claude Code's plugin marketplace flow:
 /plugin install jeff@jeff
 ```
 
+### Codex — recommended path
+
+Add the Git marketplace, then install Jeff:
+
+```
+codex plugin marketplace add johanthoren/jeff
+codex plugin add jeff@jeff
+```
+
+To update, refresh the marketplace snapshot and reinstall, then start a new
+thread so Codex loads the updated skills:
+
+```
+codex plugin marketplace upgrade jeff
+codex plugin add jeff@jeff
+```
+
 Plain `npm install @johanthoren/jeff` only downloads the artifact into
-`node_modules`; it does not activate Jeff in Pi or Claude Code.
+`node_modules`; it does not activate Jeff in Pi, Claude Code, or Codex.
 
 ## Set up
 

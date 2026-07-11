@@ -12,7 +12,8 @@
 # Exit 0 = pass; non-zero = fail; reason on stderr.
 #
 # Payload prefixes (changes require a bump):
-#   skills/  agents/  commands/  hooks/  .claude-plugin/  src/
+#   skills/  agents/  commands/  hooks/  .claude-plugin/  .codex-plugin/
+#   .agents/plugins/  src/
 # Payload files:
 #   AGENTS.md  package.json
 # Excluded (changes do NOT require a bump):
@@ -71,6 +72,14 @@ if [ -z "$version" ] || [ "$version" = "null" ]; then
   die "version field missing or null in $plugin_json"
 fi
 
+codex_plugin_json="$root/.codex-plugin/plugin.json"
+if [ -f "$codex_plugin_json" ]; then
+  codex_version="$(jq -r .version "$codex_plugin_json")"
+  if [ "$codex_version" != "$version" ]; then
+    die "version mismatch: .claude-plugin/plugin.json=$version but .codex-plugin/plugin.json=$codex_version"
+  fi
+fi
+
 package_json="$root/package.json"
 if [ -f "$package_json" ]; then
   package_version="$(jq -r .version "$package_json")"
@@ -105,7 +114,7 @@ changed_payload=()
 
 while IFS= read -r -d '' path; do
   case "$path" in
-    skills/*|agents/*|commands/*|hooks/*|.claude-plugin/*|src/*|AGENTS.md|package.json)
+    skills/*|agents/*|commands/*|hooks/*|.claude-plugin/*|.codex-plugin/*|.agents/plugins/*|src/*|AGENTS.md|package.json)
       changed_payload+=("$path")
       ;;
   esac

@@ -1,7 +1,7 @@
 {
   "name": "@johanthoren/jeff",
-  "version": "3.0.0",
-  "description": "jeff: a quality brigade for coding agents (pi shell core)",
+  "version": "3.1.0",
+  "description": "jeff: a quality brigade for coding agents",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
@@ -17,7 +17,9 @@
   },
   "keywords": ["pi-package"],
   "files": [
+    ".agents/plugins",
     ".claude-plugin",
+    ".codex-plugin",
     "AGENTS.md",
     "agents",
     "assets/jeff.png",

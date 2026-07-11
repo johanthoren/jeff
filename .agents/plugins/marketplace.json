@@ -1,0 +1,20 @@
+{
+  "name": "jeff",
+  "interface": {
+    "displayName": "Jeff"
+  },
+  "plugins": [
+    {
+      "name": "jeff",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

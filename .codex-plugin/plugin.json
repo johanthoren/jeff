@@ -1,0 +1,25 @@
+{
+  "name": "jeff",
+  "version": "3.1.0",
+  "description": "A quality brigade for coding agents.",
+  "author": {
+    "name": "Johan Thorén"
+  },
+  "homepage": "https://github.com/johanthoren/jeff",
+  "repository": "https://github.com/johanthoren/jeff",
+  "license": "Apache-2.0",
+  "keywords": ["workflow", "agents", "code-review", "orchestration"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Jeff",
+    "shortDescription": "A quality brigade for coding agents",
+    "longDescription": "Runs engineering tasks through fresh planning, implementation, review, and audit specialists.",
+    "developerName": "Johan Thorén",
+    "category": "Developer Tools",
+    "capabilities": ["Task orchestration", "Code review"],
+    "defaultPrompt": [
+      "Jeff, set up here.",
+      "Jeff, work this task through the full pipeline."
+    ]
+  }
+}

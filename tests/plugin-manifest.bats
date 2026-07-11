@@ -21,6 +21,8 @@ load test_helper
 setup_file() { cook_hermetic_git; }
 
 MANIFEST="$REPO/.claude-plugin/plugin.json"
+CODEX_MANIFEST="$REPO/.codex-plugin/plugin.json"
+CODEX_MARKETPLACE="$REPO/.agents/plugins/marketplace.json"
 
 # ---------------------------------------------------------------------------
 # AC6: Structural: marketplace fields present, non-empty, valid shape
@@ -56,4 +58,40 @@ MANIFEST="$REPO/.claude-plugin/plugin.json"
   run jq -re '.homepage' "$MANIFEST"
   [ "$status" -eq 0 ]
   [[ "$output" =~ ^https://[^/] ]]
+}
+
+@test "Codex manifest exposes the validated native plugin contract" {
+  jq -e '
+    .name == "jeff" and
+    (.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
+    (.description | type == "string" and length > 0) and
+    (.author.name | type == "string" and length > 0) and
+    .skills == "./skills/" and
+    (.interface | type == "object") and
+    ([.interface.displayName, .interface.shortDescription, .interface.longDescription,
+      .interface.developerName, .interface.category] | all(type == "string" and length > 0)) and
+    (.interface.capabilities | type == "array") and
+    (.interface.defaultPrompt | type == "array" and length > 0 and length <= 3)
+  ' "$CODEX_MANIFEST"
+}
+
+@test "Codex marketplace installs the repository root without duplicating the plugin payload" {
+  jq -e --slurpfile plugin "$CODEX_MANIFEST" '
+    .name == "jeff" and
+    (.interface.displayName | type == "string" and length > 0) and
+    (.plugins | length == 1) and
+    .plugins[0].name == $plugin[0].name and
+    .plugins[0].source == {"source":"local","path":"./"} and
+    .plugins[0].policy == {"installation":"AVAILABLE","authentication":"ON_INSTALL"} and
+    (.plugins[0].category | type == "string" and length > 0)
+  ' "$CODEX_MARKETPLACE"
+}
+
+@test "all package manifests publish one lockstep version" {
+  local version
+  version="$(jq -r '.version' "$MANIFEST")"
+  [ "$(jq -r '.version' "$CODEX_MANIFEST")" = "$version" ]
+  [ "$(jq -r '.version' "$REPO/package.json")" = "$version" ]
+  [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
+  [ "$(jq -r '.packages[""].version' "$REPO/package-lock.json")" = "$version" ]
 }
