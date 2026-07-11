@@ -9,7 +9,7 @@ Reliable long-running autonomous sessions that solve **atomic tasks one at a tim
 - momentum bias (wanting to keep going; declaring "done" prematurely)
 - skipped verification
 - intelligence degradation as context bloats
-- one-size model use: cheap tasks burning expensive models, hard tasks under-thought
+- insufficient thinking effort for judgment-heavy stages
 
 This is **not** a trust / anti-forgery system (single Chef, nothing public). It is a **separation-and-completeness** system: the right-sized fresh-context specialist performs each stage, a *different* fresh-context specialist judges it, and a mechanical validator guarantees the separation and completeness are real.
 
@@ -17,7 +17,7 @@ This is **not** a trust / anti-forgery system (single Chef, nothing public). It 
 
 1. **Thin orchestrator that never judges.** The main session routes work and transcribes specialist verdicts; it never decides "good enough." Every act of judgment happens in a fresh specialist context. Jeff may not override a `needs-work`.
 2. **Separation by fresh context.** Each stage is a separate subagent in a fresh window. Two separations are mechanically enforced: `test-author ≠ implementer`, `implementer ≠ reviewer`.
-3. **Right-sized brains.** Each stage runs at a chosen `{model, effort}`. Judgment stages (review/audit) never run a cheaper brain than the implement stage did.
+3. **One model, role-specific effort.** Every specialist inherits the orchestrator provider/model unchanged; role frontmatter prescribes effort only.
 4. **Forward-only completion (ratchet on `done`).** A task reaches `done` only with recorded passing review (+ audit when required) and green non-implementer tests. *Any* stage may kick back to *any* earlier stage with a recorded reason; only completion is locked, not revisiting.
 5. **Durable truth on disk.** State lives in git-tracked files, re-read each loop, never trusted to Jeff's context. Survives compaction and restarts.
 6. **Lean method, borrowed craft.** The craft (capture, TDD, review) is native to frontier models; we supply framing + conventions and hold work to jeff's *bundled first-party standards floor* (which Chef/local/language skills may tighten or specialize, never weaken). No dependency on method-imposing third-party packs: the floor is jeff's own bundled skill.
@@ -29,38 +29,33 @@ This is **not** a trust / anti-forgery system (single Chef, nothing public). It 
 
 - **task**: the single unit of work. Flat: no orders, no batches, no parent/child. A task may **block** other tasks; dependency edges form a DAG.
 - **stage**: position in a task's pipeline. All active stages are verbs.
-- **brain**: a `{model, effort}` pair chosen per stage.
+- **brain evidence**: the child session's actual `{provider, model, effort}` reported after dispatch.
 - Names: `cook` (the pipeline verb), `jeff` (the sous-chef persona and the repo). The kitchen metaphor is a **render layer** (the `flavor` toggle) over a fixed substrate: it carries **no** depth in the method itself; the substance (`file:line` + reason + fix, verdicts, evidence) is identical with the voice off. See `docs/brand.md`.
 
 ## 4. Pipeline (stages)
 
 Linear by default; kickback to any earlier stage allowed, recorded.
 
-> This table is the original design sketch (history, not a directive). For the current verification protocol and the per-stage brains, `skills/cook/SKILL.md` and `skills/cook/reference/jeff-state-schema.md` are authoritative; the `brain (default)` column below is superseded by the frontmatter-pinned values (see §5).
+> This table is the original design sketch (history, not a directive). For the current verification protocol and per-stage effort, `skills/cook/SKILL.md` is authoritative.
 
-| # | stage | does | brain (default) | separation |
+| # | stage | does | effort | separation |
 |---|---|---|---|---|
-| 1 | `capture` | interrogate intent (one question at a time), drive good architecture, confirm alignment, produce crisp acceptance criteria + scope/non-goals | **top** | n/a |
-| 2 | `plan` | approach, slices, deps, which tests, whether an audit is needed (sensitive surface) | high | n/a |
-| 3 | `test` | author failing tests (red) | mid | ≠ implementer |
-| 4 | `implement` | make tests green; may **not** author/weaken tests | mid | ≠ test-author, ≠ reviewer |
-| 5 | `refactor` | **always when code changed**: simplify, align to standards, dedup; may reach beyond the diff in service of this change; tests stay green | mid | n/a |
-| 6 | `review` | independent code review | high | ≠ implementer |
-| 7 | `audit` | **conditional** (plan flags a security-relevant surface): adversarial security audit | high | n/a |
+| 1 | `capture` | interrogate intent (one question at a time), drive good architecture, confirm alignment, produce crisp acceptance criteria + scope/non-goals | orchestrator setting | n/a |
+| 2 | `plan` | approach, slices, deps, which tests, whether an audit is needed (sensitive surface) | xhigh | n/a |
+| 3 | `test` | author failing tests (red) | medium | ≠ implementer |
+| 4 | `implement` | make tests green; may **not** author/weaken tests | high | ≠ test-author, ≠ reviewer |
+| 5 | `refactor` | **always when code changed**: simplify, align to standards, dedup; may reach beyond the diff in service of this change; tests stay green | xhigh | n/a |
+| 6 | `review` | independent code review | xhigh | ≠ implementer |
+| 7 | `audit` | **conditional** (plan flags a security-relevant surface): adversarial security audit | xhigh | n/a |
 | 8 | `done` | terminal state (not an active stage); gated by validator invariants | n/a | n/a |
 
-`capture` is the highest-leverage stage (see Principle 7) and runs at the top brain.
+`capture` is the highest-leverage stage (see Principle 7) and runs in the orchestrator session.
 
 **Gate checkpoint.** `cook verify` runs against a clean, immutable checkpoint and records its identity as the gate hash. A code kickback creates a new checkpoint and gate. Before integration, the shipped non-state content must match the gate; only validated terminal bookkeeping may differ. How the repository materializes and integrates that checkpoint is contextual. Lite follows its operating profile. Jeff runs `cook validate` before each commit; CI runs it on push.
 
-## 5. Brains (model × effort)
+## 5. Model inheritance and effort
 
-- Models: `haiku < sonnet < opus < fable` (top slot reserved; Fable currently disabled).
-- Effort: `low < med < high < xhigh`.
-- Defaults: `capture` = top (`opus·xhigh`; `fable` when live) · `plan`/`review`/`audit` = `opus·high` · `test`/`implement`/`refactor` = `sonnet·med` · mechanical only = `haiku`.
-- Provider-aware: on GPT backends the top slot caps at best available (no Fable slot); graceful degradation.
-- **Brain tiering is assignment, not enforcement (task 0026; retuned in 0041 + 0043):** each dispatched stage's `{model, effort}` is pinned in `agents/cook-*.md` frontmatter (settled values: plan `opus·xhigh`, test `sonnet·medium` (a low-effort encoder), implement `opus·high`, refactor `sonnet·high`, review/audit `opus·xhigh`: the mechanical stages run Sonnet because their outputs are fully fenced); there is no per-task override and the validator no longer ranks or floors brains. "Judge ≥ builder" holds by construction (review/audit `opus·xhigh` ≥ implement `opus·high`), not a computed invariant. `SKILL.md` / `AGENTS.md` are the authoritative surfaces for these values.
-- **Orchestrator brain = top (capture-equivalent).** The main loop session runs at the highest brain: routing, kickback decisions, and verdict transcription must not run degraded. Keep the driving session on the top available model (Opus 4.8 today).
+Every dispatched specialist inherits the orchestrator's provider/model unchanged on every host. Jeff does not choose that orchestrator model and has no alias map, provider table, ranking, fallback, elevation knob, or per-task model setting. `agents/cook-<stage>.md` frontmatter supplies only role effort: plan/refactor/review/audit/refute `xhigh`, implement `high`, test `medium`. Dispatch reports the child session's actual `{provider, model, effort}` as execution evidence.
 
 ## 6. State & schema
 
@@ -79,7 +74,6 @@ Plus `memory/` (project memory). The task dirs themselves are the registry; ther
 - `stage`: `capture | plan | test | implement | refactor | review | audit | done`
 - `priority`: `p0..p4`
 - `deps`: `[taskId]` (blockers)
-- `brains`: per-stage `{model, effort}` actually used
 - `agents`: `{ test_author_agent_id, implementer_agent_id, reviewer_agent_id, audit_agent_id }`
 - `tests`: `{ authored_by_agent_id, green: bool, evidence: [commands] }`
 - `review`: `{ verdict: pass|needs-work, reviewer_agent_id, evidence: [...] }`
@@ -87,7 +81,7 @@ Plus `memory/` (project memory). The task dirs themselves are the registry; ther
 - `commits`: `[ref]`
 - `kickbacks`: `[{ from, to, reason, at }]`
 
-Dropped vs. the old schema: 8-phase enum, `flowState`, `resumeCommand`, `cookSlices`, all gate/attestation/digest fields, `batchId`/batches, `disposition` (folded into `status`).
+Dropped vs. the old schema: 8-phase enum, `flowState`, `resumeCommand`, `cookSlices`, all gate/attestation/digest fields, `batchId`/batches, `disposition` (folded into `status`), and plan-time `brains`. Historical records with `brains` remain accepted.
 
 ## 7. Validator (`cook validate`: Bash + `jq`)
 
@@ -97,7 +91,7 @@ Invariants enforced:
 
 1. `tests.authored_by_agent_id ≠ implementer_agent_id` (no self-authored tests)
 2. `implementer_agent_id ≠ reviewer_agent_id` (no self-review)
-3. *(removed in task 0026: the old `review/audit brain ≥ implement brain` floor: "no cheap rubber-stamp" now holds by pinned-frontmatter construction, not a validator check)*
+3. *(removed in task 0026: the old computed brain floor)*
 4. no `status = done` unless: `tests.green` AND tests authored by ≠ implementer AND `review.verdict = pass` AND `audit.verdict ∈ {pass, na}`
 5. `deps` reference existing tasks; no cycles
 6. `task.json` is schema-valid (required fields, enum values)
@@ -113,7 +107,7 @@ It guarantees *separation and completeness are real*: not that a spec is good or
 - `cook`: work the single next ready task (all deps `done`) through its pipeline, then stop.
 - `cook <ids…>`: work only those tasks, in dependency order.
 - `cook all`: drain every unblocked task. **(v1.1)**
-- `cook ls`: list tasks (status, stage, brain, age).
+- `cook ls`: list tasks (status, stage, age).
 - `cook status`: current task + in-flight stage + **backlog health** (size, age), with a nudge when the ready-backlog grows past a threshold.
 - `cook show <id>`: full task detail.
 - `cook validate`: run the validator.
@@ -137,10 +131,9 @@ Specialists may **use** official tools (`/code-review`, `/simplify`, `/verify`) 
 
 ## 11. Deferred (v1.1+)
 
-`cook all` (drain); richer backlog analytics; Fable tier activation; migration script; multi-task parallel dispatch.
+`cook all` (drain); richer backlog analytics; migration script; multi-task parallel dispatch.
 
 ## Open questions
 
-- ~~A concrete numeric brain-rank table for the `≥` comparison across providers.~~ **Resolved by deletion (task 0026):** brain tiering is now pure assignment pinned in `agents/cook-*.md` frontmatter: no cross-provider rank comparison exists, so no rank table is needed.
 - Whether `refactor`'s "beyond the diff" license needs a scope cap.
-- ~~Effort knob mechanics.~~ **Resolved (task 0026):** both `model` and `effort` are pinned per-stage in the `agents/cook-*.md` frontmatter (`effort` ∈ `low|med|high|xhigh|max`); no dispatch-time knob or thinking-directive is used.
+- ~~Effort knob mechanics.~~ **Resolved:** role frontmatter supplies effort; the specialist inherits the orchestrator model unchanged.

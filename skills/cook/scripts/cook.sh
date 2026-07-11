@@ -1301,15 +1301,6 @@ cmd_on_create_ledger() {
     complexity: "complex",
     createdAt: $now,
     updatedAt: $now,
-    brains: {
-      capture:   { model: "opus",   effort: "xhigh" },
-      plan:      { model: "opus",   effort: "high"  },
-      test:      { model: "sonnet", effort: "med"   },
-      implement: { model: "opus",   effort: "high"  },
-      refactor:  { model: "sonnet", effort: "high"  },
-      review:    { model: "opus",   effort: "xhigh" },
-      audit:     { model: "opus",   effort: "xhigh" }
-    },
     agents: {
       plan_agent_id:        null,
       test_author_agent_id: null,

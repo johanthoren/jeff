@@ -225,7 +225,7 @@ cross-order constraint is each order's `dependsOn`, preserved as `deps`.
 ## Compatibility notes (verified against real stores)
 
 - task.json from the v1-lean and bakehouse-core generations is already
-  jeff-shaped: `brains` are informational (jeff no longer validates them),
+  jeff-shaped: historical `brains` fields are ignored and remain accepted,
   `convergence` and `tests.gate` are absent-tolerant, and the
   status/stage/priority enums match. No per-task edits are needed.
 - `test-runs.jsonl` uses the same `{hash, dirty, result, suite, at}` line shape

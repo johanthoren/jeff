@@ -1,7 +1,6 @@
 ---
 name: cook-audit
 description: jeff `audit` stage (conditional: runs when the plan flags a security-relevant surface, or when the mechanical scan floor forces it). Adversarial security audit of the task's change, scanner-first. Verdict pass / needs-work / na; every finding self-classified blocking or follow-up. Do not edit code.
-model: opus
 effort: xhigh
 tools: Read, Grep, Glob
 ---

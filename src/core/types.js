@@ -12,21 +12,10 @@
 
 /** @typedef {'pending' | 'in_progress' | 'blocked' | 'done' | 'abandoned'} TaskStatus */
 /** @typedef {'capture' | 'plan' | 'test' | 'implement' | 'refactor' | 'review' | 'audit' | 'done'} TaskStage */
-/** @typedef {Exclude<TaskStage, 'done'>} BrainStage */
 /** @typedef {'p0' | 'p1' | 'p2' | 'p3' | 'p4'} TaskPriority */
 /** @typedef {'simple' | 'complex'} TaskComplexity */
-/** @typedef {'haiku' | 'sonnet' | 'opus' | 'fable'} BrainModel */
-/** @typedef {'low' | 'med' | 'high' | 'xhigh'} BrainEffort */
 /** @typedef {'pass' | 'needs-work' | null} ReviewVerdict */
 /** @typedef {'pass' | 'needs-work' | 'na'} AuditVerdict */
-
-/**
- * Per-stage `{ model, effort }` intent record. Informational: the validator
- * does not read it.
- * @typedef {Object} Brain
- * @property {BrainModel} model
- * @property {BrainEffort} effort
- */
 
 /**
  * The `review` stage outcome record.
@@ -64,7 +53,6 @@
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]
  * @property {string | null} [branch] Deprecated legacy state; ignored when present.
- * @property {Partial<Record<BrainStage, Brain>>} [brains]
  * @property {Object} [agents]
  * @property {Object} [tests]
  * @property {Review} [review]

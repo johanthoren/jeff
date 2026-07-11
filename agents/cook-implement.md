@@ -1,7 +1,6 @@
 ---
 name: cook-implement
 description: jeff `implement` stage. Make the failing tests green with the smallest correct change. May NOT author or weaken the tests: those came from a separate agent and must stay intact.
-model: opus
 effort: high
 tools: Read, Grep, Glob, Bash, Edit, Write
 ---

@@ -4,7 +4,7 @@
  * The impure wrapper for the `flavor` knob (kitchen vs plain persona output).
  * Resolves the effective `JEFF_FLAVOR` setting with the `cmd_flavor` precedence
  * (per-repo config > env > default `kitchen`) and surfaces it as a `cook` verb :
- * the structural twin of `topbrain.js`, mirroring the oracle `cook.sh cmd_flavor`.
+ * mirroring the oracle `cook.sh cmd_flavor`.
  */
 
 import { readConfig } from './store.js';

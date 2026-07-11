@@ -1,7 +1,6 @@
 ---
 name: cook-plan
 description: jeff `plan` stage. Dispatched test-designer. Design the approach AND the test design: the behaviors to test and the seam to test at, each traced to an acceptance criterion, written in the fixed Test-design grammar. Set complexity and whether an audit is required. Author NO production code and NO tests; write only the plan/test-design artifact.
-model: opus
 effort: xhigh
 tools: Read, Grep, Glob, Bash, Write
 ---

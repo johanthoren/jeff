@@ -1,7 +1,6 @@
 ---
 name: cook-review
 description: jeff `review` stage. Independently review the task's change against its acceptance criteria and the Chef's standards. You did not write this code. Verdict is pass or needs-work; every finding self-classified blocking or follow-up. Do not edit code.
-model: opus
 effort: xhigh
 tools: Read, Grep, Glob
 ---

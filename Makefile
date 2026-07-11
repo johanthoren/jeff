@@ -2,7 +2,7 @@ COOK := ./skills/cook/scripts/cook.sh
 BATS := bats
 JOBS := $(shell getconf _NPROCESSORS_ONLN)
 
-.PHONY: validate doctor init ls status help test typecheck release-check parity brain-drift
+.PHONY: validate doctor init ls status help test typecheck release-check parity
 
 help:
 	@echo "make validate  - check .jeff state against the invariants"
@@ -17,16 +17,12 @@ test:
 	@$(BATS) --jobs $(JOBS) tests/convergence.bats tests/lite.bats tests/profile.bats tests/lite-adopt.bats tests/release-check.bats tests/lite-pipeline.bats tests/backlog.bats tests/gh-issues.bats tests/complexity.bats tests/command-routing.bats tests/cli-location.bats tests/brains.bats tests/verify.bats tests/gate.bats tests/disposition.bats tests/validate-scale.bats tests/payload-hygiene.bats tests/package-publish.bats tests/plugin-manifest.bats tests/strict-args.bats tests/precommit-gate.bats tests/prune.bats tests/flavor.bats tests/security-scanner.bats
 	@node --test src/core/*.test.js src/cli/*.test.js src/pi/*.test.js
 	@$(MAKE) parity
-	@$(MAKE) brain-drift
 
 typecheck:
 	@./node_modules/.bin/tsc -p tsconfig.json
 
 parity:
 	@COOK_OVERRIDE="$(CURDIR)/tests/parity-cook.sh" $(BATS) --jobs $(JOBS) tests/prune.bats tests/convergence.bats tests/validate-scale.bats tests/gate.bats tests/disposition.bats tests/backlog.bats tests/lite.bats tests/lite-pipeline.bats tests/profile.bats
-
-brain-drift:
-	@node scripts/brain-drift.js
 
 validate:
 	@$(COOK) validate
