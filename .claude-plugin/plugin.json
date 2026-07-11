@@ -1,6 +1,6 @@
 {
   "name": "jeff",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Meet your new sous chef, Jeff. You call the order; Jeff works the pass, driving the work through a plan, a failing test, the smallest change to go green, a refactor, an independent review, and a security audit when the change warrants one. The brigade answers to him; he answers to you. No cook reviews their own plate, and nothing leaves the pass until it's worthy.",
   "author": {
     "name": "Johan Thorén"

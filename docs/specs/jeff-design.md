@@ -17,7 +17,7 @@ This is **not** a trust / anti-forgery system (single Chef, nothing public). It 
 
 1. **Thin orchestrator that never judges.** The main session routes work and transcribes specialist verdicts; it never decides "good enough." Every act of judgment happens in a fresh specialist context. Jeff may not override a `needs-work`.
 2. **Separation by fresh context.** Each dispatched stage uses a fresh subagent. Two separations are mechanically enforced: combined test-author ≠ implementer, and implementer ≠ every reviewer.
-3. **One model, role-specific effort.** Every specialist inherits the orchestrator provider/model unchanged; role frontmatter prescribes effort only.
+3. **One model, host-native effort.** Every specialist inherits the orchestrator provider/model unchanged. Pi and Claude Code apply role-frontmatter effort where supported; Codex inherits the orchestrator effort.
 4. **Forward-only completion (ratchet on `done`).** A task reaches `done` only with recorded passing review (+ audit when required) and green non-implementer tests. *Any* stage may kick back to *any* earlier stage with a recorded reason; only completion is locked, not revisiting.
 5. **Durable truth on disk.** State lives in git-tracked files, re-read each loop, never trusted to Jeff's context. Survives compaction and restarts.
 6. **Lean method, borrowed craft.** The craft (capture, TDD, review) is native to frontier models; we supply framing + conventions and hold work to jeff's *bundled first-party standards floor* (which Chef/local/language skills may tighten or specialize, never weaken). No dependency on method-imposing third-party packs: the floor is jeff's own bundled skill.
@@ -54,7 +54,7 @@ Linear by default; kickback to any earlier stage allowed, recorded.
 
 ## 5. Model inheritance and effort
 
-Every dispatched specialist inherits the orchestrator's provider/model unchanged on every host. Jeff does not choose that orchestrator model and has no alias map, provider table, ranking, fallback, elevation knob, or per-task model setting. `agents/cook-<stage>.md` frontmatter supplies only role effort: plan/refactor/review/audit/refute `xhigh`, implement `high`. Dispatch reports the child session's actual `{provider, model, effort}` as execution evidence.
+Every dispatched specialist inherits the orchestrator's provider/model unchanged on every host. Jeff does not choose that orchestrator model and has no alias map, provider table, ranking, fallback, elevation knob, or per-task model setting. Pi and Claude Code apply the role effort in `agents/cook-<stage>.md` where supported: plan/refactor/review/audit/refute `xhigh`, implement `high`. Native Codex children inherit both model and effort from the orchestrator; Jeff passes neither override. Dispatch reports the child session's actual `{provider, model, effort}` as execution evidence.
 
 ## 6. State & schema
 
@@ -135,4 +135,4 @@ Specialists may **use** official tools (`/code-review`, `/simplify`, `/verify`) 
 ## Open questions
 
 - Whether `refactor`'s "beyond the diff" license needs a scope cap.
-- ~~Effort knob mechanics.~~ **Resolved:** role frontmatter supplies effort; the specialist inherits the orchestrator model unchanged.
+- ~~Effort knob mechanics.~~ **Resolved:** specialists inherit the orchestrator model; Pi and Claude Code apply role-frontmatter effort where supported, while Codex inherits orchestrator effort.

@@ -27,8 +27,9 @@ and rebased onto current pi (`0.71`).
    The `git:github.com/johanthoren/jeff` package ref remains dev/edge only. No
    "also run brew/npm install jeff" step for either. Existing `jeff@jeff` users
    change nothing in usage.
-3. **One model, per-stage effort.** On both hosts, specialists inherit the
-   orchestrator provider/model and role frontmatter supplies only `effort`.
+3. **One model, host-native effort.** On Pi and Claude Code, specialists inherit
+   the orchestrator provider/model and role frontmatter supplies only `effort`.
+   Codex support added later inherits both model and effort from its orchestrator.
 4. **One core, not two.** A single shared implementation of the validator, state,
    gates, and dispatch. No parallel Bash and JS systems to keep in sync.
 5. **Single stage-effort definition.** Agent frontmatter is the source for stage
@@ -84,7 +85,7 @@ fired, fresh cook per station, plate back.
 
 ## 5. Inherit model, apply effort (constraint 3 + 5)
 
-Both hosts follow one rule: every specialist inherits the orchestrator's provider/model unchanged, and `agents/cook-*.md` frontmatter supplies only stage `effort`. There is no provider abstraction, alias mapping, ranking, fallback, elevation, or cross-provider switching. Pi passes the current model directly to `createAgentSession`, applies `effort` as `thinkingLevel`, fails closed if no orchestrator model exists, and returns the child session's actual `{provider, model, effort}` when exposed (falling back only to requested effort when the host omits it).
+Pi and Claude Code follow the initiative's original rule: every specialist inherits the orchestrator's provider/model unchanged, and `agents/cook-*.md` frontmatter supplies only stage `effort` where the host supports it. Pi passes the current model directly to `createAgentSession`, applies `effort` as `thinkingLevel`, fails closed if no orchestrator model exists, and returns the child session's actual `{provider, model, effort}` when exposed (falling back only to requested effort when the host omits it). Codex support added later uses native v2 children, which inherit both model and effort from the orchestrator; Jeff passes neither override. No host uses a provider abstraction, alias mapping, ranking, fallback, elevation, or cross-provider switching.
 
 ## 6. Build and dependency policy (constraint 2 + 4)
 

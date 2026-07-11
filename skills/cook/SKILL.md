@@ -168,7 +168,7 @@ Jeff **may not** override a `needs-work` verdict. A failed review/audit is a kic
 | `audit` | conditional (plan-flagged sensitive surface): adversarial security audit; **classifies each finding blocking vs. follow-up** | xhigh |
 | `done` | terminal; gated by `cook validate` | n/a |
 
-Every specialist inherits the orchestrator's provider/model unchanged. Role frontmatter is the single source of truth for effort only: plan/refactor/review/audit/refute `xhigh`, implement `high`. Jeff never maps aliases, ranks providers, falls back to another model, elevates a stage, or configures a task model. Dispatch records the child session's actual provider/model/effort as execution evidence. `capture` runs on **you (Jeff)** and has no role file.
+Every specialist inherits the orchestrator's provider/model unchanged. Pi and Claude Code apply role-frontmatter effort where supported: plan/refactor/review/audit/refute `xhigh`, implement `high`. Codex children instead inherit the orchestrator effort; Jeff never passes or emulates a child effort override. Jeff never maps aliases, ranks providers, falls back to another model, elevates a stage, or configures a task model. Dispatch records the child session's actual provider/model/effort as execution evidence. `capture` runs on **you (Jeff)** and has no role file.
 
 **Who runs each stage.** `capture` is run by **you, Jeff**, at the orchestrator's current setting with the Chef in the loop: it interrogates the Chef interactively (one question at a time), so it cannot be a fire-and-forget subagent; it is the **sole** Chef-in-the-loop design stage. `plan`, `implement`, `refactor`, `review`, and `audit` are **dispatched as fresh-context specialists** (see Dispatch). `plan` is dispatched (not Jeff-run) and owns the approach, test design, test authorship, and targeted RED evidence while never editing production code. The mechanical separations live among dispatched stages: `test-author ≠ implementer`, and the implementer differs from every reviewer. Dispatching plan keeps design and test authorship in one fresh context while Jeff only routes and transcribes.
 
@@ -183,8 +183,14 @@ Every specialist inherits the orchestrator's provider/model unchanged. Role fron
 For each *dispatched* stage (`plan`, `implement`, `refactor`, `review`, `audit`, and `refute` when needed), dispatch a fresh subagent:
 - **Claude Code:** use the native Agent/Task tool with `subagent_type: cook-<stage>`. Dispatch by that type and **never read its definition file**; its effort frontmatter and stage contract load automatically. Do not filesystem-search the plugin cache for it; resolve it by type.
 - **Pi:** use `cook_dispatch` with `stage`, `brief`, and optional `taskDir`. It starts a fresh Pi role session from `agents/cook-<stage>.md` and returns `agent_id`, `stage`, actual child-session `brain`, and transcript/verdict.
-- **One host-independent rule:** every specialist inherits the orchestrator provider/model unchanged; role frontmatter supplies only `effort`. Do **not** pass a model/effort override or thinking-directive prose at dispatch. New ledgers omit `brains`; historical ledgers containing it remain valid.
+- **One host-independent rule:** every specialist inherits the orchestrator provider/model unchanged. Pi and Claude Code use role-frontmatter effort where supported; Codex inherits parent effort. Do **not** add model/effort override or thinking-directive prose. New ledgers omit `brains`; historical ledgers containing it remain valid.
 - Record the combined plan agent id in `tests.authored_by_agent_id`; new ledgers do not write `agents.plan_agent_id` or `agents.test_author_agent_id`. Record implementer and reviewer ids in `agents.*`. `cook validate` enforces author ≠ implementer (INV-1) and implementer ≠ either reviewer (INV-2). Historical identity fields remain accepted and ignored.
+
+### Codex native v2 dispatch
+
+Read `agents/cook-<stage>.md` and inject its full role body into the child message. Choose a unique task-scoped `task_name`, then call `spawn_agent` with exactly `task_name`, `fork_turns: "none"`, and `message`; never pass model or effort because both inherit from the orchestrator. Persist the returned native task path/id and actual provider/model/effort when exposed.
+
+For parallel judgments, spawn every review and audit child before the first `wait_agent`. Repeatedly wait for addressed `FINAL_ANSWER` messages, correlate each sender with its native task path/id, and collect every structured return independently. Persist the `close_agent` request and result plus its linked shutdown or cancel notification. A bare `not_found` is never evidence of cancel or cancellation.
 
 ### Combined plan + test authorship
 
