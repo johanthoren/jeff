@@ -89,7 +89,7 @@ Pure Bash + `jq`. No Rust, no Node, no build step, no JSON-Schema engine. The "s
 Invariants enforced:
 
 1. `tests.authored_by_agent_id ≠ implementer_agent_id` (no self-authored tests)
-2. `implementer_agent_id ≠ reviewer_agent_id` (no self-review)
+2. `implementer_agent_id` differs from `reviewer_agent_id` and optional `reviewer2_agent_id` (no self-review; missing historical `reviewer2_agent_id` remains valid)
 3. *(retired)*
 4. no `status = done` unless: `tests.green` AND tests authored by ≠ implementer AND `review.verdict = pass` AND `audit.verdict ∈ {pass, na}`
 5. `deps` reference existing tasks; no cycles
