@@ -133,6 +133,7 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
         brief: 'Check the diff.',
         cwd: repoRoot,
         repoRoot,
+        currentModel: { provider: 'local', id: 'qwen-dev' },
         sdk: {
           ...sdk,
           createAgentSession: async (/** @type {any} */ options) => sdk.createAgentSession({ ...options, stageForTest: stage }),
@@ -171,6 +172,7 @@ test('dispatchRoleSession loads bundled agents when target cwd has no agents dir
       stage: 'review',
       brief: 'Check the diff.',
       cwd: target,
+      currentModel: { provider: 'local', id: 'qwen-dev' },
       sdk,
       generateAgentId: () => '0011223344556677',
     });
@@ -230,6 +232,7 @@ test('dispatchRoleSession falls back to session state when no text events arrive
       brief: 'Check the diff.',
       cwd: repoRoot,
       repoRoot,
+      currentModel: { provider: 'local', id: 'qwen-dev' },
       sdk,
       generateAgentId: () => '0123456789abcdef',
     });

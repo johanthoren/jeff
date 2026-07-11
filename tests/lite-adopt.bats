@@ -140,7 +140,7 @@ count_ledgers() {
   local ledger
   ledger="$(find_ledger_by_ref "docs/plans/foo.md")"
   [ -n "$ledger" ]
-  run jq -e 'has("brains") | not' "$ledger/task.json"
+  run jq -e 'has("brains") | not' "$ledger"
   [ "$status" -eq 0 ]
 }
 
