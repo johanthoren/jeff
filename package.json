@@ -1,9 +1,17 @@
 {
   "name": "@johanthoren/jeff",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "jeff: a quality brigade for coding agents (pi shell core)",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/johanthoren/jeff.git"
+  },
+  "homepage": "https://github.com/johanthoren/jeff#readme",
+  "bugs": {
+    "url": "https://github.com/johanthoren/jeff/issues"
+  },
   "publishConfig": {
     "access": "public"
   },
