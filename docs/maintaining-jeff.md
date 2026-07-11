@@ -75,6 +75,20 @@ given what that model did that a later one may not. This is the whole
 model-assumptions apparatus reduced to one habit: a stamp in the task note,
 commit, or memory, not a ledger to maintain.
 
+## Plan releases across task boundaries
+
+Task boundaries are not automatically release boundaries. Before cutting a major,
+inspect the immediate accepted roadmap for adjacent known breaking changes. When
+it is coherent and safe, consolidate them into one major instead of publishing
+rapidly successive majors. Keep that horizon bounded: do not create an open-ended
+release train or delay an urgent, independent safety fix.
+
+A major number can carry commercial, marketing, model-number, or
+platform-contract significance beyond API compatibility. Surface that judgment
+to the Chef instead of making it alone. Once a version and tag are published,
+they are immutable; subsequent changes ship under a new version that still obeys
+semver.
+
 ## Our own history is the proof
 
 jeff has already lived this. **forge → lean** shed a weaker-era harness once
