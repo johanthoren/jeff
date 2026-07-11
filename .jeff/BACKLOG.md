@@ -6,9 +6,10 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **In progress — `#33`:** fix linked-worktree verification so a green `cook verify` run cannot exit non-zero when `.git` is a gitfile.
+- **Release recovery — `#44`:** npm rejected the immutable 1.3.3 tag because root package provenance metadata was absent; add the canonical repository field and publish 1.3.4 without rewriting 1.3.3.
+- **Completed — `#33`:** linked-worktree verification/activation merged in PR #43; its 1.3.3 package publish was superseded by #44 after provenance rejection.
 - **Parallel/non-blocking — `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
-- **Baseline:** `cook verify` is green on merged `main` at `36c3603`.
+- **Baseline:** PR #43 CI and the local full suite were green on merged `main` at `e022edc`.
 
 ## NEXT
 
