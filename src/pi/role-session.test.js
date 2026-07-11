@@ -9,7 +9,6 @@ import { buildRolePrompt, dispatchRoleSession, loadSdk } from './role-session.js
 
 const REVIEW_AGENT = `---
 name: cook-review
-model: opus
 effort: xhigh
 tools: Read, Grep, Glob, Bash
 ---
@@ -54,6 +53,8 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
     /** @type {(event: any) => void} */
     let listener = () => {};
     const fakeSession = {
+      model: { provider: 'child-provider', id: 'child-model' },
+      thinkingLevel: 'xhigh',
       /** @param {(event: any) => void} fn */
       subscribe(fn) {
         listener = fn;
@@ -94,7 +95,7 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
 
     assert.equal(result.agent_id, '0123456789abcdef');
     assert.equal(result.stage, 'review');
-    assert.deepEqual(result.brain, { provider: 'local', model: 'qwen-dev', effort: 'xhigh' });
+    assert.deepEqual(result.brain, { provider: 'child-provider', model: 'child-model', effort: 'xhigh' });
     assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls']);
     assert.equal(capturedOptions.thinkingLevel, 'xhigh');
     assert.equal(capturedOptions.model, currentModel);
@@ -108,9 +109,9 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
   await withRepo(async (repoRoot) => {
     /** @type {Record<string, string>} */
     const agents = {
-      plan: '---\nname: cook-plan\nmodel: opus\neffort: xhigh\n---\nPlan body.',
-      audit: '---\nname: cook-audit\nmodel: opus\neffort: xhigh\n---\nAudit body.',
-      refute: '---\nname: cook-refute\nmodel: opus\neffort: xhigh\n---\nRefute body.',
+      plan: '---\nname: cook-plan\neffort: xhigh\n---\nPlan body.',
+      audit: '---\nname: cook-audit\neffort: xhigh\n---\nAudit body.',
+      refute: '---\nname: cook-refute\neffort: xhigh\n---\nRefute body.',
     };
     for (const [stage, body] of Object.entries(agents)) {
       await writeFile(join(repoRoot, 'agents', `cook-${stage}.md`), body);
@@ -237,38 +238,23 @@ test('dispatchRoleSession falls back to session state when no text events arrive
   });
 });
 
-test('dispatchRoleSession lets Pi choose the model when no current model exists', async () => {
+test('dispatchRoleSession fails closed when the orchestrator model is unavailable', async () => {
   await withRepo(async (repoRoot) => {
-    /** @type {any} */
-    let capturedOptions;
-    const fakeSession = {
-      model: { provider: 'picked', id: 'model-from-child' },
-      thinkingLevel: 'high',
-      subscribe() {
-        return () => {};
-      },
-      async prompt() {},
-      dispose() {},
-    };
     const sdk = {
       SessionManager: { inMemory: () => ({}) },
-      /** @param {any} options */
-      createAgentSession: async (options) => {
-        capturedOptions = options;
-        return { session: fakeSession };
-      },
+      createAgentSession: assert.fail,
     };
 
-    const result = await dispatchRoleSession({
-      stage: 'review',
-      brief: 'Check the diff.',
-      cwd: repoRoot,
-      repoRoot,
-      sdk,
-      generateAgentId: () => 'fedcba9876543210',
-    });
-
-    assert.equal(capturedOptions.model, undefined);
-    assert.deepEqual(result.brain, { provider: 'picked', model: 'model-from-child', effort: 'high' });
+    await assert.rejects(
+      dispatchRoleSession({
+        stage: 'review',
+        brief: 'Check the diff.',
+        cwd: repoRoot,
+        repoRoot,
+        sdk,
+        generateAgentId: () => 'fedcba9876543210',
+      }),
+      /orchestrator model/i,
+    );
   });
 });

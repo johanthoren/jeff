@@ -1,12 +1,8 @@
 #!/usr/bin/env bats
 # tests/brains.bats: content-contract for agents/*.md frontmatter.
 #
-# Task 0026: brain tiering by pure frontmatter assignment.
-# Task 0041: dispatched plan specialist + test reframed as a low-latitude doer.
-# 2026-07-05 (skills-optimization): refactor re-pinned opus·xhigh (mandate
-# widened to zoom-out dedup/harmonization) and the cook-refute pass added.
-# Each dispatched stage must pin BOTH model: and effort: to the settled values
-# in the table below.
+# Specialist roles prescribe effort only; their model is inherited from the
+# orchestrator by the host.
 
 REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
@@ -24,47 +20,13 @@ frontmatter_field() {
   awk '/^---$/{if(++n==2)exit} n==1 && /^'"$field"':/{gsub(/^'"$field"':[[:space:]]*/,""); print}' "$file"
 }
 
-# ---------------------------------------------------------------------------
-# Consolidated from 13 per-stage one-value assertions (merged 0050).
-#
-# Judgment call (flagged for the reviewer): these assertions grep frontmatter
-# VALUES out of the agent files: the change-detector's shape (config restated
-# in the test). There is no in-repo consumer seam to rewrite them against (the
-# CLI never reads these values; the harness reads them at dispatch). They were
-# kept rather than deleted because the brain table is a hard-won, repeatedly
-# regressed operational decision (see memory: jeff-brain-tiering), so the
-# regression guard has real value: and consolidated into two table-driven
-# tests so the whole settled brain table lives in one place and every original
-# model/effort assertion is preserved. The reviewer should ratify keep-as-merge
-# vs delete.
-#
-# Settled brain table (stage → model · effort):
-#   plan        opus    xhigh   (dispatched test-designer, 0041)
-#   test        sonnet  medium  (doer/encoder, low-latitude by design)
-#   implement   opus    high
-#   refactor    opus    xhigh   (zoom-out dedup/harmonization: judgment work)
-#   review      opus    xhigh
-#   audit       opus    xhigh
-#   refute      opus    xhigh   (can overturn a judge's blocking finding)
-# ---------------------------------------------------------------------------
-
-@test "brains: each stage agent pins the settled model" {
-  while IFS='|' read -r stage want; do
-    [ -n "$stage" ] || continue
+@test "brains: stage agents omit model so the host inherits the orchestrator model" {
+  local stage
+  for stage in plan test implement refactor review audit refute; do
     local f="$REPO/agents/cook-${stage}.md"
     [ -f "$f" ] || { echo "missing agent file: $f"; return 1; }
-    local got
-    got="$(frontmatter_field "$f" model)"
-    [ "$got" = "$want" ] || { echo "stage=$stage model: want=$want got=$got"; return 1; }
-  done <<'MODEL_CASES'
-plan|opus
-test|sonnet
-implement|opus
-refactor|opus
-review|opus
-audit|opus
-refute|opus
-MODEL_CASES
+    [ -z "$(frontmatter_field "$f" model)" ] || { echo "stage=$stage must not prescribe model"; return 1; }
+  done
 }
 
 @test "brains: each stage agent pins the settled effort" {

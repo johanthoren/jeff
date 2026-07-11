@@ -140,6 +140,8 @@ count_ledgers() {
   local ledger
   ledger="$(find_ledger_by_ref "docs/plans/foo.md")"
   [ -n "$ledger" ]
+  run jq -e 'has("brains") | not' "$ledger/task.json"
+  [ "$status" -eq 0 ]
 }
 
 @test "adopt/section-anchor: cook on PLAN.md#feature-x creates ledger in lite mode" {
