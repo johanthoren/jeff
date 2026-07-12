@@ -174,24 +174,68 @@ test('runtime compatibility accepts legacy-only fields, lifecycle sentinels, and
   assert.equal(result.ok, true, result.stderr.join('\n'));
 });
 
-test('INV-2 rejects either reviewer identity when it is the implementer', async (t) => {
-  for (const reviewerField of ['reviewer_agent_id', 'reviewer2_agent_id']) {
-    await t.test(reviewerField, async () => {
-      const result = await verdictFor(
-        canonicalTask({
-          agents: { ...canonicalTask().agents, [reviewerField]: 'implementer' },
-        }),
-      );
-      assertNamedFailure(result, '[inv2]');
-    });
-  }
-});
-
-test('INV-2 binds each review outcome identity to its separated agent identity', async (t) => {
-  /** @type {Array<[string, Record<string, any>]>} */
+test('INV-2 accepts compatible primary reviewer identity representations and separates every present identity', async (t) => {
+  /** @type {Array<[string, Record<string, any>, boolean]>} */
   const cases = [
     [
-      'primary review outcome cannot substitute the implementer',
+      'outcome-only identity',
+      {
+        review: {
+          verdict: 'pass',
+          reviewer_agent_id: 'reviewer-one',
+          evidence: ['primary review'],
+        },
+      },
+      true,
+    ],
+    [
+      'outcome-only identity matching the implementer',
+      {
+        review: {
+          verdict: 'pass',
+          reviewer_agent_id: 'implementer',
+          evidence: ['primary review'],
+        },
+      },
+      false,
+    ],
+    [
+      'agents-only identity',
+      {
+        agents: {
+          ...canonicalTask().agents,
+          reviewer_agent_id: 'reviewer-one',
+        },
+      },
+      true,
+    ],
+    [
+      'agents-only identity matching the implementer',
+      {
+        agents: {
+          ...canonicalTask().agents,
+          reviewer_agent_id: 'implementer',
+        },
+      },
+      false,
+    ],
+    [
+      'equal identities in both representations',
+      {
+        agents: {
+          ...canonicalTask().agents,
+          reviewer_agent_id: 'reviewer-one',
+        },
+        review: {
+          verdict: 'pass',
+          reviewer_agent_id: 'reviewer-one',
+          evidence: ['primary review'],
+        },
+      },
+      true,
+    ],
+    [
+      'contradictory identities in both representations',
       {
         agents: {
           ...canonicalTask().agents,
@@ -203,29 +247,37 @@ test('INV-2 binds each review outcome identity to its separated agent identity',
           evidence: ['primary review'],
         },
       },
-    ],
-    [
-      'second review outcome must match the recorded second reviewer',
-      {
-        agents: {
-          ...canonicalTask().agents,
-          reviewer2_agent_id: 'reviewer-two',
-        },
-        review2: {
-          verdict: 'pass',
-          reviewer_agent_id: 'different-reviewer',
-          evidence: ['second review'],
-        },
-      },
+      false,
     ],
   ];
 
-  for (const [name, overrides] of cases) {
+  for (const [name, overrides, accepted] of cases) {
     await t.test(name, async () => {
       const result = await verdictFor(canonicalTask(overrides));
-      assertNamedFailure(result, '[inv2]');
+      if (accepted) {
+        assert.equal(result.ok, true, result.stderr.join('\n'));
+      } else {
+        assertNamedFailure(result, '[inv2]');
+      }
     });
   }
+});
+
+test('INV-2 keeps second-review outcomes bound to the canonical agent identity', async () => {
+  const result = await verdictFor(
+    canonicalTask({
+      agents: {
+        ...canonicalTask().agents,
+        reviewer2_agent_id: 'reviewer-two',
+      },
+      review2: {
+        verdict: 'pass',
+        reviewer_agent_id: 'different-reviewer',
+        evidence: ['second review'],
+      },
+    }),
+  );
+  assertNamedFailure(result, '[inv2]');
 });
 
 test('kickback members fail closed by field while current and historical transitions remain readable', async (t) => {
