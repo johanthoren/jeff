@@ -89,6 +89,7 @@ async function makeLiteRoot(profileContent) {
   return root;
 }
 
+/** @param {string} root @param {unknown} task */
 async function seedLiteTask(root, task) {
   const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
   await mkdir(taskDir, { recursive: true });

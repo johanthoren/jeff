@@ -55,6 +55,7 @@ async function makeRoot(task = canonicalTask()) {
   return { root, taskDir };
 }
 
+/** @param {string} root @param {string[]} args */
 function runCook(root, args) {
   const result = spawnSync(process.execPath, [COOK_JS, ...args], {
     env: { ...process.env, COOK_ROOT: root },
@@ -63,6 +64,7 @@ function runCook(root, args) {
   return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
+/** @param {string} root @param {unknown} value @param {string} [name] */
 async function writeReturn(root, value, name = 'return.json') {
   const file = join(root, name);
   const raw = typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`;
@@ -70,6 +72,7 @@ async function writeReturn(root, value, name = 'return.json') {
   return file;
 }
 
+/** @param {string} taskDir */
 async function readTask(taskDir) {
   return JSON.parse(await readFile(join(taskDir, 'task.json'), 'utf8'));
 }
