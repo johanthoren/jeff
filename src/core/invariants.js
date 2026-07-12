@@ -224,7 +224,12 @@ export function runInvariants(tasks, { lite }) {
       if (reviewVerdict !== 'pass') {
         out.push(`task ${id}: done but review.verdict != pass [inv4]`);
       }
-      if (t.review2 !== null && t.review2 !== undefined && t.review2.verdict !== 'pass') {
+      const hasLegacyStageIdentity = Object.hasOwn(agents, 'plan_agent_id')
+        || Object.hasOwn(agents, 'test_author_agent_id');
+      const isComplex = t.complexity === 'complex' && !hasLegacyStageIdentity;
+      if (isComplex && (!isType(t.review2, 'object') || t.review2.verdict !== 'pass')) {
+        out.push(`task ${id}: complex done task requires a recorded second review with review2.verdict == pass [inv4]`);
+      } else if (!isComplex && t.review2 !== null && t.review2 !== undefined && t.review2.verdict !== 'pass') {
         out.push(`task ${id}: done but review2.verdict != pass [inv4]`);
       }
       const av = jqOr(t.audit && t.audit.verdict, 'na');

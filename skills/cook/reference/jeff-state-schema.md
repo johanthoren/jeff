@@ -56,7 +56,8 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - `status` ∈ `pending | in_progress | blocked | done | abandoned`.
 - `stage` ∈ `capture | plan | implement | refactor | review | audit | done`; historical ledgers may persist `test`, which readers accept as the documented compatibility-resume state. Canonical writers never emit `test`.
 - `priority` ∈ `p0 | p1 | p2 | p3 | p4`.
-- `createdAt` / `updatedAt`: ISO-8601 datetimes.
+- `createdAt` / `updatedAt`: calendar-valid ISO-8601 datetimes. The same strict
+  timestamp contract applies to `tests.gate.at` and every `kickbacks[*].at`.
 - `deps`: array of existing task ids; the graph must be acyclic.
 - `complexity`: `"simple" | "complex"` (absent ⇒ `"complex"`). Set or refine it at plan by whether the change complects or carries risk: braids concerns, couples previously separate things, crosses subsystem boundaries, or has non-local side effects. Classify by complecting, not difficulty; deployment or other non-local side effects ⇒ `"complex"`; default `"complex"` when unsure. It does not select Git topology.
 - `branch` (optional, deprecated): ignored legacy state. New records omit it; validators continue to accept old records containing it without migration.
@@ -68,9 +69,13 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
   `evidence` is an array. The runtime reader additionally accepts `na` only for
   historical primary `review.verdict` values; canonical writers and `review2`
   remain strict. `review2` may be absent or null for historical and single-review
-  records. Each populated outcome identity must match its corresponding
-  `agents.reviewer*_agent_id` and differ from the implementer. When `review2` is
-  present on a done task, its verdict must be `pass` alongside the primary review.
+  records. For the primary review, historical records may populate either the
+  outcome identity or `agents.reviewer_agent_id`; every populated identity must
+  differ from the implementer, and the two identities must match when both are
+  populated. `review2` remains canonically bound to
+  `agents.reviewer2_agent_id`. A complex done task requires both recorded reviews
+  to pass; simple tasks and historical records identified by the retired
+  plan/test agent fields retain the single-review path.
 - `audit`: `required` set by `plan`; `verdict` ∈ `pass | needs-work | na`.
 - `kickbacks`: `[{ from, to, reason, at }]`. Current sources are canonical stage
   names plus `verify`; current destinations are canonical stage names. The
@@ -198,10 +203,12 @@ writers include both.
 
 **Separation invariants (the load-bearing property: the implementer must not have shaped the tests it has to pass):**
 - **INV-1**: `tests.authored_by_agent_id ≠ agents.implementer_agent_id` (the combined test designer/author is not the implementer).
-- **INV-2**: `agents.implementer_agent_id` differs from both `agents.reviewer_agent_id` and optional `agents.reviewer2_agent_id` (no reviewer wrote the code). Each populated `review`/`review2` outcome identity is bound to the corresponding separated agent identity. Historical plan/test identity fields do not participate.
+- **INV-2**: `agents.implementer_agent_id` differs from both `agents.reviewer_agent_id` and optional `agents.reviewer2_agent_id` (no reviewer wrote the code). Every populated primary-review identity participates in separation; the outcome and agents representations must match only when both are populated. A populated `review2` outcome identity is bound to `agents.reviewer2_agent_id`. Historical plan/test identity fields do not participate.
 - **INV-4**: a done task satisfies the test disposition, has a passing primary
-  review, has a passing second review when `review2` is present, and has an
-  audit verdict of `pass` or `na`.
+  review, has a recorded passing second review when complexity is `complex`,
+  preserves the single-review path when complexity is `simple` or the historical
+  record carries retired plan/test agent fields, and has an audit verdict of
+  `pass` or `na`.
 
 **Done-gate full-suite binding (`[gate]`, task 0044):** when a `done` task records `tests.gate`, the validator asserts `gate.green == true` AND `gate.clean == true` AND `gate.hash` is a non-empty string, and that `tests.green == true` is backed by `gate.green == true`: so `tests.green` can only stand on a recorded green+clean full-suite run (written by `cook verify`), never on a targeted-subset run. It is a pure function of `task.json` (no per-task git probe); gate freshness (the gated hash matching the tree at done) is enforced at write time by Jeff via `cook verify` / `cook baseline check`. **Null-tolerant:** `tests.gate` absent ⇒ skipped, so the historical `done` tasks (which carry no gate) keep validating. Runs in both full and lite mode (a done-gate quality invariant, not a registry one).
 

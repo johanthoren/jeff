@@ -9,7 +9,7 @@ const REVIEW_VERDICTS = ['pass', 'needs-work', null];
 const HISTORICAL_REVIEW_VERDICTS = [...REVIEW_VERDICTS, 'na'];
 const KICKBACK_SOURCES = [...STAGES, 'verify'];
 const KICKBACK_DESTINATIONS = STAGES;
-const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const ISO_DATETIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 const KEBAB_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** @param {unknown} value */
@@ -24,7 +24,24 @@ function isNullableString(value) {
 
 /** @param {unknown} value */
 function isIsoDate(value) {
-  return typeof value === 'string' && ISO_DATETIME.test(value) && !Number.isNaN(Date.parse(value));
+  if (typeof value !== 'string') return false;
+  const match = ISO_DATETIME.exec(value);
+  if (match === null) return false;
+
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = match
+    .slice(1)
+    .map((part) => Number(part ?? 0));
+  const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return month >= 1
+    && month <= 12
+    && day >= 1
+    && day <= daysInMonth[month - 1]
+    && hour <= 23
+    && minute <= 59
+    && second <= 59
+    && offsetHour <= 23
+    && offsetMinute <= 59;
 }
 
 /**

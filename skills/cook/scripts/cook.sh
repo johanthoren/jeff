@@ -38,6 +38,8 @@ set -euo pipefail
 
 ROOT="${COOK_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 BK="$ROOT/.jeff"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JEFF_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 die()  { printf 'cook: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'cook: %s\n' "$*" >&2; }
@@ -1539,7 +1541,7 @@ EOF
 main() {
   local sub="${1:-help}"; shift || true
   case "$sub" in
-    validate) cmd_validate "$@" ;;
+    validate) exec node "$JEFF_ROOT/src/cli/cook.js" validate "$@" ;;
     verify)   cmd_verify "$@" ;;
     baseline) cmd_baseline "$@" ;;
     ls)       cmd_ls "$@" ;;
@@ -1559,4 +1561,6 @@ main() {
   esac
 }
 
-main "$@"
+if [ "${COOK_SOURCE_ONLY:-0}" != "1" ]; then
+  main "$@"
+fi
