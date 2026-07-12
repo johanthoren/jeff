@@ -38,6 +38,11 @@ function oneOf(value, path, choices) {
 }
 
 /** @param {any} value @param {string} path */
+function nonnegativeInteger(value, path) {
+  if (!Number.isInteger(value) || value < 0) invalid(path);
+}
+
+/** @param {any} value @param {string} path */
 function run(value, path) {
   closed(value, path, ['command', 'output']);
   if (value.command !== null) string(value.command, `${path}.command`);
@@ -115,7 +120,8 @@ function validateRefactor(value) {
 
 /** @param {any} value */
 function validateReview(value) {
-  closed(value, '', ['agent_id', 'stage', 'verdict', 'acLedger', 'findings', 'evidence']);
+  closed(value, '', ['agent_id', 'stage', 'cycle', 'verdict', 'acLedger', 'findings', 'evidence']);
+  nonnegativeInteger(value.cycle, 'cycle');
   oneOf(value.verdict, 'verdict', ['pass', 'needs-work']);
   if (!Array.isArray(value.acLedger)) invalid('acLedger');
   value.acLedger.forEach((/** @type {any} */ item, /** @type {number} */ index) => {
@@ -134,7 +140,8 @@ function validateReview(value) {
 
 /** @param {any} value */
 function validateAudit(value) {
-  closed(value, '', ['agent_id', 'stage', 'verdict', 'scan', 'coverage', 'findings', 'evidence']);
+  closed(value, '', ['agent_id', 'stage', 'cycle', 'verdict', 'scan', 'coverage', 'findings', 'evidence']);
+  nonnegativeInteger(value.cycle, 'cycle');
   oneOf(value.verdict, 'verdict', ['pass', 'needs-work', 'na']);
   closed(value.scan, 'scan', ['command', 'recommendation', 'reportPath']);
   string(value.scan.command, 'scan.command');
@@ -156,7 +163,8 @@ function validateAudit(value) {
 
 /** @param {any} value */
 function validateRefute(value) {
-  closed(value, '', ['agent_id', 'stage', 'finding', 'verdict', 'rationale', 'evidence']);
+  closed(value, '', ['agent_id', 'stage', 'cycle', 'finding', 'verdict', 'rationale', 'evidence']);
+  nonnegativeInteger(value.cycle, 'cycle');
   string(value.finding, 'finding');
   oneOf(value.verdict, 'verdict', ['survives', 'refuted']);
   string(value.rationale, 'rationale');

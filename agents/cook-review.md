@@ -36,5 +36,5 @@ Never declare `pass` to be helpful: only when the work genuinely meets the bar.
 End your final message with exactly one strict JSON object, filled in, followed by nothing. Preserve the documented field names and enums in the JSON form.
 
 ```json
-{"agent_id":"<dispatch id>","stage":"review","verdict":"pass","acLedger":[{"ac":"AC1","claimed":"write","rederived":"write","ok":true}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
+{"agent_id":"<dispatch id>","stage":"review","cycle":"<active cycle>","verdict":"pass","acLedger":[{"ac":"AC1","claimed":"write","rederived":"write","ok":true}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
 ```

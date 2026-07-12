@@ -19,5 +19,5 @@ Your job:
 End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"refute","finding":"<file:line + identity>","verdict":"survives","rationale":"<sentence>","evidence":[{"command":"<command>","output":"<output>"}]}
+{"agent_id":"<dispatch id>","stage":"refute","cycle":"<active cycle>","finding":"<file:line + identity>","verdict":"survives","rationale":"<sentence>","evidence":[{"command":"<command>","output":"<output>"}]}
 ```
