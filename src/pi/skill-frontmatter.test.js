@@ -82,3 +82,12 @@ test('judgment agent frontmatter stays read-only', async () => {
     assert.equal(tools, 'tools: Read, Grep, Glob', `${relative} must stay read-only`);
   }
 });
+
+test('judgment role return examples expose the active cycle identity', async () => {
+  for (const relative of JUDGMENT_AGENT_FILES) {
+    const file = new URL(relative, import.meta.url);
+    const text = await readFile(file, 'utf8');
+
+    assert.match(text, /"cycle":"<active cycle>"/, `${relative} must return its dispatch cycle`);
+  }
+});

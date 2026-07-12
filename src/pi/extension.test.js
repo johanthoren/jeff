@@ -341,3 +341,67 @@ test('cook_dispatch taskId persists the specialist result through the shared rec
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test('cook_dispatch transports the judgment cycle through the shared record contract', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-record-cycle-'));
+  const taskDir = join(cwd, '.jeff', 'tasks', '018-record-specialists');
+  try {
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify({
+      schemaVersion: 1,
+      id: '18',
+      slug: 'record-specialists',
+      title: 'Record specialists',
+      status: 'in_progress',
+      stage: 'review',
+      priority: 'p2',
+      deps: [],
+      complexity: 'simple',
+      createdAt: '2026-07-12T00:00:00Z',
+      updatedAt: '2026-07-12T00:00:00Z',
+      agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+      tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+      review: { verdict: null, reviewer_agent_id: null, findings: [], evidence: [] },
+      audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+      commits: [],
+      kickbacks: [],
+      convergence: {
+        cap: 2,
+        stages: { review: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
+        council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+      },
+      blockedReason: null,
+      abandonReason: null,
+    }, null, 2)}\n`, 'utf8');
+    const transcript = JSON.stringify({
+      cycle: 0,
+      verdict: 'pass',
+      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
+      findings: [],
+      evidence: [{ command: 'node --test src/pi/extension.test.js', output: 'pass' }],
+    });
+    const tool = registeredDispatchTool({
+      dispatchRoleSession: async () => ({
+        stage: 'review',
+        agent_id: 'pi-review-agent',
+        brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
+        transcript,
+      }),
+    });
+
+    await tool.execute(
+      'call-1',
+      { stage: 'review', brief: 'Review task 18 in cycle 0.', taskId: '18' },
+      undefined,
+      undefined,
+      { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+    );
+    const task = JSON.parse(await readFile(join(taskDir, 'task.json'), 'utf8'));
+
+    assert.equal(task.review.reviewer_agent_id, 'pi-review-agent');
+    assert.equal(task.status, 'done');
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

@@ -122,6 +122,7 @@ function reviewReturn(agentId, overrides = {}) {
   return {
     agent_id: agentId,
     stage: 'review',
+    cycle: 0,
     verdict: 'pass',
     acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
     findings: [],
@@ -134,6 +135,7 @@ function auditReturn(agentId = 'auditor', overrides = {}) {
   return {
     agent_id: agentId,
     stage: 'audit',
+    cycle: 0,
     verdict: 'pass',
     scan: { command: 'review-security --json', recommendation: 'PASS', reportPath: '/tmp/report.md' },
     coverage: [{ category: 'path_traversal', status: 'covered_no_hits' }],
@@ -152,6 +154,20 @@ function blockingFinding(overrides = {}) {
     kickTo: 'implement',
     what: 'The recording path loses a result.',
     why: 'A supported completion order can overwrite durable evidence.',
+    ...overrides,
+  };
+}
+
+/** @param {string} agentId @param {Record<string, any>} finding @param {Record<string, unknown>} [overrides] */
+function refuteReturn(agentId, finding, overrides = {}) {
+  return {
+    agent_id: agentId,
+    stage: 'refute',
+    cycle: 0,
+    finding: `${finding.file}:${finding.line} ${finding.what}`,
+    verdict: 'survives',
+    rationale: 'The supported input reaches the reported failure.',
+    evidence: [{ command: 'node --test src/cli/record.test.js', output: 'failure reproduced' }],
     ...overrides,
   };
 }
@@ -245,6 +261,7 @@ test('record validates closed finding fields and final-stage evidence before wri
     const file = await writeReturn(root, {
       agent_id: 'reviewer',
       stage: 'review',
+      cycle: 0,
       verdict: 'needs-work',
       acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: false }],
       findings: [{
@@ -313,6 +330,7 @@ test('record rejects an implementer reused as reviewer before writing', async ()
     const file = await writeReturn(root, {
       agent_id: 'same-agent',
       stage: 'review',
+      cycle: 0,
       verdict: 'pass',
       acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
       findings: [],
@@ -356,6 +374,7 @@ test('record accepts a valid review return and persists its closed findings and 
     const specialistReturn = {
       agent_id: 'reviewer',
       stage: 'review',
+      cycle: 0,
       verdict: 'pass',
       acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
       findings: [],
@@ -593,6 +612,7 @@ test('review re-entry clears stale outcomes and requires two fresh complex-task 
     await recordSpecialistReturn(root, 'refute', '18', {
       agent_id: 'refuter',
       stage: 'refute',
+      cycle: 0,
       finding: `${finding.file}:${finding.line} lost result`,
       verdict: 'survives',
       rationale: 'The completion order is reachable.',
@@ -607,9 +627,9 @@ test('review re-entry clears stale outcomes and requires two fresh complex-task 
     assert.equal(reset.review.verdict, null);
     assert.equal(reset.review2 ?? null, null);
 
-    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-fresh-one'));
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-fresh-one', { cycle: 1 }));
     assert.equal((await readTask(taskDir)).status, 'in_progress');
-    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-fresh-two'));
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-fresh-two', { cycle: 1 }));
     const recorded = await readTask(taskDir);
     assert.equal(recorded.review.reviewer_agent_id, 'reviewer-fresh-one');
     assert.equal(recorded.review2.reviewer_agent_id, 'reviewer-fresh-two');
@@ -656,6 +676,7 @@ test('a refuted blocker progresses while retaining the finding and refute eviden
     await recordSpecialistReturn(second.root, 'refute', '18', {
       agent_id: 'refuter',
       stage: 'refute',
+      cycle: 0,
       finding: `${blocker.file}:${blocker.line} lost result`,
       verdict: 'refuted',
       rationale: 'The upstream guard prevents the failure.',
@@ -667,5 +688,177 @@ test('a refuted blocker progresses while retaining the finding and refute eviden
     assert.equal(recorded.refutes[0].verdict, 'refuted');
   } finally {
     await rm(second.root, { recursive: true, force: true });
+  }
+});
+
+test('parallel refutes cover every blocking finding and settle each stage union once', async () => {
+  const reviewOne = blockingFinding({ line: 101, what: 'Review one blocks.' });
+  const reviewTwo = blockingFinding({ line: 102, what: 'Review two blocks.' });
+  const reviewThree = blockingFinding({ line: 103, what: 'Review three blocks.' });
+  const auditFinding = { ...blockingFinding({ line: 104, what: 'Audit blocks.' }), cwe: 'CWE-400' };
+  const { root, taskDir } = await makeRoot(parallelJudgmentTask());
+  try {
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-one', {
+      verdict: 'needs-work',
+      findings: [reviewOne, reviewTwo],
+    }));
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-two', {
+      verdict: 'needs-work',
+      findings: [reviewThree],
+    }));
+    await recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor', {
+      verdict: 'needs-work',
+      findings: [auditFinding],
+    }));
+
+    const refutes = [reviewOne, reviewTwo, reviewThree, auditFinding].map((finding, index) => (
+      refuteReturn(`refuter-${index}`, finding)
+    ));
+    await Promise.all(refutes.map((result) => recordSpecialistReturn(root, 'refute', '18', result)));
+
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.refutes.length, 4);
+    assert.equal(new Set(recorded.refutes.map((/** @type {any} */ refute) => refute.finding)).size, 4);
+    assert.equal(recorded.review.findings.every((/** @type {any} */ finding) => finding.refute?.verdict === 'survives'), true);
+    assert.equal(recorded.review2.findings.every((/** @type {any} */ finding) => finding.refute?.verdict === 'survives'), true);
+    assert.equal(recorded.audit.findings.every((/** @type {any} */ finding) => finding.refute?.verdict === 'survives'), true);
+    assert.equal(recorded.convergence.stages.review.blockingKickbacks, 1);
+    assert.equal(recorded.convergence.stages.audit.blockingKickbacks, 1);
+    assert.deepEqual(recorded.kickbacks.map((/** @type {any} */ kickback) => kickback.from).sort(), ['audit', 'review']);
+
+    const beforeReplay = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'refute', '18', refutes[0]),
+      /\[record-transition\].*(already|refute)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeReplay);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('judgment contracts require a nonnegative active cycle identity', async (t) => {
+  const finding = blockingFinding();
+  /** @type {Array<[string, Record<string, any>]>} */
+  const returns = [
+    ['review', reviewReturn('reviewer')],
+    ['audit', auditReturn()],
+    ['refute', refuteReturn('refuter', finding)],
+  ];
+  for (const [stage, result] of returns) {
+    await t.test(`${stage} requires cycle`, async () => {
+      const { root } = await makeRoot();
+      try {
+        delete result.cycle;
+        await assert.rejects(
+          recordSpecialistReturn(root, stage, '18', result),
+          /\[record-schema\].*cycle/,
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('judgment cycle rejects stale and replayed returns without changing current evidence', async () => {
+  const task = /** @type {any} */ (parallelJudgmentTask());
+  task.judgmentHistory = [{ at: '2026-07-12T00:00:01Z', review: {}, review2: null, audit: {} }];
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    const stale = reviewReturn('reviewer-stale', { cycle: 0 });
+    const beforeStale = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', stale),
+      /\[record-transition\].*cycle/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeStale);
+
+    const first = reviewReturn('reviewer-current-one', { cycle: 1 });
+    await recordSpecialistReturn(root, 'review', '18', first);
+    const beforeReplay = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', first),
+      /\[record-transition\].*(already|replay|duplicate)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeReplay);
+
+    await recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor-current', { cycle: 1 }));
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-current-two', { cycle: 1 }));
+    const done = await readTask(taskDir);
+    assert.equal(done.status, 'done');
+    assert.equal(done.review.reviewer_agent_id, 'reviewer-current-one');
+    assert.equal(done.review2.reviewer_agent_id, 'reviewer-current-two');
+    assert.equal(done.audit.audit_agent_id, 'auditor-current');
+
+    const beforeDoneReplay = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor-current', { cycle: 1 })),
+      /\[record-transition\].*(done|already|replay)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeDoneReplay);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('full-mode recording persists transient done state before the prune gate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-record-full-done-'));
+  const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
+  try {
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify({ active: true }), 'utf8');
+    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(canonicalTask({
+      stage: 'review',
+      agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+      tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['full gate'] },
+    }), null, 2)}\n`, 'utf8');
+
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'));
+    const recorded = await readTask(taskDir);
+    const validation = runCook(root, ['validate']);
+
+    assert.equal(recorded.status, 'done');
+    assert.equal(recorded.stage, 'done');
+    assert.notEqual(validation.code, 0);
+    assert.match(validation.stderr, /\[prune\]/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('follow-up-only audit reaches an INV-4-compatible terminal outcome with evidence retained', async () => {
+  const followup = { ...blockingFinding({ class: 'follow-up', line: 105, severity: 'low' }), cwe: null };
+  const { root, taskDir } = await makeRoot(auditStageTask());
+  try {
+    await recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor', {
+      verdict: 'needs-work',
+      findings: [followup],
+    }));
+
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.status, 'done');
+    assert.equal(recorded.audit.verdict, 'pass');
+    assert.equal(recorded.audit.reportedVerdict, 'needs-work');
+    assert.deepEqual(recorded.audit.findings, [followup]);
+    assert.deepEqual(recorded.audit.evidence, [{ command: 'review-security --json', output: 'no findings' }]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('recording against abandoned lock state returns a bounded named outcome without changing the task', async () => {
+  const { root, taskDir } = await makeRoot();
+  try {
+    await mkdir(join(root, '.jeff', '.record-lock'));
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'plan', '18', planReturn()),
+      /\[record-lock\].*(busy|unavailable)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
