@@ -1,7 +1,7 @@
 ---
 name: cook
 description: >-
-  Drive the jeff task pipeline. Use when the Chef addresses Jeff, mentions jeff/cook, asks to set up, initialize, turn on, deinit, validate, or check status/tasks; runs `cook` or `cook <taskId>`; wants to adopt or work a task; asks to implement/build a plan (not merely read/review it); or describes real engineering work in an active jeff project. Routes capture→plan→implement→refactor→review→audit→done through fresh specialist contexts and a Bash+jq validator. Always confirm the task definition with the Chef before locking capture.
+  Drive the jeff task pipeline. Use when the Chef addresses Jeff, mentions jeff/cook, asks to set up, initialize, turn on, deinit, validate, or check status/tasks; runs `cook` or `cook <taskId>`; wants to adopt or work a task; asks to implement/build a plan (not merely read/review it); or describes real engineering work in an active jeff project. Routes capture→plan→implement→refactor→review→audit→done as a model-native quality control plane with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates. Always confirm the task definition with the Chef before locking capture.
 ---
 
 # cook: the orchestration loop
@@ -37,7 +37,7 @@ jeff is **opt-in per project**. Operate **only** when the project is an active j
 
 ### Resolving the `cook` CLI
 
-The CLI is **`scripts/cook.sh`**, bundled in this skill's own directory. When this skill loads, its absolute location is given to you as the skill's **base directory** (the `Base directory for this skill: …` line in the skill preamble). Run the CLI by that absolute path (e.g. `"<base-directory>/scripts/cook.sh" <verb>`) while keeping your working directory in the target repo (the CLI derives the repo root from the cwd / git, not from its own location). Inside the jeff source repo itself, the same script is `./skills/cook/scripts/cook.sh`. Do not filesystem-search for the CLI; resolve it from the announced base directory.
+The operational command surface is **`scripts/cook.sh`**, bundled in this skill's own directory. The checked-JS Node core under `src/core/`, exposed by `src/cli/cook.js`, is the authoritative validation path. The Bash wrapper delegates validation there and remains the temporary transition oracle for parity and verbs that have not yet moved. When this skill loads, the wrapper's absolute location is given to you as the skill's **base directory** (the `Base directory for this skill: …` line in the skill preamble). Run it by that absolute path (e.g. `"<base-directory>/scripts/cook.sh" <verb>`) while keeping your working directory in the target repo (the CLI derives the repo root from the cwd / git, not from its own location). Inside the jeff source repo itself, the same wrapper is `./skills/cook/scripts/cook.sh`. Do not filesystem-search for it; resolve it from the announced base directory.
 
 ### Activating jeff (full / lite)
 

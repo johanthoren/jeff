@@ -8,10 +8,10 @@
  * function for the verb, prints its streams, and exits with the verdict code.
  * Imports only node stdlib + `src/core/*` (no pi SDK): the §6 boundary.
  *
- * Ported so far: `validate` (item 4) and the read-only reporters `ls` / `status`
- * / `show` (item 3, slice a). Every other verb stays on cook.sh (the parity
- * wrapper delegates them there), so this entry rejects an unknown subcommand
- * with a usage error rather than pretending to handle it.
+ * Implemented here: `validate`, `ls`, `status`, `show`, `verify`, `doctor`,
+ * `init`, `flavor`, `baseline check`, and `plan section|check|append`. The Bash
+ * wrapper remains the transition oracle for parity and verbs not yet ported, so
+ * this entry rejects unknown subcommands instead of pretending to handle them.
  */
 
 import { validateStore } from '../core/validate-store.js';

@@ -6,6 +6,11 @@
 
 Meet your new sous chef. The brigade quivers; Jeff delivers.
 
+Jeff is a **model-native quality control plane** for software work. Fresh
+specialist contexts carry each stage; enforced separation keeps builders from
+signing off their own work; durable evidence records what happened; and
+deterministic gates decide whether the plate can leave the pass.
+
 You run the kitchen: you call the order, you get the last word. Jeff works the
 pass: takes the order, fires the line, holds the standard, lets nothing out
 until it's worthy. A plan, a failing test, the smallest change to green, a
@@ -40,6 +45,9 @@ on the line. When review and the line can't agree, Jeff calls a tasting: three
 palates, blind, two to sustain or the plate goes back. Nothing leaves the
 kitchen until it's worthy, and the last word is always yours, Chef.
 
+**Model-era stamp (July 2026):** current dogfood runs on GPT-5.6 Sol. That is
+execution evidence, not a compatibility floor, routing rule, alias, or fallback.
+
 Full method in [AGENTS.md](AGENTS.md).
 
 ## Install
@@ -53,6 +61,12 @@ Use the npm package for normal Pi installs. This gives you semver releases.
 
 ```
 pi install npm:@johanthoren/jeff
+```
+
+Update the stable package with the same source id:
+
+```
+pi update npm:@johanthoren/jeff
 ```
 
 To pin a release:
@@ -72,11 +86,17 @@ of a stable release.
 
 ### Claude Code — recommended path
 
-Use Claude Code's plugin marketplace flow:
+Use Claude Code's plugin CLI flow:
 
 ```
-/plugin marketplace add johanthoren/jeff
-/plugin install jeff@jeff
+claude plugin marketplace add johanthoren/jeff
+claude plugin install jeff@jeff
+```
+
+Update the installed plugin, then restart Claude Code:
+
+```
+claude plugin update jeff@jeff
 ```
 
 ### Codex — recommended path
@@ -88,13 +108,14 @@ codex plugin marketplace add johanthoren/jeff
 codex plugin add jeff@jeff
 ```
 
-To update, refresh the marketplace snapshot and reinstall, then start a new
-thread so Codex loads the updated skills:
+To update, refresh the marketplace snapshot and reinstall:
 
 ```
 codex plugin marketplace upgrade jeff
 codex plugin add jeff@jeff
 ```
+
+Restart Codex Desktop and start a new task so it loads the updated skills.
 
 Plain `npm install @johanthoren/jeff` only downloads the artifact into
 `node_modules`; it does not activate Jeff in Pi, Claude Code, or Codex.

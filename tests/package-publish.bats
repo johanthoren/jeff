@@ -124,6 +124,9 @@ select_dist_tag() {
 }
 
 @test "npm pack dry-run exposes a publishable Pi package payload" {
+  local npm_cache="$BATS_TEST_TMPDIR/npm-cache"
+  mkdir -p "$npm_cache"
+
   run bash -c 'jq -e '\''
     .name == "@johanthoren/jeff" and
     .private != true and
@@ -145,7 +148,7 @@ select_dist_tag() {
   '\'' "$1/package-lock.json" >/dev/null || { echo "package metadata must publish as @johanthoren/jeff with Pi metadata and optional peerDependency @earendil-works/pi-coding-agent:*"; exit 1; }' _ "$REPO"
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
 
-  run bash -c 'cd "$1" && npm pack --dry-run --json' _ "$REPO"
+  run env npm_config_cache="$npm_cache" bash -c 'cd "$1" && npm pack --dry-run --json' _ "$REPO"
   [ "$status" -eq 0 ]
 
   jq -e '.[0].files | map(.path) as $files | (["package.json","src/pi/extension.js","skills/cook/SKILL.md","agents/cook-plan.md",".claude-plugin/plugin.json",".codex-plugin/plugin.json",".agents/plugins/marketplace.json"] | all(. as $p | $files | index($p)))' <<<"$output" >/dev/null
@@ -189,4 +192,25 @@ select_dist_tag() {
     grep -F "npm:@johanthoren/jeff@X.Y.Z" README.md
   ' _ "$REPO"
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
+}
+
+@test "README publishes verified install and update commands for every first-class host" {
+  local command
+  local commands=(
+    'pi install npm:@johanthoren/jeff'
+    'pi update npm:@johanthoren/jeff'
+    'claude plugin marketplace add johanthoren/jeff'
+    'claude plugin install jeff@jeff'
+    'claude plugin update jeff@jeff'
+    'codex plugin marketplace add johanthoren/jeff'
+    'codex plugin add jeff@jeff'
+    'codex plugin marketplace upgrade jeff'
+  )
+
+  for command in "${commands[@]}"; do
+    grep -Fxq -- "$command" "$REPO/README.md" || {
+      printf 'README missing verified command: %s\n' "$command"
+      return 1
+    }
+  done
 }
