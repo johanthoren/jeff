@@ -154,6 +154,73 @@ test('schema failures name malformed required and nested fields', async (t) => {
   }
 });
 
+test('persisted timestamps reject impossible calendar dates with field-named failures', async (t) => {
+  /** @type {Array<[string, Record<string, any>]>} */
+  const cases = [
+    ['createdAt', { createdAt: '2026-02-31T00:00:00Z' }],
+    ['updatedAt', { updatedAt: '2026-02-31T00:00:00Z' }],
+    [
+      'tests.gate.at',
+      {
+        tests: {
+          ...canonicalTask().tests,
+          gate: {
+            hash: 'deadbeef',
+            clean: true,
+            green: true,
+            command: 'make test',
+            at: '2026-02-31T00:00:00Z',
+          },
+        },
+      },
+    ],
+    [
+      'kickbacks[0].at',
+      {
+        kickbacks: [{
+          from: 'review',
+          to: 'implement',
+          reason: 'review kickback',
+          at: '2026-02-31T00:00:00Z',
+        }],
+      },
+    ],
+  ];
+
+  for (const [field, overrides] of cases) {
+    await t.test(field, async () => {
+      const result = await verdictFor(canonicalTask(overrides));
+      assertNamedFailure(result, `[schema] ${field}`);
+    });
+  }
+});
+
+test('persisted timestamps accept real leap dates with offsets and fractional seconds', async () => {
+  const result = await verdictFor(
+    canonicalTask({
+      createdAt: '2024-02-29T23:59:59.123456+05:30',
+      updatedAt: '2024-02-29T23:59:59.5-04:00',
+      tests: {
+        ...canonicalTask().tests,
+        gate: {
+          hash: 'deadbeef',
+          clean: true,
+          green: true,
+          command: 'make test',
+          at: '2024-02-29T23:59:59.123456+05:30',
+        },
+      },
+      kickbacks: [{
+        from: 'review',
+        to: 'implement',
+        reason: 'review kickback',
+        at: '2024-02-29T23:59:59.5-04:00',
+      }],
+    }),
+  );
+  assert.equal(result.ok, true, result.stderr.join('\n'));
+});
+
 test('runtime compatibility accepts legacy-only fields, lifecycle sentinels, and omitted optional destination shapes', async () => {
   const legacy = canonicalTask({
     stage: 'test',
@@ -369,6 +436,34 @@ test('INV-4 requires both recorded reviews to pass when a second review is prese
   );
   assertNamedFailure(result, '[inv4]');
   assert.ok(result.stderr.some((line) => line.includes('review2.verdict')));
+});
+
+test('INV-4 requires a recorded second reviewer and passing outcome for complex done tasks', async () => {
+  const result = await verdictFor(
+    canonicalTask({
+      status: 'done',
+      stage: 'done',
+      complexity: 'complex',
+      tests: {
+        authored_by_agent_id: 'plan',
+        green: true,
+        evidence: ['make test'],
+      },
+      agents: {
+        ...canonicalTask().agents,
+        reviewer_agent_id: 'reviewer-one',
+        reviewer2_agent_id: null,
+      },
+      review: {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer-one',
+        evidence: ['review one'],
+      },
+      review2: null,
+    }),
+  );
+  assertNamedFailure(result, '[inv4]');
+  assert.ok(result.stderr.some((line) => line.includes('second review')));
 });
 
 test('single-review done path remains null-tolerant and historical gate omission remains accepted', async () => {
