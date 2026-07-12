@@ -1,6 +1,6 @@
 # AGENTS.md: jeff
 
-**jeff** is a model-native quality control plane, distributed as **Claude Code and Codex plugins** and a **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. The checked-JS Node core is authoritative; Bash remains a temporary transition oracle. Built for a single trusted Chef on frontier models. Current dogfood stamp: GPT-5.6 Sol in July 2026, recorded as execution context rather than a compatibility floor or routing promise.
+**jeff** is a model-native quality control plane, distributed as **Claude Code and Codex plugins** and a **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. Built for a single trusted Chef on frontier models. Current dogfood stamp: GPT-5.6 Sol in July 2026, recorded as execution context rather than a compatibility floor or routing promise.
 
 - Design spec: `docs/specs/jeff-design.md`
 - State schema: `skills/cook/reference/jeff-state-schema.md`

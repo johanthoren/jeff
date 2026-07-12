@@ -13,7 +13,7 @@
   "interface": {
     "displayName": "Jeff",
     "shortDescription": "A model-native quality control plane",
-    "longDescription": "Your sous chef, Jeff, is a model-native quality control plane. Fresh specialist contexts, enforced separation, durable evidence, and deterministic gates hold the pass. Checked-JS Node validation is authoritative; Bash remains the temporary transition oracle. Nothing leaves the pass until it is worthy.",
+    "longDescription": "Your sous chef, Jeff, is a model-native quality control plane. Fresh specialist contexts, enforced separation, durable evidence, and deterministic gates hold the pass. Nothing leaves the pass until it is worthy.",
     "developerName": "Johan Thorén",
     "category": "Developer Tools",
     "capabilities": ["Task orchestration", "Code review"],

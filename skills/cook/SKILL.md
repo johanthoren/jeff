@@ -1,7 +1,7 @@
 ---
 name: cook
 description: >-
-  Drive the jeff task pipeline. Use when the Chef addresses Jeff, mentions jeff/cook, asks to set up, initialize, turn on, deinit, validate, or check status/tasks; runs `cook` or `cook <taskId>`; wants to adopt or work a task; asks to implement/build a plan (not merely read/review it); or describes real engineering work in an active jeff project. Routes capture→plan→implement→refactor→review→audit→done as a model-native quality control plane with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates. Checked-JS Node validation is authoritative; Bash is the temporary transition oracle. Always confirm the task definition with the Chef before locking capture.
+  Drive the jeff task pipeline. Use when the Chef addresses Jeff, mentions jeff/cook, asks to set up, initialize, turn on, deinit, validate, or check status/tasks; runs `cook` or `cook <taskId>`; wants to adopt or work a task; asks to implement/build a plan (not merely read/review it); or describes real engineering work in an active jeff project. Routes capture→plan→implement→refactor→review→audit→done as a model-native quality control plane with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates. Always confirm the task definition with the Chef before locking capture.
 ---
 
 # cook: the orchestration loop

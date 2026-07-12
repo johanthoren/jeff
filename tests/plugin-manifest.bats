@@ -115,15 +115,11 @@ PACKAGE_MANIFEST="$REPO/package.json"
       ) and
       require(
         (($copy | join(" ")) |
-          contains("checked-js node validation") and
-          contains("authoritative") and
-          contains("bash") and
-          contains("transition oracle") and
           contains("fresh specialist contexts") and
           contains("enforced separation") and
           contains("durable evidence") and
           contains("deterministic gates"));
-        "marketplace descriptions must explain the current validation and quality-control architecture"
+        "marketplace descriptions must explain the quality-control architecture"
       )
   ' "$PACKAGE_MANIFEST" "$CLAUDE_MARKETPLACE" "$CODEX_MANIFEST"
 }

@@ -45,10 +45,6 @@ on the line. When review and the line can't agree, Jeff calls a tasting: three
 palates, blind, two to sustain or the plate goes back. Nothing leaves the
 kitchen until it's worthy, and the last word is always yours, Chef.
 
-The checked-JS Node core under `src/core/`, exposed by `src/cli/cook.js`, is the
-authoritative validation path. `skills/cook/scripts/cook.sh` remains a temporary
-transition oracle for parity and verbs that have not yet moved to the Node CLI.
-
 **Model-era stamp (July 2026):** current dogfood runs on GPT-5.6 Sol. That is
 execution evidence, not a compatibility floor, routing rule, alias, or fallback.
 
