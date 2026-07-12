@@ -1,6 +1,6 @@
 # AGENTS.md: jeff
 
-**jeff** is a lean, skill-based autonomous task system, distributed as **Claude Code and Codex plugins** and a **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through a fresh-context specialist pipeline, gated by a small Bash + `jq` validator. Built for a single trusted Chef on frontier models (Opus 4.8+, GPT-5.5+).
+**jeff** is a model-native quality control plane, distributed as **Claude Code and Codex plugins** and a **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. The checked-JS Node core is authoritative; Bash remains a temporary transition oracle. Built for a single trusted Chef on frontier models. Current dogfood stamp: GPT-5.6 Sol in July 2026, recorded as execution context rather than a compatibility floor or routing promise.
 
 - Design spec: `docs/specs/jeff-design.md`
 - State schema: `skills/cook/reference/jeff-state-schema.md`
@@ -26,16 +26,18 @@ The flavor toggle controls only how Jeff speaks to the Chef: kitchen voice (Fire
 .claude-plugin/marketplace.json   # Claude Code self-marketplace for `/plugin install`
 package.json                      # Pi package manifest (`pi.extensions`, `pi.skills`)
 src/pi/                           # Pi extension + role-session dispatch bridge
+src/core/                         # authoritative checked-JS schema + validation core
+src/cli/cook.js                   # host-neutral checked-JS CLI entry
 skills/cook/SKILL.md              # the loop + ambient entry
 agents/cook-*.md                  # dispatched stage specialists: plan, implement, refactor, review, audit, refute
-skills/cook/scripts/cook.sh       # validator + CLI: validate, ls, status, show, init, deinit, doctor (Bash + jq)
+skills/cook/scripts/cook.sh       # compatibility wrapper + temporary transition oracle
 .jeff/                            # THIS project's task state (each project carries its own)
 docs/specs/                       # design rationale
 ```
 
 ## The method (how the system works)
 
-A **task** moves through the pipeline `capture → plan → implement → refactor → review → audit → done`. Each active stage is a **separate specialist in a fresh context** that inherits the orchestrator model. Pi and Claude Code apply role-frontmatter `effort`; Codex children inherit the orchestrator effort. Jeff routes work and transcribes verdicts; it never judges quality itself. Any stage may kick back to any earlier stage. `cook validate` (`skills/cook/scripts/cook.sh`) is the mechanical backstop; Jeff runs it before each commit and CI runs it on push.
+A **task** moves through the pipeline `capture → plan → implement → refactor → review → audit → done`. Each active stage is a **separate specialist in a fresh context** that inherits the orchestrator model. Pi and Claude Code apply role-frontmatter `effort`; Codex children inherit the orchestrator effort. Jeff routes work and transcribes verdicts; it never judges quality itself. Any stage may kick back to any earlier stage. `cook validate` reaches the authoritative checked-JS Node validator through the compatibility wrapper; Jeff runs it before each commit and CI runs it on push.
 
 **Verification protocol (the test gate).** Normative text: `skills/cook/SKILL.md` → Verification; this is the summary. Stages run targeted tests only; the orchestrator runs the full suite exactly once, after the last code-changing stage, via `cook verify`, and only that run sets `tests.green`/`tests.gate` (enforced by `cook validate`'s `[gate]` check). On RED, Jeff routes a kickback to the responsible stage and never fixes code itself. Review and audit run in parallel. Every task starts from a known-green baseline (red baseline = hard stop), carried forward across sessions by the hash-keyed run log (`cook verify` / `cook baseline check`).
 
@@ -56,6 +58,6 @@ A **task** moves through the pipeline `capture → plan → implement → refact
 
 ## Contributing to jeff itself
 
-- `skills/cook/scripts/cook.sh` is portable Bash + `jq` (no Bash-4 features; jq does the JSON work). Test changes against fixtures before committing: the validator gates its own repo.
+- `skills/cook/scripts/cook.sh` is the portable Bash + `jq` transition oracle (no Bash-4 features). Preserve parity against its fixtures while the remaining verbs move to the authoritative checked-JS Node core.
 - Follow semver and consider a version cut for every user-visible shipped payload or behavior change. Task boundaries are not automatically release boundaries: before a major, inspect the immediate accepted roadmap and, when coherent and safe, consolidate adjacent known breaking changes rather than publish rapidly successive majors. Escalate commercial, marketing, model-number, and platform-contract significance to the Chef. Keep the horizon bounded; never create an open-ended release train or delay an urgent independent safety fix. Published versions and tags are immutable, and every subsequent release still obeys semver. Prefer landing the version bump in the same commit as the releasable change; use a separate bump-only commit only for catch-up or release metadata cleanup. Do not bump for README-only/docs-only churn unless those docs are the released payload.
 - Skills and agents are prose. Keep them tight: frontier models supply the craft; the briefs convey role, separation, output contract, and which standards to honor.

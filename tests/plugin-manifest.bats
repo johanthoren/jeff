@@ -21,8 +21,10 @@ load test_helper
 setup_file() { cook_hermetic_git; }
 
 MANIFEST="$REPO/.claude-plugin/plugin.json"
+CLAUDE_MARKETPLACE="$REPO/.claude-plugin/marketplace.json"
 CODEX_MANIFEST="$REPO/.codex-plugin/plugin.json"
 CODEX_MARKETPLACE="$REPO/.agents/plugins/marketplace.json"
+PACKAGE_MANIFEST="$REPO/package.json"
 
 # ---------------------------------------------------------------------------
 # AC6: Structural: marketplace fields present, non-empty, valid shape
@@ -94,4 +96,34 @@ CODEX_MARKETPLACE="$REPO/.agents/plugins/marketplace.json"
   [ "$(jq -r '.version' "$REPO/package.json")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
   [ "$(jq -r '.packages[""].version' "$REPO/package-lock.json")" = "$version" ]
+}
+
+@test "marketplace copy presents Jeff as a model-native quality control plane" {
+  jq -e -s '
+    def require($condition; $message):
+      if $condition then true else error($message) end;
+
+    [
+      .[0].description,
+      .[1].plugins[0].description,
+      .[2].interface.longDescription
+    ]
+    | map(ascii_downcase) as $copy
+    | require(
+        ($copy | all(contains("model-native quality control plane")));
+        "marketplace descriptions must name the model-native quality control plane"
+      ) and
+      require(
+        (($copy | join(" ")) |
+          contains("checked-js node validation") and
+          contains("authoritative") and
+          contains("bash") and
+          contains("transition oracle") and
+          contains("fresh specialist contexts") and
+          contains("enforced separation") and
+          contains("durable evidence") and
+          contains("deterministic gates"));
+        "marketplace descriptions must explain the current validation and quality-control architecture"
+      )
+  ' "$PACKAGE_MANIFEST" "$CLAUDE_MARKETPLACE" "$CODEX_MANIFEST"
 }

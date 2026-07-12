@@ -4,7 +4,7 @@
 
 ## 1. Goal
 
-Reliable long-running autonomous sessions that solve **atomic tasks one at a time** to tackle large projects, for a **single trusted Chef** on frontier models (Opus 4.8+, GPT-5.5+). The system conveys a disciplined *way of working* to a capable LLM and defends against known current-model failure modes:
+Reliable long-running autonomous sessions that solve **atomic tasks one at a time** to tackle large projects, for a **single trusted Chef** on frontier models. Jeff is a model-native quality control plane: fresh specialist contexts, enforced separation, durable evidence, and deterministic gates make the method inspectable. Current dogfood stamp: GPT-5.6 Sol in July 2026. That stamp records operating experience, not a compatibility floor or routing rule. The system conveys a disciplined *way of working* to a capable LLM and defends against known model failure modes:
 
 - momentum bias (wanting to keep going; declaring "done" prematurely)
 - skipped verification
@@ -58,61 +58,44 @@ Every dispatched specialist inherits the orchestrator's provider/model unchanged
 
 ## 6. State & schema
 
-The `.jeff` on-disk store. Per-task directory = **3 files**:
+The checked-JS definitions are the current source of truth:
 
-- `task.md`: spec: goal, acceptance criteria, non-goals, scope.
-- `task.json`: structured state (below).
-- `notes.md`: running notes, kickback findings, decisions.
+- `src/core/types.js` defines the JSDoc data shapes.
+- `src/core/task-schema.js` validates task records.
+- `src/core/validate-store.js` owns the authoritative store verdict.
+- `skills/cook/reference/jeff-state-schema.md` documents the persisted contract.
 
-Plus `memory/` (project memory). The task dirs themselves are the registry; there is no separate index file.
+Full mode stores task state in three plain files per task: `task.md`,
+`task.json`, and `notes.md`. Lite mode follows its plan-store profile. Operational
+rules and migrations live in `skills/cook/SKILL.md` and the canonical schema
+reference; this rationale intentionally does not duplicate their field tables.
 
-`task.json` fields (trimmed from the original TypeScript schema):
+## 7. Validator (`cook validate`: checked-JS Node core)
 
-- `id`, `slug`, `title`
-- `status`: `pending | in_progress | blocked | done | abandoned` (+ optional `abandonReason`)
-- `stage`: `capture | plan | implement | refactor | review | audit | done` (readers also accept historical persisted `test` for compatibility resume)
-- `priority`: `p0..p4`
-- `deps`: `[taskId]` (blockers)
-- `agents`: `{ implementer_agent_id, reviewer_agent_id, reviewer2_agent_id, audit_agent_id }` (historical plan/test identity fields accepted and ignored)
-- `tests`: `{ authored_by_agent_id, green: bool, evidence: [commands] }`
-- `review`: `{ verdict: pass|needs-work, reviewer_agent_id, evidence: [...] }`
-- `audit`: `{ required: bool, verdict: pass|needs-work|na, audit_agent_id, evidence: [...] }`
-- `commits`: `[ref]`
-- `kickbacks`: `[{ from, to, reason, at }]`
+`src/core/validate-store.js`, reached through `src/cli/cook.js validate`, is the
+authoritative validation boundary. It imports only Node standard-library modules
+and `src/core/*`; there is no build step or runtime package dependency. The
+validator mechanically enforces the current schema, separation, completion,
+gate, mode, and convergence invariants documented in the canonical schema
+reference.
 
-Dropped vs. the old schema: 8-phase enum, `flowState`, `resumeCommand`, `cookSlices`, all gate/attestation/digest fields, `batchId`/batches, `disposition` (folded into `status`), and plan-time `brains`. Historical records with `brains` remain accepted.
+`skills/cook/scripts/cook.sh` remains a portable Bash + `jq` compatibility
+wrapper and temporary transition oracle. It preserves parity fixtures and still
+hosts verbs that have not moved, but its duplicated assertions do not define
+schema or validation truth. The post-`#18` one-core cutover is tracked as `#61`.
 
-## 7. Validator (`cook validate`: Bash + `jq`)
-
-Pure Bash + `jq`. No Rust, no Node, no build step, no JSON-Schema engine. The "schema" is the documented field table above plus the validator's assertions. `jq` is the sole prerequisite: `cook init`/`doctor` detects it and offers the OS-appropriate install (brew/apt/dnf/apk); the validator itself only **asserts** `jq` is present and **fails closed** with the install command: it never auto-installs inside a hook or loop.
-
-Invariants enforced:
-
-1. `tests.authored_by_agent_id ≠ implementer_agent_id` (no self-authored tests)
-2. `implementer_agent_id` differs from `reviewer_agent_id` and optional `reviewer2_agent_id` (no self-review; missing historical `reviewer2_agent_id` remains valid)
-3. *(retired)*
-4. no `status = done` unless: `tests.green` AND tests authored by ≠ implementer AND `review.verdict = pass` AND `audit.verdict ∈ {pass, na}`
-5. `deps` reference existing tasks; no cycles
-6. `task.json` is schema-valid (required fields, enum values)
-
-Jeff runs `cook validate` before every commit (CI runs it on push). Structural invariants (5, 6) bind whenever task state is committed. The separation/completion invariants (1, 2, 4) bind as their fields populate, with the full done-gate (invariant 4) enforced only when `status = done`. Before the one green task commit reaches trunk, shipped non-state content must match the clean, immutable gate checkpoint; only validated terminal bookkeeping may differ.
-
-It guarantees *separation and completeness are real*: not that a spec is good or a review thorough. Those remain the specialists' job in fresh context.
-
-**Enforcement is per-project and opt-in.** A project is "on" only after `cook init` (sets `.jeff/config.json` `active: true`); `cook deinit` turns it off. Enforcement is the **orchestrator running `cook validate` before every commit** plus **CI (`make validate` on push)**: deliberately **not** a global Claude Code hook, and no git pre-commit hook in any mode. A plugin hook fires in *every* project the plugin is installed in, intruding on non-jeff repos, which is the opposite of opt-in. Outside an active project the plugin is inert: the `cook` skill stands down and `cook validate` is a no-op, so those repos get vanilla Claude Code + the Chef's `CLAUDE.md`.
+Jeff runs `cook validate` before every commit, and CI runs it on push. It proves
+that separation and completeness records satisfy the contract; fresh specialists
+still judge whether the spec and implementation are good.
 
 ## 8. Commands
 
-- `cook`: work the single next ready task (all deps `done`) through its pipeline, then stop.
-- `cook <ids…>`: work only those tasks, in dependency order.
-- `cook all`: drain every unblocked task. **(v1.1)**
-- `cook ls`: list tasks (status, stage, age).
-- `cook status`: current task + in-flight stage + **backlog health** (size, age), with a nudge when the ready-backlog grows past a threshold.
-- `cook show <id>`: full task detail.
-- `cook validate`: run the validator.
-- `cook init`: **activate jeff in this project** (opt-in): scaffold `.jeff/` if absent + set `active: true`. No git hook is installed.
-- `cook deinit`: **deactivate**: set `active: false` (preserves `.jeff/` task history; never deletes data).
-- `cook doctor`: environment check (`jq`), active state.
+The checked-JS entry point currently implements `validate`, `ls`, `status`,
+`show`, `verify`, `doctor`, `init`, `flavor`, `baseline check`, and
+`plan section|check|append`. Its header and dispatch in `src/cli/cook.js` are the
+source of truth for that verb set. `skills/cook/SKILL.md` owns request routing and
+the complete operational procedure; the Bash wrapper supplies compatibility and
+the remaining transition verbs until `#61`.
 
 ## 9. Ambient entry
 

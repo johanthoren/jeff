@@ -1,7 +1,7 @@
 {
   "name": "@johanthoren/jeff",
-  "version": "3.2.0",
-  "description": "jeff: a quality brigade for coding agents",
+  "version": "3.2.1",
+  "description": "Jeff is a model-native quality control plane with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates. Checked-JS Node validation is authoritative; Bash is the temporary transition oracle.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {

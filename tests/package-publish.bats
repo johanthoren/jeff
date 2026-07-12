@@ -190,3 +190,24 @@ select_dist_tag() {
   ' _ "$REPO"
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
 }
+
+@test "README publishes verified install and update commands for every first-class host" {
+  local command
+  local commands=(
+    'pi install npm:@johanthoren/jeff'
+    'pi update npm:@johanthoren/jeff'
+    'claude plugin marketplace add johanthoren/jeff'
+    'claude plugin install jeff@jeff'
+    'claude plugin update jeff@jeff'
+    'codex plugin marketplace add johanthoren/jeff'
+    'codex plugin add jeff@jeff'
+    'codex plugin marketplace upgrade jeff'
+  )
+
+  for command in "${commands[@]}"; do
+    grep -Fxq -- "$command" "$REPO/README.md" || {
+      printf 'README missing verified command: %s\n' "$command"
+      return 1
+    }
+  done
+}

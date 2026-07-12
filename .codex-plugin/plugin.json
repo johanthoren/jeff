@@ -1,7 +1,7 @@
 {
   "name": "jeff",
-  "version": "3.2.0",
-  "description": "A quality brigade for coding agents.",
+  "version": "3.2.1",
+  "description": "Jeff is a model-native quality control plane for coding agents.",
   "author": {
     "name": "Johan Thorén"
   },
@@ -12,8 +12,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Jeff",
-    "shortDescription": "A quality brigade for coding agents",
-    "longDescription": "Runs engineering tasks through fresh planning, implementation, review, and audit specialists.",
+    "shortDescription": "A model-native quality control plane",
+    "longDescription": "Your sous chef, Jeff, is a model-native quality control plane. Fresh specialist contexts, enforced separation, durable evidence, and deterministic gates hold the pass. Checked-JS Node validation is authoritative; Bash remains the temporary transition oracle. Nothing leaves the pass until it is worthy.",
     "developerName": "Johan Thorén",
     "category": "Developer Tools",
     "capabilities": ["Task orchestration", "Code review"],
