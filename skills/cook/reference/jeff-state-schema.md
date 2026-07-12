@@ -1,6 +1,11 @@
 # jeff: State Schema (extract)
 
-Source of truth for the `cook validate` validator and the `cook` skill's embedded schema.
+`src/core/types.js` is the canonical checked-JS task vocabulary and
+`src/core/task-schema.js` plus `src/core/invariants.js` are the authoritative
+runtime validator. The Node CLI's `validate` route consumes that core through
+`src/cli/cook.js`.
+The Bash validator remains a transition oracle for intentionally unchanged
+behavior; it is not a second source of truth for destination schema changes.
 
 ## On-disk layout
 
@@ -34,6 +39,7 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
   },
   "tests":  { "authored_by_agent_id": null, "green": false, "evidence": [] },
   "review": { "verdict": null, "reviewer_agent_id": null, "evidence": [] },
+  "review2": null,
   "audit":  { "required": false, "verdict": "na", "audit_agent_id": null, "evidence": [] },
   "commits": [],
   "kickbacks": [],
@@ -57,7 +63,11 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - Historical records may contain a `brains` field. Validators ignore it and accept those records unchanged; new records omit it. Dispatch evidence may report the child session's actual provider/model/effort.
 - `agents.*`: harness agent ids recorded by Jeff from implementation, review, and audit dispatches. Complex tasks use both `reviewer_agent_id` and `reviewer2_agent_id`; each reviewer must differ from the implementer. Historical `plan_agent_id` and `test_author_agent_id` fields are accepted and ignored; new ledgers omit them.
 - `tests`: `authored_by_agent_id` set to the combined `plan` stage's agent id; `green` is boolean `true`/`false` (set `true` only with cited command `evidence`) **or** the string `"na"` (task 0049). `"na"` is the justified-terminal-no-test done-state: a `None`-disposition acceptance criterion (terminal/declarative, with no consumer-observable behavior to test) records `tests.green == "na"` instead of a manufactured green. On a `done` task the `[inv4]` check accepts `"na"` only when `tests.evidence` is non-empty (the cited justification, reusing the same evidence slot a `true` green uses: no new field) **and** `review.verdict == "pass"` (reviewer-agreed); such a task has no test author (`authored_by_agent_id == null` is allowed). Only the literal `"na"` is accepted; boolean `false` and any other value stay refused. Optional `tests.gate` (the `"gate"` key under `"tests"`) records the full-suite gate result that backs `green`: `{ "hash": "<sha>", "clean": true, "green": true, "command": "<cmd>", "at": "<iso>" }`, written by Jeff from a `cook verify` run. Absent on tasks captured before this field; when present on a `done` task the `[gate]` validator check enforces it (green+clean with a non-empty hash, and `tests.green` backed by `gate.green`).
-- `review.verdict` ∈ `pass | needs-work | null`.
+- `review` and optional `review2` share the same shape: `verdict` is
+  `pass | needs-work | null`, `reviewer_agent_id` is a string or null, and
+  `evidence` is an array. `review2` may be absent or null for historical and
+  single-review records. When it is present on a done task, its verdict must be
+  `pass` alongside the primary review.
 - `audit`: `required` set by `plan`; `verdict` ∈ `pass | needs-work | na`.
 - `kickbacks`: `[{ from, to, reason, at }]`, `from`/`to` are stage names.
 - `status = blocked` ⇒ `blockedReason` non-null.
@@ -168,11 +178,24 @@ There is no separate registry file: the `.jeff/tasks/<NNNN>-<slug>/` dirs **are*
 - **full / absent.** Empty `tasks/` (no task dirs) ⇒ "nothing to validate", exit 0; otherwise runs the **full** invariant set over the on-disk task dirs: the schema/done-gate quality invariants (INV-1, INV-2, INV-4), the convergence block (INV-7..11), **and** the registry invariants: numeric-`id` requirement, `deps` reference existing tasks + no cycles (INV-5), duplicate-id, and `[prune]`.
 - **lite: quality subset only.** Runs INV-1 (test author ≠ implementer), INV-2 (implementer differs from every reviewer), INV-4 (done-gate), and the INV-7..11 convergence block over each run-ledger `task.json`. **Drops** the registry invariants: a string `id` (an external tracker ref, e.g. `"JIRA-42"`) is accepted, INV-5 (dep DAG), duplicate-id, and `[prune]` are **skipped** (a lite run-ledger legitimately retains a local `done` record).
 
+Before either mode's semantic checks, the core validates the persisted shape and
+reports field-named `[schema]` failures. The compatibility reader accepts and
+ignores historical `brains`, `branch`, `agents.plan_agent_id`, and
+`agents.test_author_agent_id`; it also accepts omitted `review2`,
+`agents.reviewer2_agent_id`, `convergence`, and `tests.gate`. Canonical writers
+do not expose the historical fields, and canonical stages do not include the
+legacy resume-only `test` value. Historical convergence records may also omit a
+council member's `temperature` or a finding's `followupTaskId`; canonical
+writers include both.
+
 **`[prune]` (registry invariant, task 0063; full mode only):** a `done`/`abandoned` task dir must not rest in the committed store. Terminal tasks are pruned at completion (the dir is removed, satisfied deps stripped, the removal committed to trunk); the archive is git history/tags and memory, not a resting `0NNN/` dir. Because a present `done` record (validated by `[gate]`/INV-4) and an absent terminal dir cannot both hold in one committed tree, completion follows a fixed gate -> remove -> validate -> commit order (see `skills/cook/SKILL.md` → Validation), so a legitimately-completing task is never blocked. Lite drops it (the team tracker owns the lifecycle and the lite store is never committed, so there is no git-history archive to fall back on).
 
 **Separation invariants (the load-bearing property: the implementer must not have shaped the tests it has to pass):**
 - **INV-1**: `tests.authored_by_agent_id ≠ agents.implementer_agent_id` (the combined test designer/author is not the implementer).
 - **INV-2**: `agents.implementer_agent_id` differs from both `agents.reviewer_agent_id` and optional `agents.reviewer2_agent_id` (no reviewer wrote the code). Historical plan/test identity fields do not participate.
+- **INV-4**: a done task satisfies the test disposition, has a passing primary
+  review, has a passing second review when `review2` is present, and has an
+  audit verdict of `pass` or `na`.
 
 **Done-gate full-suite binding (`[gate]`, task 0044):** when a `done` task records `tests.gate`, the validator asserts `gate.green == true` AND `gate.clean == true` AND `gate.hash` is a non-empty string, and that `tests.green == true` is backed by `gate.green == true`: so `tests.green` can only stand on a recorded green+clean full-suite run (written by `cook verify`), never on a targeted-subset run. It is a pure function of `task.json` (no per-task git probe); gate freshness (the gated hash matching the tree at done) is enforced at write time by Jeff via `cook verify` / `cook baseline check`. **Null-tolerant:** `tests.gate` absent ⇒ skipped, so the historical `done` tasks (which carry no gate) keep validating. Runs in both full and lite mode (a done-gate quality invariant, not a registry one).
 

@@ -1,8 +1,9 @@
 // @ts-check
 
 /**
- * Pure per-check invariant functions: the 1:1 JS port of `cook.sh`'s jq
- * validation passes (`cmd_validate`, skills/cook/scripts/cook.sh:308-632).
+ * Pure per-check invariant functions for the authoritative JS validator. Most
+ * checks retain the former Bash behavior; destination changes live here first
+ * and are specified directly rather than derived from the transition oracle.
  *
  * No I/O. Every function is a deterministic function of the collected task
  * objects and returns the exact violation strings `cook.sh` emits (parity is
@@ -204,6 +205,9 @@ export function runInvariants(tasks, { lite }) {
       }
       if (reviewVerdict !== 'pass') {
         out.push(`task ${id}: done but review.verdict != pass [inv4]`);
+      }
+      if (t.review2 !== null && t.review2 !== undefined && t.review2.verdict !== 'pass') {
+        out.push(`task ${id}: done but review2.verdict != pass [inv4]`);
       }
       const av = jqOr(t.audit && t.audit.verdict, 'na');
       if (av !== 'pass' && av !== 'na') {

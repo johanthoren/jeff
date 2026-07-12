@@ -1,59 +1,97 @@
 // @ts-check
 
 /**
- * JSDoc typedefs for the jeff `task.json` state schema.
- *
- * Source of truth: `skills/cook/reference/jeff-state-schema.md` (§`task.json`).
- * Types-only module: it exports nothing at runtime and exists so `tsc
- * --checkJs` can exercise the store's annotations. The `convergence` and
- * `config.json` shapes are intentionally out of scope for this slice (they land
- * with the validator port).
+ * Canonical checked-JS vocabulary for Jeff's persisted task and config state.
+ * Runtime readers separately accept the documented legacy-only fields.
  */
 
 /** @typedef {'pending' | 'in_progress' | 'blocked' | 'done' | 'abandoned'} TaskStatus */
-/** Persisted stages; `test` is legacy resume-only. @typedef {'capture' | 'plan' | 'test' | 'implement' | 'refactor' | 'review' | 'audit' | 'done'} TaskStage */
+/** @typedef {'capture' | 'plan' | 'implement' | 'refactor' | 'review' | 'audit' | 'done'} TaskStage */
 /** @typedef {'p0' | 'p1' | 'p2' | 'p3' | 'p4'} TaskPriority */
 /** @typedef {'simple' | 'complex'} TaskComplexity */
 /** @typedef {'pass' | 'needs-work' | null} ReviewVerdict */
 /** @typedef {'pass' | 'needs-work' | 'na'} AuditVerdict */
+/** @typedef {'integrity' | 'security' | 'pragmatist'} CouncilLens */
+/** @typedef {'ship' | 'block' | null} CouncilVerdict */
+/** @typedef {'shipped' | 'scoped-fix-shipped' | 'blocked-to-operator' | null} CouncilOutcome */
 
 /**
- * The `review` stage outcome record.
  * @typedef {Object} Review
  * @property {ReviewVerdict} verdict
  * @property {string | null} reviewer_agent_id
- * @property {Array<unknown>} evidence
+ * @property {unknown[]} evidence
  */
 
 /**
- * The `audit` stage outcome record.
  * @typedef {Object} Audit
  * @property {boolean} required
  * @property {AuditVerdict} verdict
  * @property {string | null} audit_agent_id
- * @property {Array<unknown>} evidence
+ * @property {unknown[]} evidence
  */
 
 /**
- * Specialist identities. Historical plan/test identity fields may still be
- * present on old ledgers but are not canonical or used for separation.
  * @typedef {Object} TaskAgents
  * @property {string | null} implementer_agent_id
  * @property {string | null} reviewer_agent_id
  * @property {string | null} [reviewer2_agent_id]
  * @property {string | null} audit_agent_id
- * @property {string | null} [plan_agent_id]
- * @property {string | null} [test_author_agent_id]
  */
 
 /**
- * The canonical per-task state persisted to `task.json`.
+ * @typedef {Object} TestGate
+ * @property {string} hash
+ * @property {boolean} clean
+ * @property {boolean} green
+ * @property {string} command
+ * @property {string} at
+ */
+
+/**
+ * @typedef {Object} TaskTests
+ * @property {string | null} authored_by_agent_id
+ * @property {boolean | 'na'} green
+ * @property {unknown[]} evidence
+ * @property {TestGate} [gate]
+ */
+
+/**
+ * @typedef {Object} Kickback
+ * @property {TaskStage} from
+ * @property {TaskStage} to
+ * @property {string} reason
+ * @property {string} at
+ */
+
+/**
+ * @typedef {Object} CouncilMember
+ * @property {string} agent_id
+ * @property {CouncilLens} lens
+ * @property {number | null} temperature
+ */
+
+/**
+ * @typedef {Object} CouncilFinding
+ * @property {string} id
+ * @property {string} summary
+ * @property {number} blockingVotes
+ * @property {boolean} survived
+ * @property {number | string | null} followupTaskId
+ */
+
+/**
+ * @typedef {Object} Convergence
+ * @property {number} cap
+ * @property {{review: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
+ * @property {{convened: boolean, stage: 'review' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ */
+
+/**
+ * The canonical per-task state persisted to `task.json`. `id` is numeric in
+ * full mode and may be an external tracker ref string in lite mode.
  *
- * `id` is a positive integer in full (registry) mode; in lite mode it may be an
- * external tracker ref string, so the type admits both.
- *
- * @typedef {Object} TaskJson
- * @property {number} schemaVersion
+ * @typedef {Object} CanonicalTaskJson
+ * @property {1} schemaVersion
  * @property {number | string} id
  * @property {string} slug
  * @property {string} title
@@ -64,16 +102,50 @@
  * @property {string} createdAt
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]
- * @property {string | null} [branch] Deprecated legacy state; ignored when present.
- * @property {TaskAgents} [agents]
- * @property {Object} [tests]
- * @property {Review} [review]
- * @property {Audit} [audit]
- * @property {Array<unknown>} [commits]
- * @property {Array<unknown>} [kickbacks]
- * @property {string | null} [blockedReason]
- * @property {string | null} [abandonReason]
+ * @property {TaskAgents} agents
+ * @property {TaskTests} tests
+ * @property {Review} review
+ * @property {Review | null} [review2]
+ * @property {Audit} audit
+ * @property {unknown[]} commits
+ * @property {Kickback[]} kickbacks
+ * @property {string | null} blockedReason
+ * @property {string | null} abandonReason
  * @property {string} [externalRef]
+ * @property {Convergence} [convergence]
+ */
+
+/**
+ * Compatibility-only shape for records persisted at the retired `test` stage.
+ * Canonical writers cannot select this branch and therefore cannot emit the
+ * historical plan/test identities.
+ *
+ * @typedef {Object} LegacyTaskAgents
+ * @property {string | null} implementer_agent_id
+ * @property {string | null} reviewer_agent_id
+ * @property {string | null} [reviewer2_agent_id]
+ * @property {string | null} audit_agent_id
+ * @property {string | null} [plan_agent_id]
+ * @property {string | null} [test_author_agent_id]
+ */
+
+/**
+ * @typedef {Omit<CanonicalTaskJson, 'stage' | 'agents'> & {
+ *   stage: 'test',
+ *   agents?: LegacyTaskAgents,
+ *   branch?: string | null
+ * }} LegacyTaskJson
+ */
+
+/** @typedef {CanonicalTaskJson | LegacyTaskJson} TaskJson */
+
+/**
+ * @typedef {Object} JeffConfig
+ * @property {1} schemaVersion
+ * @property {'jeff'} system
+ * @property {'full' | 'lite'} [mode]
+ * @property {boolean} active
+ * @property {string} [testCommand]
  */
 
 export {};

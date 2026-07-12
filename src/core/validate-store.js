@@ -1,10 +1,9 @@
 // @ts-check
 
 /**
- * `validateStore(root)`: the in-process verdict boundary. Port of cook.sh's
- * `cmd_validate` order of operations (skills/cook/scripts/cook.sh:308-632),
- * returning a verdict object instead of printing + exiting, so the CLI and the
- * future pi extension can both consume it without spawning a subprocess.
+ * `validateStore(root)`: the authoritative in-process verdict boundary used by
+ * the CLI and host integrations. The former Bash implementation remains a
+ * transition oracle for intentionally unchanged behavior.
  *
  * Sequence (parity target): collect (fail closed) → `[gate]` pre-flight
  * short-circuit → full-mode empty-store early return → main invariant pass →
@@ -15,6 +14,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { collectTasks, readMode } from './store.js';
 import { gatePreflight, runInvariants } from './invariants.js';
+import { taskSchemaViolations } from './task-schema.js';
 import { isType } from './validate.js';
 
 /**
@@ -64,7 +64,22 @@ export async function validateStore(root) {
     return fail(stderr);
   }
 
-  // 2. [gate] done-gate pre-flight : short-circuits the whole pass on violation.
+  // 2. Validate persisted shapes before evaluating semantic invariants. When
+  // schema errors exist, still attempt the invariant pass so historical callers
+  // retain its fail-closed markers; schema failures remain authoritative.
+  const schemaViolations = tasks.flatMap(taskSchemaViolations);
+  if (schemaViolations.length > 0) {
+    let invariantViolations = [];
+    try {
+      invariantViolations = runInvariants(tasks, { lite });
+    } catch {
+      invariantViolations = ['cook: validation FAILED: the invariant pass could not evaluate the task store.'];
+    }
+    const violations = [...schemaViolations, ...invariantViolations];
+    return fail([...violations, `cook: validation FAILED (${violations.length} issue(s))`]);
+  }
+
+  // 3. [gate] done-gate pre-flight : short-circuits the whole pass on violation.
   let gateViolations;
   try {
     gateViolations = gatePreflight(tasks);
@@ -75,12 +90,12 @@ export async function validateStore(root) {
     return fail([...gateViolations, `cook: validation FAILED (${gateViolations.length} issue(s))`]);
   }
 
-  // 3. Full mode over an empty store: nothing to validate. (Lite runs even empty.)
+  // 4. Full mode over an empty store: nothing to validate. (Lite runs even empty.)
   if (!lite && tasks.length === 0) {
     return pass(['cook: no tasks under .jeff/tasks/: nothing to validate.']);
   }
 
-  // 4. Main invariant pass : fail CLOSED if it could not evaluate.
+  // 5. Main invariant pass : fail CLOSED if it could not evaluate.
   let violations;
   try {
     violations = runInvariants(tasks, { lite });
@@ -91,7 +106,7 @@ export async function validateStore(root) {
     return fail([...violations, `cook: validation FAILED (${violations.length} issue(s))`]);
   }
 
-  // 5. Profile conformance : present-means-conform; absent is fine.
+  // 6. Profile conformance : present-means-conform; absent is fine.
   let profileText = null;
   try {
     profileText = await readFile(join(root, '.jeff', 'profile.md'), 'utf8');
@@ -105,7 +120,7 @@ export async function validateStore(root) {
     }
   }
 
-  // 6. OK.
+  // 7. OK.
   return pass([`cook: validation OK (${tasks.length} task(s))`]);
 }
 
