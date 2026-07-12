@@ -89,6 +89,13 @@ async function makeLiteRoot(profileContent) {
   return root;
 }
 
+async function seedLiteTask(root, task) {
+  const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
+  await mkdir(taskDir, { recursive: true });
+  await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+  return taskDir;
+}
+
 /**
  * @param {string} root
  * @param {string[]} args
@@ -216,6 +223,59 @@ test('lite verify with a real command goes green and writes no run log, matching
   try {
     assertParity(root, ['verify']);
     assert.equal(await readLogLine(root), null, 'lite mode must never write test-runs.jsonl');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('lite verify --task records the green gate and evidence directly in the selected task', async () => {
+  const root = await makeLiteRoot('Test command: `true`.\n');
+  try {
+    runGit(root, ['init', '-q']);
+    runGit(root, ['config', 'user.email', 'jeff-verify-task@example.com']);
+    runGit(root, ['config', 'user.name', 'Jeff Verify Task']);
+    await writeFile(join(root, '.gitignore'), '.jeff/\n', 'utf8');
+    runGit(root, ['add', '.gitignore']);
+    runGit(root, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'seed']);
+    const taskDir = await seedLiteTask(root, {
+      schemaVersion: 1,
+      id: 18,
+      slug: 'record-specialists',
+      title: 'Record specialists',
+      status: 'in_progress',
+      stage: 'review',
+      priority: 'p2',
+      deps: [],
+      complexity: 'simple',
+      createdAt: '2026-07-12T00:00:00Z',
+      updatedAt: '2026-07-12T00:00:00Z',
+      agents: {
+        implementer_agent_id: 'implementer',
+        reviewer_agent_id: null,
+        reviewer2_agent_id: null,
+        audit_agent_id: null,
+      },
+      tests: { authored_by_agent_id: 'plan-agent', green: false, evidence: [] },
+      review: { verdict: null, reviewer_agent_id: null, evidence: [] },
+      audit: { required: false, verdict: 'na', audit_agent_id: null, evidence: [] },
+      commits: [],
+      kickbacks: [],
+      blockedReason: null,
+      abandonReason: null,
+    });
+
+    const result = runJs(root, ['verify', '--task', '18']);
+    const task = JSON.parse(await readFile(join(taskDir, 'task.json'), 'utf8'));
+    const head = runGit(root, ['rev-parse', 'HEAD']).stdout.trim();
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(task.tests.green, true);
+    assert.deepEqual(task.tests.evidence, [{ command: 'true', output: 'cook: verify green (true)' }]);
+    assert.equal(task.tests.gate.hash, head);
+    assert.equal(task.tests.gate.clean, true);
+    assert.equal(task.tests.gate.green, true);
+    assert.equal(task.tests.gate.command, 'true');
+    assert.match(task.tests.gate.at, AT_RE);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
