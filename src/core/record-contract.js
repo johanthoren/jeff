@@ -2,7 +2,7 @@
 
 import { isType } from './validate.js';
 
-const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refute'];
+const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refute', 'council'];
 const RESULTS = {
   plan: ['red', 'plan', 'escalation'],
   implement: ['green', 'kickback'],
@@ -19,6 +19,14 @@ function closed(value, path, keys) {
   if (!isType(value, 'object')) invalid(path);
   for (const key of Object.keys(value)) if (!keys.includes(key)) invalid(path ? `${path}.${key}` : key);
   for (const key of keys) if (!Object.hasOwn(value, key)) invalid(path ? `${path}.${key}` : key);
+}
+
+/** @param {any} value @param {string} path @param {string[]} required @param {string[]} optional */
+function closedOptional(value, path, required, optional) {
+  if (!isType(value, 'object')) invalid(path);
+  const keys = [...required, ...optional];
+  for (const key of Object.keys(value)) if (!keys.includes(key)) invalid(path ? `${path}.${key}` : key);
+  for (const key of required) if (!Object.hasOwn(value, key)) invalid(path ? `${path}.${key}` : key);
 }
 
 /** @param {any} value @param {string} path */
@@ -135,7 +143,8 @@ function validateReview(value) {
   findings(value.findings, 'findings', ['capture', 'plan', 'implement', 'refactor'], false);
   evidence(value.evidence, 'evidence');
   if (value.verdict === 'pass' && value.findings.length !== 0) invalid('findings');
-  if (value.verdict === 'pass' && value.evidence.length === 0) invalid('evidence');
+  if (value.verdict === 'needs-work' && value.findings.length === 0) invalid('findings');
+  if (value.evidence.length === 0) invalid('evidence');
 }
 
 /** @param {any} value */
@@ -157,29 +166,62 @@ function validateAudit(value) {
   findings(value.findings, 'findings', ['plan', 'implement', 'refactor'], true);
   evidence(value.evidence, 'evidence');
   if (value.verdict !== 'needs-work' && value.findings.length !== 0) invalid('findings');
+  if (value.verdict === 'needs-work' && value.findings.length === 0) invalid('findings');
   if (value.verdict !== 'needs-work' && value.coverage.length === 0) invalid('coverage');
-  if (value.verdict !== 'needs-work' && value.evidence.length === 0) invalid('evidence');
+  if (value.evidence.length === 0) invalid('evidence');
 }
 
 /** @param {any} value */
 function validateRefute(value) {
-  closed(value, '', ['agent_id', 'stage', 'cycle', 'finding', 'verdict', 'rationale', 'evidence']);
+  closedOptional(value, '', ['agent_id', 'stage', 'cycle', 'finding', 'verdict', 'rationale', 'evidence'], ['source']);
   nonnegativeInteger(value.cycle, 'cycle');
+  if (value.source !== undefined) oneOf(value.source, 'source', ['review', 'review2', 'audit']);
   string(value.finding, 'finding');
   oneOf(value.verdict, 'verdict', ['survives', 'refuted']);
   string(value.rationale, 'rationale');
   evidence(value.evidence, 'evidence');
 }
 
+/** @param {any} value */
+function validateCouncil(value) {
+  closed(value, '', ['stage', 'council']);
+  const council = value.council;
+  closed(council, 'council', ['convened', 'stage', 'members', 'findings', 'verdict', 'outcome']);
+  if (council.convened !== true) invalid('council.convened');
+  oneOf(council.stage, 'council.stage', ['review', 'audit']);
+  if (!Array.isArray(council.members) || council.members.length !== 3) invalid('council.members');
+  council.members.forEach((/** @type {any} */ member, /** @type {number} */ index) => {
+    const at = `council.members[${index}]`;
+    closed(member, at, ['agent_id', 'lens', 'temperature']);
+    string(member.agent_id, `${at}.agent_id`);
+    oneOf(member.lens, `${at}.lens`, ['integrity', 'security', 'pragmatist']);
+    if (member.temperature !== null && typeof member.temperature !== 'number') invalid(`${at}.temperature`);
+  });
+  if (!Array.isArray(council.findings) || council.findings.length === 0) invalid('council.findings');
+  council.findings.forEach((/** @type {any} */ finding, /** @type {number} */ index) => {
+    const at = `council.findings[${index}]`;
+    closed(finding, at, ['id', 'summary', 'blockingVotes', 'survived', 'followupTaskId']);
+    string(finding.id, `${at}.id`);
+    string(finding.summary, `${at}.summary`);
+    if (!Number.isInteger(finding.blockingVotes) || finding.blockingVotes < 0 || finding.blockingVotes > 3) invalid(`${at}.blockingVotes`);
+    if (typeof finding.survived !== 'boolean') invalid(`${at}.survived`);
+    if (finding.followupTaskId !== null && !['string', 'number'].includes(typeof finding.followupTaskId)) invalid(`${at}.followupTaskId`);
+  });
+  oneOf(council.verdict, 'council.verdict', ['ship', 'block']);
+  oneOf(council.outcome, 'council.outcome', [null, 'shipped', 'scoped-fix-shipped', 'blocked-to-operator']);
+  if (council.verdict === 'ship' && council.outcome !== 'shipped') invalid('council.outcome');
+  if (council.verdict === 'block' && council.outcome === 'shipped') invalid('council.outcome');
+}
+
 /** @type {Record<string, (value: any) => void>} */
-const VALIDATORS = { plan: validatePlan, implement: validateImplement, refactor: validateRefactor, review: validateReview, audit: validateAudit, refute: validateRefute };
+const VALIDATORS = { plan: validatePlan, implement: validateImplement, refactor: validateRefactor, review: validateReview, audit: validateAudit, refute: validateRefute, council: validateCouncil };
 
 /** @param {string} stage @param {unknown} value @returns {Record<string, any>} */
 export function validateSpecialistReturn(stage, value) {
   if (!STAGES.includes(stage)) invalid('stage');
   if (!isType(value, 'object')) invalid('$');
   const record = /** @type {Record<string, any>} */ (value);
-  string(record.agent_id, 'agent_id');
+  if (stage !== 'council') string(record.agent_id, 'agent_id');
   if (record.stage !== stage) invalid('stage');
   VALIDATORS[stage](record);
   return record;

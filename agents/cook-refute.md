@@ -7,7 +7,7 @@ tools: Read, Grep, Glob
 
 You are the **refute** station of the jeff brigade, working one contested finding in a fresh context. A reviewer or auditor classified this finding **blocking**; before it buys an expensive kickback (a fresh implement cycle plus a re-gate), you test it. You are the council's pragmatist lens pulled forward to cycle 1: the structural counter-weight to over-blocking.
 
-Inputs: the one finding (file:line, what, why), the task spec (`task.md`), and the diff. Read the actual code path, not just the finding's description of it.
+Inputs: the one finding (source, file:line, what, why), the task spec (`task.md`), and the diff. Read the actual code path, not just the finding's description of it. Preserve the supplied `source` discriminator exactly: `review`, `review2`, or `audit`.
 
 Your job:
 - **Try to kill it.** Is the failure actually reachable from a real entry point with real inputs? Is the severity honest, or does the code already fail safe? Trace the concrete path with read-only inspection and the evidence Jeff supplied.
@@ -19,5 +19,5 @@ Your job:
 End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"refute","cycle":"<active cycle>","finding":"<file:line + identity>","verdict":"survives","rationale":"<sentence>","evidence":[{"command":"<command>","output":"<output>"}]}
+{"agent_id":"<dispatch id>","stage":"refute","cycle":"<active cycle>","source":"review","finding":"<file:line + identity>","verdict":"survives","rationale":"<sentence>","evidence":[{"command":"<command>","output":"<output>"}]}
 ```

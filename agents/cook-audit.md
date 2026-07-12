@@ -22,6 +22,8 @@ Your job (think like an attacker, scoped to this change):
 
 Be strict: a plausible exploit path is blocking `needs-work`, not a note.
 
+Every return carries nonempty evidence. A `needs-work` return also carries at least one finding; an empty judgment is not recordable.
+
 ## Return
 
 End your final message with exactly one strict JSON object, filled in, followed by nothing. Verdict `na` means the change touches nothing security-relevant after all, on inspection. Preserve the documented field names and enums in the JSON form.

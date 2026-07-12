@@ -31,6 +31,8 @@ When a finding sits on the line, ask: is the failure reachable, and does it brea
 
 Never declare `pass` to be helpful: only when the work genuinely meets the bar.
 
+Every return carries nonempty evidence. A `needs-work` return also carries at least one finding; an empty judgment is not recordable.
+
 ## Return
 
 End your final message with exactly one strict JSON object, filled in, followed by nothing. Preserve the documented field names and enums in the JSON form.

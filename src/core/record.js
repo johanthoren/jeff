@@ -14,6 +14,11 @@ const now = () => `${new Date().toISOString().slice(0, 19)}Z`;
 const wait = (/** @type {number} */ milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
 const RECORD_LOCK_ATTEMPTS = 100;
 const KICKBACK_STAGE_ORDER = ['capture', 'plan', 'implement', 'refactor'];
+const DEFAULT_CONVERGENCE = {
+  cap: 2,
+  stages: { review: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
+  council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+};
 
 /** @param {any} outcome */
 function hasBlockingFinding(outcome) {
@@ -68,8 +73,14 @@ function settleJudgments(task) {
 
 /** @param {MutableRecordTask} task @param {string} at */
 function resetJudgmentsAfterFix(task, at) {
-  const lastKickback = task.kickbacks.at(-1);
-  if (!lastKickback || !['review', 'audit'].includes(lastKickback.from)) return;
+  const hasCurrentJudgment = judgmentSources(task).some(({ outcome }) => (
+    outcome?.reviewer_agent_id != null || outcome?.audit_agent_id != null
+  ));
+  if (!hasCurrentJudgment) return;
+  const unresolvedJudgmentKickback = task.kickbacks.findLast((/** @type {any} */ kickback) => (
+    ['review', 'audit'].includes(kickback.from)
+  ));
+  if (!unresolvedJudgmentKickback) return;
 
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
@@ -91,7 +102,12 @@ function resetJudgmentsAfterFix(task, at) {
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function recordReview(task, result) {
-  const second = task.agents.reviewer_agent_id !== null;
+  const firstOccupied = task.review?.reviewer_agent_id != null || task.agents.reviewer_agent_id != null;
+  const secondOccupied = task.review2?.reviewer_agent_id != null || task.agents.reviewer2_agent_id != null;
+  if (firstOccupied && secondOccupied) {
+    throw new Error('[record-transition] both review slots are already occupied for this judgment cycle');
+  }
+  const second = firstOccupied;
   const target = second ? 'review2' : 'review';
   if (second) task.agents.reviewer2_agent_id = result.agent_id;
   else task.agents.reviewer_agent_id = result.agent_id;
@@ -108,6 +124,9 @@ function recordReview(task, result) {
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function recordAudit(task, result) {
+  if (task.audit?.audit_agent_id != null || task.agents.audit_agent_id != null) {
+    throw new Error('[record-transition] audit slot is already occupied for this judgment cycle');
+  }
   task.agents.audit_agent_id = result.agent_id;
   task.audit = {
     ...task.audit,
@@ -127,7 +146,10 @@ function recordRefute(task, result, at) {
   const activeFindings = judgmentSources(task).flatMap(({ source, outcome }) => (
     (outcome?.findings ?? []).map((/** @type {any} */ finding) => ({ source, finding }))
   ));
-  const candidates = activeFindings.filter(({ finding }) => result.finding.startsWith(`${finding.file}:${finding.line}`));
+  const sourceFindings = result.source === undefined
+    ? activeFindings
+    : activeFindings.filter(({ source }) => source === result.source);
+  const candidates = sourceFindings.filter(({ finding }) => result.finding.startsWith(`${finding.file}:${finding.line}`));
   const target = candidates.length === 1
     ? candidates[0]
     : candidates.find(({ finding }) => result.finding.includes(finding.what));
@@ -136,7 +158,7 @@ function recordRefute(task, result, at) {
   const finding = target?.finding;
   if (!finding || finding.class !== 'blocking') throw new Error('[record-transition] refute finding is not an active blocker');
   if (finding.refute) throw new Error('[record-transition] finding already has a refute');
-  const refute = { agent_id: result.agent_id, finding: result.finding, verdict: result.verdict, rationale: result.rationale, evidence: result.evidence };
+  const refute = { agent_id: result.agent_id, source, finding: result.finding, verdict: result.verdict, rationale: result.rationale, evidence: result.evidence };
   task.refutes = [...(task.refutes ?? []), refute];
   finding.refute = refute;
   if (result.verdict === 'refuted') {
@@ -147,6 +169,10 @@ function recordRefute(task, result, at) {
   if (activeFindings.some(({ finding: item }) => item.class === 'blocking' && !item.refute)) return;
 
   const kickbacks = [];
+  const hasSurvivor = activeFindings.some(({ finding: item }) => item.refute?.verdict === 'survives');
+  if (hasSurvivor && task.convergence === undefined) {
+    task.convergence = structuredClone(DEFAULT_CONVERGENCE);
+  }
   for (const convergenceStage of ['review', 'audit']) {
     const survivors = activeFindings.filter(({ source: itemSource, finding: item }) => (
       (itemSource === 'audit' ? 'audit' : 'review') === convergenceStage
@@ -156,7 +182,10 @@ function recordRefute(task, result, at) {
     if (!survivors.length) continue;
     const counter = task.convergence.stages[convergenceStage];
     if (counter.blockingKickbacks >= task.convergence.cap) {
-      throw new Error(`[record-transition] ${convergenceStage} kickback cap reached; council return required`);
+      if (task.convergence.council.convened !== true && task.convergence.council.stage === null) {
+        task.convergence.council.stage = convergenceStage;
+      }
+      continue;
     }
     counter.blockingKickbacks += 1;
     const destination = survivors
@@ -180,6 +209,46 @@ function recordRefute(task, result, at) {
   task.status = 'in_progress';
 }
 
+/** @param {MutableRecordTask} task @param {Record<string, any>} result @param {string} at */
+function recordCouncil(task, result, at) {
+  const council = result.council;
+  const pending = task.convergence?.council;
+  const counter = task.convergence?.stages?.[council.stage];
+  if (!pending || pending.convened === true) {
+    throw new Error('[record-transition] council is not awaiting a return');
+  }
+  if (pending.stage !== council.stage || !counter || counter.blockingKickbacks < task.convergence.cap) {
+    throw new Error(`[record-transition] ${council.stage} council is not active`);
+  }
+
+  task.convergence.council = council;
+  if (council.verdict === 'ship') {
+    task.stage = 'done';
+    task.status = 'done';
+    return;
+  }
+  if (council.outcome === 'blocked-to-operator') {
+    task.stage = 'implement';
+    task.status = 'blocked';
+    task.blockedReason = council.findings.filter((/** @type {any} */ finding) => finding.survived).map((/** @type {any} */ finding) => finding.summary).join('; ');
+    return;
+  }
+  if (council.outcome === 'scoped-fix-shipped') {
+    task.stage = 'done';
+    task.status = 'done';
+    return;
+  }
+  const survivors = council.findings.filter((/** @type {any} */ finding) => finding.survived);
+  task.kickbacks = [...task.kickbacks, {
+    from: council.stage,
+    to: 'implement',
+    reason: `Council block: ${survivors.map((/** @type {any} */ finding) => finding.summary).join('; ')}`,
+    at,
+  }];
+  task.stage = 'implement';
+  task.status = 'in_progress';
+}
+
 /** @param {MutableRecordTask} task */
 function judgmentSources(task) {
   return [
@@ -195,7 +264,7 @@ export function transitionTask(task, stage, result) {
   const next = /** @type {any} */ (structuredClone(task));
   const isJudgment = stage === 'review' || stage === 'audit';
   if (isJudgment || stage === 'refute') assertCurrentJudgment(next, result);
-  if (!isJudgment && stage !== 'refute' && next.stage !== stage) {
+  if (!isJudgment && stage !== 'refute' && stage !== 'council' && next.stage !== stage) {
     throw new Error(`[record-transition] task is at ${next.stage}, not ${stage}`);
   }
   if (isJudgment && !['review', 'audit', 'done'].includes(next.stage)) {
@@ -224,7 +293,8 @@ export function transitionTask(task, stage, result) {
     next.stage = 'review';
   } else if (stage === 'review') recordReview(next, result);
   else if (stage === 'audit') recordAudit(next, result);
-  else recordRefute(next, result, at);
+  else if (stage === 'refute') recordRefute(next, result, at);
+  else recordCouncil(next, result, at);
   return /** @type {TaskJson} */ (next);
 }
 
@@ -294,12 +364,14 @@ export async function updateTask(root, id, update, options = {}) {
     const candidate = update(task);
     const lite = (await readMode(root)) === 'lite';
     const store = tasks.map((stored) => stored._dir === taskPath ? { ...candidate, _dir: taskPath } : stored);
+    const candidatePrunePrefix = `task ${String(candidate.id)}:`;
     const violations = [...taskSchemaViolations(candidate, { lite }), ...runInvariants(store, { lite })]
       .filter((violation) => !(
         options.allowTransientTerminal === true
         && !lite
         && task.status !== 'done'
         && candidate.status === 'done'
+        && violation.startsWith(candidatePrunePrefix)
         && violation.includes('[prune]')
       ));
     if (violations.length) throw new Error(violations[0]);
