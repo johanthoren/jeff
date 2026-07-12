@@ -1,8 +1,9 @@
 // @ts-check
 
 /**
- * Pure per-check invariant functions: the 1:1 JS port of `cook.sh`'s jq
- * validation passes (`cmd_validate`, skills/cook/scripts/cook.sh:308-632).
+ * Pure per-check invariant functions for the authoritative JS validator. Most
+ * checks retain the former Bash behavior; destination changes live here first
+ * and are specified directly rather than derived from the transition oracle.
  *
  * No I/O. Every function is a deterministic function of the collected task
  * objects and returns the exact violation strings `cook.sh` emits (parity is
@@ -180,6 +181,24 @@ export function runInvariants(tasks, { lite }) {
     if (im !== null && (im === rv || im === rv2)) {
       out.push(`task ${id}: implementer == reviewer (${jqStr(im)}) [inv2]`);
     }
+    const reviews = [
+      [t.review, rv, true],
+      [t.review2, rv2, false],
+    ];
+    for (const [outcome, recordedReviewer, acceptsSingleIdentity] of reviews) {
+      if (!isType(outcome, 'object')) continue;
+      const outcomeReviewer = outcome.reviewer_agent_id != null ? outcome.reviewer_agent_id : null;
+      const hasVerdict = outcome.verdict === 'pass' || outcome.verdict === 'needs-work';
+      const identityMismatch = outcomeReviewer !== null && recordedReviewer !== null && outcomeReviewer !== recordedReviewer;
+      const missingBoundIdentity = hasVerdict && (
+        acceptsSingleIdentity
+          ? outcomeReviewer === null && recordedReviewer === null
+          : outcomeReviewer === null || recordedReviewer === null
+      );
+      if (identityMismatch || missingBoundIdentity || (im !== null && outcomeReviewer === im)) {
+        out.push(`task ${id}: review outcome identity does not match its separated reviewer [inv2]`);
+      }
+    }
 
     // inv4: done-gate quality invariant
     if (t.status === 'done') {
@@ -204,6 +223,14 @@ export function runInvariants(tasks, { lite }) {
       }
       if (reviewVerdict !== 'pass') {
         out.push(`task ${id}: done but review.verdict != pass [inv4]`);
+      }
+      const isHistoricalSingleReview = !Object.hasOwn(t, 'review2')
+        && (Object.hasOwn(agents, 'plan_agent_id') || Object.hasOwn(agents, 'test_author_agent_id'));
+      const isComplex = t.complexity !== 'simple' && !isHistoricalSingleReview;
+      if (isComplex && (!isType(t.review2, 'object') || t.review2.verdict !== 'pass')) {
+        out.push(`task ${id}: complex done task requires a recorded second review with review2.verdict == pass [inv4]`);
+      } else if (!isComplex && t.review2 !== null && t.review2 !== undefined && t.review2.verdict !== 'pass') {
+        out.push(`task ${id}: done but review2.verdict != pass [inv4]`);
       }
       const av = jqOr(t.audit && t.audit.verdict, 'na');
       if (av !== 'pass' && av !== 'na') {

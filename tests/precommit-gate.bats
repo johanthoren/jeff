@@ -264,6 +264,26 @@ EOF
   [ -n "$reason" ]
 }
 
+@test "gate/authority: commit hook denies a Node-only schema failure" {
+  write_config_lite
+  write_valid_done_task "$BK/tasks/0001-invalid-date"
+  jq '
+    .status = "in_progress"
+    | .stage = "review"
+    | .createdAt = "2026-02-31T00:00:00Z"
+  ' "$BK/tasks/0001-invalid-date/task.json" > "$BK/tasks/0001-invalid-date/task.json.tmp"
+  mv "$BK/tasks/0001-invalid-date/task.json.tmp" "$BK/tasks/0001-invalid-date/task.json"
+
+  local p
+  p="$(payload "git commit -m 'release'")"
+  run bash -c "printf '%s' '$p' | CLAUDE_PLUGIN_ROOT=\"$REPO\" \"$HOOK\""
+
+  [ "$status" -eq 0 ]
+  local decision
+  decision="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.permissionDecision' 2>/dev/null)"
+  [ "$decision" = "deny" ]
+}
+
 # ---------------------------------------------------------------------------
 # AC4-open-jq: jq unavailable → fail-open allow
 # Stub cook.sh that exits 3 (mimics require_jq path: no terminal verdict).
