@@ -23,7 +23,7 @@ run_bash_oracle() {
 
 if [ "${1:-}" = "_validate-oracle" ]; then
   shift
-  run_bash_oracle validate "$@"
+  run_bash_oracle "$@"
   exit $?
 fi
 
@@ -31,7 +31,7 @@ if [ "${1:-}" != "validate" ]; then
   exec "$SH_COOK" "$@"
 fi
 
-sh_out="$(run_bash_oracle "$@" 2>&1)"
+sh_out="$(run_bash_oracle 2>&1)"
 sh_rc=$?
 js_out="$("$SH_COOK" "$@" 2>&1)"
 js_rc=$?
