@@ -35,11 +35,13 @@ function requireField(out, field, valid) {
  * @param {any} value
  * @param {string} field
  * @param {string[]} out
+ * @param {boolean} [allowLegacyNa]
  */
-function validateReview(value, field, out) {
+function validateReview(value, field, out, allowLegacyNa = false) {
   requireField(out, field, isType(value, 'object'));
   if (!isType(value, 'object')) return;
-  requireField(out, `${field}.verdict`, isOneOf(value.verdict, ['pass', 'needs-work', null]));
+  const verdicts = allowLegacyNa ? ['pass', 'needs-work', 'na', null] : ['pass', 'needs-work', null];
+  requireField(out, `${field}.verdict`, isOneOf(value.verdict, verdicts));
   requireField(out, `${field}.reviewer_agent_id`, isNullableString(value.reviewer_agent_id));
   requireField(out, `${field}.evidence`, Array.isArray(value.evidence));
 }
@@ -159,7 +161,7 @@ export function taskSchemaViolations(task) {
   if (task.branch !== undefined) requireField(out, 'branch', isNullableString(task.branch));
   validateAgents(task.agents, out);
   validateTests(task.tests, out);
-  validateReview(task.review, 'review', out);
+  validateReview(task.review, 'review', out, true);
   if (task.review2 !== undefined && task.review2 !== null) validateReview(task.review2, 'review2', out);
   requireField(out, 'audit', isType(task.audit, 'object'));
   if (isType(task.audit, 'object')) {
