@@ -110,8 +110,7 @@ export async function recordSpecialistFile(root, stage, id, file) {
   let parsed;
   try { parsed = JSON.parse(await readFile(file, 'utf8')); }
   catch { throw new Error(`[record-json] invalid JSON in ${file}`); }
-  const specialistReturn = validateSpecialistReturn(stage, parsed);
-  return updateTask(root, id, (task) => transitionTask(task, stage, specialistReturn));
+  return recordSpecialistReturn(root, stage, id, parsed);
 }
 
 /** @param {string} root @param {string} stage @param {string} id @param {unknown} value */
