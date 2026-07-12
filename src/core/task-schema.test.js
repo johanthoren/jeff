@@ -509,13 +509,17 @@ test('INV-4 defaults omitted complexity to complex without legacy identity bypas
     assert.ok(result.stderr.some((line) => line.includes('second review')));
   });
 
-  await t.test('legacy identity fields remain compatible with an explicitly simple task', async () => {
+  await t.test('explicit-complex ledger without review2 retains historical single-review compatibility', async () => {
+    const {
+      review2: _,
+      ...historicalTask
+    } = singleReviewDoneTask;
     const result = await verdictFor({
-      ...singleReviewDoneTask,
-      complexity: 'simple',
+      ...historicalTask,
+      trivial: false,
+      brains: { review: { model: 'opus', effort: 'high' } },
       agents: {
         ...singleReviewDoneTask.agents,
-        plan_agent_id: 'legacy-plan',
         test_author_agent_id: 'legacy-test-author',
       },
     });
