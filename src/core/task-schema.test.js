@@ -187,6 +187,107 @@ test('INV-2 rejects either reviewer identity when it is the implementer', async 
   }
 });
 
+test('INV-2 binds each review outcome identity to its separated agent identity', async (t) => {
+  /** @type {Array<[string, Record<string, any>]>} */
+  const cases = [
+    [
+      'primary review outcome cannot substitute the implementer',
+      {
+        agents: {
+          ...canonicalTask().agents,
+          reviewer_agent_id: 'reviewer-one',
+        },
+        review: {
+          verdict: 'pass',
+          reviewer_agent_id: 'implementer',
+          evidence: ['primary review'],
+        },
+      },
+    ],
+    [
+      'second review outcome must match the recorded second reviewer',
+      {
+        agents: {
+          ...canonicalTask().agents,
+          reviewer2_agent_id: 'reviewer-two',
+        },
+        review2: {
+          verdict: 'pass',
+          reviewer_agent_id: 'different-reviewer',
+          evidence: ['second review'],
+        },
+      },
+    ],
+  ];
+
+  for (const [name, overrides] of cases) {
+    await t.test(name, async () => {
+      const result = await verdictFor(canonicalTask(overrides));
+      assertNamedFailure(result, '[inv2]');
+    });
+  }
+});
+
+test('kickback members fail closed by field while current and historical transitions remain readable', async (t) => {
+  await t.test('scalar member', async () => {
+    const result = await verdictFor(canonicalTask({ kickbacks: ['invalid'] }));
+    assertNamedFailure(result, '[schema] kickbacks[0]');
+  });
+
+  await t.test('malformed member fields', async () => {
+    const result = await verdictFor(
+      canonicalTask({
+        kickbacks: [{ from: 'invalid', to: 42, reason: null, at: 'not-a-date' }],
+      }),
+    );
+    for (const field of ['from', 'to', 'reason', 'at']) {
+      assertNamedFailure(result, `[schema] kickbacks[0].${field}`);
+    }
+  });
+
+  await t.test('current verify source and historical test destination', async () => {
+    const result = await verdictFor(
+      canonicalTask({
+        kickbacks: [
+          {
+            from: 'verify',
+            to: 'implement',
+            reason: 'full gate failed',
+            at: '2026-07-12T01:00:00.000Z',
+          },
+          {
+            from: 'review',
+            to: 'test',
+            reason: 'historical test-author kickback',
+            at: '2026-07-12T02:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+});
+
+test('full-mode registry ids and slugs enforce the persisted naming contract', async (t) => {
+  for (const id of [0, -1, 1.5]) {
+    await t.test(`id ${id}`, async () => {
+      const result = await verdictFor(
+        canonicalTask({ id, externalRef: undefined }),
+        'full',
+      );
+      assertNamedFailure(result, '[schema] id');
+    });
+  }
+
+  await t.test('non-kebab slug', async () => {
+    const result = await verdictFor(
+      canonicalTask({ id: 1, externalRef: undefined, slug: 'Not_Kebab' }),
+      'full',
+    );
+    assertNamedFailure(result, '[schema] slug');
+  });
+});
+
 test('INV-4 requires both recorded reviews to pass when a second review is present', async () => {
   const result = await verdictFor(
     canonicalTask({

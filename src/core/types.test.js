@@ -85,3 +85,21 @@ const taskWithRemovedPlanIdentity = {
   },
 };
 void taskWithRemovedPlanIdentity;
+
+/** @type {import('./types.js').Kickback} */
+const currentVerifyKickback = {
+  from: 'verify',
+  to: 'implement',
+  reason: 'full verification gate failed',
+  at: '2026-07-12T01:00:00.000Z',
+};
+void currentVerifyKickback;
+
+/** @type {import('./types.js').LegacyKickback} */
+const historicalTestKickback = {
+  from: 'review',
+  to: 'test',
+  reason: 'historical test-author kickback',
+  at: '2026-07-12T02:00:00.000Z',
+};
+void historicalTestKickback;
