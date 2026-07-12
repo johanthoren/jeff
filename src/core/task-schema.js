@@ -5,6 +5,8 @@ import { isOneOf, isType } from './validate.js';
 const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
 const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'audit', 'done'];
 const PRIORITIES = ['p0', 'p1', 'p2', 'p3', 'p4'];
+const REVIEW_VERDICTS = ['pass', 'needs-work', null];
+const HISTORICAL_REVIEW_VERDICTS = [...REVIEW_VERDICTS, 'na'];
 const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 /** @param {unknown} value */
@@ -35,12 +37,11 @@ function requireField(out, field, valid) {
  * @param {any} value
  * @param {string} field
  * @param {string[]} out
- * @param {boolean} [allowLegacyNa]
+ * @param {(string | null)[]} [verdicts]
  */
-function validateReview(value, field, out, allowLegacyNa = false) {
+function validateReview(value, field, out, verdicts = REVIEW_VERDICTS) {
   requireField(out, field, isType(value, 'object'));
   if (!isType(value, 'object')) return;
-  const verdicts = allowLegacyNa ? ['pass', 'needs-work', 'na', null] : ['pass', 'needs-work', null];
   requireField(out, `${field}.verdict`, isOneOf(value.verdict, verdicts));
   requireField(out, `${field}.reviewer_agent_id`, isNullableString(value.reviewer_agent_id));
   requireField(out, `${field}.evidence`, Array.isArray(value.evidence));
@@ -161,7 +162,7 @@ export function taskSchemaViolations(task) {
   if (task.branch !== undefined) requireField(out, 'branch', isNullableString(task.branch));
   validateAgents(task.agents, out);
   validateTests(task.tests, out);
-  validateReview(task.review, 'review', out, true);
+  validateReview(task.review, 'review', out, HISTORICAL_REVIEW_VERDICTS);
   if (task.review2 !== undefined && task.review2 !== null) validateReview(task.review2, 'review2', out);
   requireField(out, 'audit', isType(task.audit, 'object'));
   if (isType(task.audit, 'object')) {
