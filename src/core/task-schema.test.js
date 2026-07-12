@@ -154,7 +154,7 @@ test('schema failures name malformed required and nested fields', async (t) => {
   }
 });
 
-test('runtime compatibility accepts legacy-only fields and omitted optional destination shapes', async () => {
+test('runtime compatibility accepts legacy-only fields, lifecycle sentinels, and omitted optional destination shapes', async () => {
   const legacy = canonicalTask({
     stage: 'test',
     branch: 'legacy-branch',
@@ -166,11 +166,12 @@ test('runtime compatibility accepts legacy-only fields and omitted optional dest
       reviewer_agent_id: null,
       audit_agent_id: null,
     },
+    review: { verdict: 'na', reviewer_agent_id: null, evidence: [] },
   });
   delete legacy.review2;
 
   const result = await verdictFor(legacy);
-  assert.equal(result.ok, true);
+  assert.equal(result.ok, true, result.stderr.join('\n'));
 });
 
 test('INV-2 rejects either reviewer identity when it is the implementer', async (t) => {
