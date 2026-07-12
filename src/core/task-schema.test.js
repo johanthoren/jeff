@@ -466,6 +466,63 @@ test('INV-4 requires a recorded second reviewer and passing outcome for complex 
   assert.ok(result.stderr.some((line) => line.includes('second review')));
 });
 
+test('INV-4 defaults omitted complexity to complex without legacy identity bypasses', async (t) => {
+  const singleReviewDoneTask = canonicalTask({
+    status: 'done',
+    stage: 'done',
+    tests: {
+      authored_by_agent_id: 'plan',
+      green: true,
+      evidence: ['make test'],
+    },
+    agents: {
+      ...canonicalTask().agents,
+      reviewer_agent_id: 'reviewer-one',
+      reviewer2_agent_id: null,
+    },
+    review: {
+      verdict: 'pass',
+      reviewer_agent_id: 'reviewer-one',
+      evidence: ['review one'],
+    },
+    review2: null,
+  });
+
+  await t.test('omitted complexity requires a second review', async () => {
+    const { complexity: _, ...withoutComplexity } = singleReviewDoneTask;
+    const result = await verdictFor(withoutComplexity);
+    assertNamedFailure(result, '[inv4]');
+    assert.ok(result.stderr.some((line) => line.includes('second review')));
+  });
+
+  await t.test('legacy identity fields do not exempt an explicitly complex task', async () => {
+    const result = await verdictFor({
+      ...singleReviewDoneTask,
+      complexity: 'complex',
+      agents: {
+        ...singleReviewDoneTask.agents,
+        plan_agent_id: 'legacy-plan',
+        test_author_agent_id: 'legacy-test-author',
+      },
+    });
+    assertNamedFailure(result, '[inv4]');
+    assert.ok(result.stderr.some((line) => line.includes('second review')));
+  });
+
+  await t.test('legacy identity fields remain compatible with an explicitly simple task', async () => {
+    const result = await verdictFor({
+      ...singleReviewDoneTask,
+      complexity: 'simple',
+      agents: {
+        ...singleReviewDoneTask.agents,
+        plan_agent_id: 'legacy-plan',
+        test_author_agent_id: 'legacy-test-author',
+      },
+    });
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+});
+
 test('single-review done path remains null-tolerant and historical gate omission remains accepted', async () => {
   const task = canonicalTask({
     status: 'done',
