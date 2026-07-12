@@ -14,6 +14,7 @@
 /** @typedef {'integrity' | 'security' | 'pragmatist'} CouncilLens */
 /** @typedef {'ship' | 'block' | null} CouncilVerdict */
 /** @typedef {'shipped' | 'scoped-fix-shipped' | 'blocked-to-operator' | null} CouncilOutcome */
+/** @typedef {TaskStage | 'verify'} KickbackSource */
 
 /**
  * @typedef {Object} Review
@@ -57,8 +58,19 @@
 
 /**
  * @typedef {Object} Kickback
- * @property {TaskStage} from
+ * @property {KickbackSource} from
  * @property {TaskStage} to
+ * @property {string} reason
+ * @property {string} at
+ */
+
+/**
+ * Reader-only kickback shape for records that still name the retired `test`
+ * stage. Canonical task stages and current kickback destinations stay strict.
+ *
+ * @typedef {Object} LegacyKickback
+ * @property {KickbackSource | 'test'} from
+ * @property {TaskStage | 'test'} to
  * @property {string} reason
  * @property {string} at
  */
@@ -130,10 +142,11 @@
  */
 
 /**
- * @typedef {Omit<CanonicalTaskJson, 'stage' | 'agents'> & {
+ * @typedef {Omit<CanonicalTaskJson, 'stage' | 'agents' | 'kickbacks'> & {
  *   stage: 'test',
  *   agents?: LegacyTaskAgents,
- *   branch?: string | null
+ *   branch?: string | null,
+ *   kickbacks: LegacyKickback[]
  * }} LegacyTaskJson
  */
 

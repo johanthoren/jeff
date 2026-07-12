@@ -63,13 +63,19 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - Historical records may contain a `brains` field. Validators ignore it and accept those records unchanged; new records omit it. Dispatch evidence may report the child session's actual provider/model/effort.
 - `agents.*`: harness agent ids recorded by Jeff from implementation, review, and audit dispatches. Complex tasks use both `reviewer_agent_id` and `reviewer2_agent_id`; each reviewer must differ from the implementer. Historical `plan_agent_id` and `test_author_agent_id` fields are accepted and ignored; new ledgers omit them.
 - `tests`: `authored_by_agent_id` set to the combined `plan` stage's agent id; `green` is boolean `true`/`false` (set `true` only with cited command `evidence`) **or** the string `"na"` (task 0049). `"na"` is the justified-terminal-no-test done-state: a `None`-disposition acceptance criterion (terminal/declarative, with no consumer-observable behavior to test) records `tests.green == "na"` instead of a manufactured green. On a `done` task the `[inv4]` check accepts `"na"` only when `tests.evidence` is non-empty (the cited justification, reusing the same evidence slot a `true` green uses: no new field) **and** `review.verdict == "pass"` (reviewer-agreed); such a task has no test author (`authored_by_agent_id == null` is allowed). Only the literal `"na"` is accepted; boolean `false` and any other value stay refused. Optional `tests.gate` (the `"gate"` key under `"tests"`) records the full-suite gate result that backs `green`: `{ "hash": "<sha>", "clean": true, "green": true, "command": "<cmd>", "at": "<iso>" }`, written by Jeff from a `cook verify` run. Absent on tasks captured before this field; when present on a `done` task the `[gate]` validator check enforces it (green+clean with a non-empty hash, and `tests.green` backed by `gate.green`).
-- `review` and optional `review2` share the same shape: `verdict` is
+- Canonical `review` and optional `review2` share the same shape: `verdict` is
   `pass | needs-work | null`, `reviewer_agent_id` is a string or null, and
-  `evidence` is an array. `review2` may be absent or null for historical and
-  single-review records. When it is present on a done task, its verdict must be
-  `pass` alongside the primary review.
+  `evidence` is an array. The runtime reader additionally accepts `na` only for
+  historical primary `review.verdict` values; canonical writers and `review2`
+  remain strict. `review2` may be absent or null for historical and single-review
+  records. Each populated outcome identity must match its corresponding
+  `agents.reviewer*_agent_id` and differ from the implementer. When `review2` is
+  present on a done task, its verdict must be `pass` alongside the primary review.
 - `audit`: `required` set by `plan`; `verdict` ∈ `pass | needs-work | na`.
-- `kickbacks`: `[{ from, to, reason, at }]`, `from`/`to` are stage names.
+- `kickbacks`: `[{ from, to, reason, at }]`. Current sources are canonical stage
+  names plus `verify`; current destinations are canonical stage names. The
+  runtime reader also accepts the retired `test` destination in historical
+  records without making `test` a canonical task stage.
 - `status = blocked` ⇒ `blockedReason` non-null.
 - `status = abandoned` ⇒ `abandonReason` non-null.
 - `status = done` ⇒ the done-gate holds (validator invariant 4).
@@ -192,7 +198,7 @@ writers include both.
 
 **Separation invariants (the load-bearing property: the implementer must not have shaped the tests it has to pass):**
 - **INV-1**: `tests.authored_by_agent_id ≠ agents.implementer_agent_id` (the combined test designer/author is not the implementer).
-- **INV-2**: `agents.implementer_agent_id` differs from both `agents.reviewer_agent_id` and optional `agents.reviewer2_agent_id` (no reviewer wrote the code). Historical plan/test identity fields do not participate.
+- **INV-2**: `agents.implementer_agent_id` differs from both `agents.reviewer_agent_id` and optional `agents.reviewer2_agent_id` (no reviewer wrote the code). Each populated `review`/`review2` outcome identity is bound to the corresponding separated agent identity. Historical plan/test identity fields do not participate.
 - **INV-4**: a done task satisfies the test disposition, has a passing primary
   review, has a passing second review when `review2` is present, and has an
   audit verdict of `pass` or `na`.

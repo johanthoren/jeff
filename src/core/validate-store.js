@@ -67,7 +67,7 @@ export async function validateStore(root) {
   // 2. Validate persisted shapes before evaluating semantic invariants. When
   // schema errors exist, still attempt the invariant pass so historical callers
   // retain its fail-closed markers; schema failures remain authoritative.
-  const schemaViolations = tasks.flatMap(taskSchemaViolations);
+  const schemaViolations = tasks.flatMap((task) => taskSchemaViolations(task, { lite }));
   if (schemaViolations.length > 0) {
     let invariantViolations = [];
     try {

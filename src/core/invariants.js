@@ -181,6 +181,20 @@ export function runInvariants(tasks, { lite }) {
     if (im !== null && (im === rv || im === rv2)) {
       out.push(`task ${id}: implementer == reviewer (${jqStr(im)}) [inv2]`);
     }
+    const reviews = [
+      [t.review, rv],
+      [t.review2, rv2],
+    ];
+    for (const [outcome, recordedReviewer] of reviews) {
+      if (!isType(outcome, 'object')) continue;
+      const outcomeReviewer = outcome.reviewer_agent_id != null ? outcome.reviewer_agent_id : null;
+      const hasVerdict = outcome.verdict === 'pass' || outcome.verdict === 'needs-work';
+      const identityMismatch = outcomeReviewer !== null && outcomeReviewer !== recordedReviewer;
+      const missingBoundIdentity = hasVerdict && (outcomeReviewer === null || recordedReviewer === null);
+      if (identityMismatch || missingBoundIdentity || (im !== null && outcomeReviewer === im)) {
+        out.push(`task ${id}: review outcome identity does not match its separated reviewer [inv2]`);
+      }
+    }
 
     // inv4: done-gate quality invariant
     if (t.status === 'done') {

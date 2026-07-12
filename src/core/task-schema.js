@@ -7,7 +7,10 @@ const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'a
 const PRIORITIES = ['p0', 'p1', 'p2', 'p3', 'p4'];
 const REVIEW_VERDICTS = ['pass', 'needs-work', null];
 const HISTORICAL_REVIEW_VERDICTS = [...REVIEW_VERDICTS, 'na'];
+const KICKBACK_SOURCES = [...STAGES, 'verify'];
+const KICKBACK_DESTINATIONS = STAGES;
 const ISO_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const KEBAB_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** @param {unknown} value */
 function isId(value) {
@@ -86,6 +89,24 @@ function validateTests(value, out) {
  * @param {any} value
  * @param {string[]} out
  */
+function validateKickbacks(value, out) {
+  requireField(out, 'kickbacks', Array.isArray(value));
+  if (!Array.isArray(value)) return;
+  value.forEach((/** @type {any} */ kickback, /** @type {number} */ index) => {
+    const field = `kickbacks[${index}]`;
+    requireField(out, field, isType(kickback, 'object'));
+    if (!isType(kickback, 'object')) return;
+    requireField(out, `${field}.from`, isOneOf(kickback.from, KICKBACK_SOURCES));
+    requireField(out, `${field}.to`, isOneOf(kickback.to, KICKBACK_DESTINATIONS));
+    requireField(out, `${field}.reason`, typeof kickback.reason === 'string');
+    requireField(out, `${field}.at`, isIsoDate(kickback.at));
+  });
+}
+
+/**
+ * @param {any} value
+ * @param {string[]} out
+ */
 function validateConvergence(value, out) {
   requireField(out, 'convergence', isType(value, 'object'));
   if (!isType(value, 'object')) return;
@@ -142,14 +163,15 @@ function validateConvergence(value, out) {
  * tolerated so documented historical fields can be read without migration.
  *
  * @param {Record<string, any>} task
+ * @param {{ lite: boolean }} options
  * @returns {string[]}
  */
-export function taskSchemaViolations(task) {
+export function taskSchemaViolations(task, { lite }) {
   /** @type {string[]} */
   const out = [];
   requireField(out, 'schemaVersion', task.schemaVersion === 1);
-  requireField(out, 'id', isId(task.id));
-  requireField(out, 'slug', typeof task.slug === 'string');
+  requireField(out, 'id', lite ? isId(task.id) : Number.isInteger(task.id) && task.id > 0);
+  requireField(out, 'slug', typeof task.slug === 'string' && (lite || KEBAB_SLUG.test(task.slug)));
   requireField(out, 'title', typeof task.title === 'string');
   requireField(out, 'status', isOneOf(task.status, STATUSES));
   requireField(out, 'stage', isOneOf(task.stage, STAGES));
@@ -171,9 +193,8 @@ export function taskSchemaViolations(task) {
     requireField(out, 'audit.audit_agent_id', isNullableString(task.audit.audit_agent_id));
     requireField(out, 'audit.evidence', Array.isArray(task.audit.evidence));
   }
-  for (const field of ['commits', 'kickbacks']) {
-    requireField(out, field, Array.isArray(task[field]));
-  }
+  requireField(out, 'commits', Array.isArray(task.commits));
+  validateKickbacks(task.kickbacks, out);
   for (const field of ['blockedReason', 'abandonReason']) {
     requireField(out, field, isNullableString(task[field]));
   }
