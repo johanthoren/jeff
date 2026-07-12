@@ -1,6 +1,6 @@
 // @ts-check
 
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
@@ -212,6 +212,14 @@ test('dispatchRoleSession loads bundled agents when target cwd has no agents dir
   } finally {
     await rm(target, { recursive: true, force: true });
   }
+});
+
+test('bundled implement prompt documents both valid strict return outcomes', async () => {
+  const role = await readFile(new URL('../../agents/cook-implement.md', import.meta.url), 'utf8');
+
+  assert.match(role, /"result":"green"/);
+  assert.match(role, /"result":"kickback"/);
+  assert.match(role, /"kickback":\{"to":"plan","reason":"<reason>"\}/);
 });
 
 test('loadSdk falls back when argv-adjacent index.js import fails', async () => {

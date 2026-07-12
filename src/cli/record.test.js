@@ -2,11 +2,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { recordSpecialistReturn } from '../core/record.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COOK_JS = join(HERE, 'cook.js');
@@ -90,6 +91,90 @@ function planReturn(overrides = {}) {
     escalation: null,
     ...overrides,
   };
+}
+
+function implementReturn(agentId = 'implementer', overrides = {}) {
+  return {
+    agent_id: agentId,
+    stage: 'implement',
+    result: 'green',
+    files: ['src/core/record.js'],
+    greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
+    kickback: null,
+    ...overrides,
+  };
+}
+
+function refactorReturn(agentId = 'refactorer') {
+  return {
+    agent_id: agentId,
+    stage: 'refactor',
+    result: 'clean',
+    files: [],
+    outsideDiff: [],
+    greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
+    summary: ['No refactor needed.'],
+  };
+}
+
+/** @param {string} agentId @param {Record<string, unknown>} [overrides] */
+function reviewReturn(agentId, overrides = {}) {
+  return {
+    agent_id: agentId,
+    stage: 'review',
+    verdict: 'pass',
+    acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
+    findings: [],
+    evidence: [{ command: 'git diff --check', output: 'clean' }],
+    ...overrides,
+  };
+}
+
+function auditReturn(agentId = 'auditor', overrides = {}) {
+  return {
+    agent_id: agentId,
+    stage: 'audit',
+    verdict: 'pass',
+    scan: { command: 'review-security --json', recommendation: 'PASS', reportPath: '/tmp/report.md' },
+    coverage: [{ category: 'path_traversal', status: 'covered_no_hits' }],
+    findings: [],
+    evidence: [{ command: 'review-security --json', output: 'no findings' }],
+    ...overrides,
+  };
+}
+
+function blockingFinding(overrides = {}) {
+  return {
+    file: 'src/core/record.js',
+    line: 10,
+    severity: 'high',
+    class: 'blocking',
+    kickTo: 'implement',
+    what: 'The recording path loses a result.',
+    why: 'A supported completion order can overwrite durable evidence.',
+    ...overrides,
+  };
+}
+
+function auditStageTask(overrides = {}) {
+  return canonicalTask({
+    stage: 'audit',
+    agents: { implementer_agent_id: 'implementer', reviewer_agent_id: 'reviewer', reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+    review: { verdict: 'pass', reviewer_agent_id: 'reviewer', findings: [], evidence: ['review evidence'] },
+    audit: { required: true, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+    ...overrides,
+  });
+}
+
+function parallelJudgmentTask() {
+  return canonicalTask({
+    stage: 'review',
+    complexity: 'complex',
+    agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+    audit: { required: true, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+  });
 }
 
 test('record accepts the strict plan return and advances the task atomically', async () => {
@@ -291,5 +376,296 @@ test('record accepts a valid review return and persists its closed findings and 
     assert.equal(recorded.status, 'done');
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('record validates every finding and audit coverage enum at the shared boundary', async (t) => {
+  const reviewFields = {
+    severity: ['critical', 'high', 'medium', 'low'],
+    class: ['blocking', 'follow-up'],
+    kickTo: ['capture', 'plan', 'implement', 'refactor'],
+  };
+  for (const [field, values] of Object.entries(reviewFields)) {
+    for (const value of values) {
+      await t.test(`${field} accepts ${value}`, async () => {
+        const task = canonicalTask({
+          stage: 'review',
+          agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+          tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+        });
+        const { root } = await makeRoot(task);
+        try {
+          const finding = blockingFinding({ [field]: value });
+          await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer', {
+            verdict: 'needs-work',
+            findings: [finding],
+          }));
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+
+  for (const status of ['covered_with_hits', 'covered_no_hits', 'not_covered']) {
+    await t.test(`audit coverage accepts ${status}`, async () => {
+      const task = auditStageTask();
+      const { root } = await makeRoot(task);
+      try {
+        await recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor', {
+          coverage: [{ category: 'path_traversal', status }],
+        }));
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const kickTo of ['plan', 'implement', 'refactor']) {
+    await t.test(`audit finding destination accepts ${kickTo}`, async () => {
+      const { root } = await makeRoot(auditStageTask());
+      try {
+        await recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor', {
+          verdict: 'needs-work',
+          findings: [{ ...blockingFinding({ kickTo }), cwe: 'CWE-22' }],
+        }));
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('record rejects final audit outcomes without coverage or evidence', async (t) => {
+  for (const verdict of ['pass', 'na']) {
+    for (const missing of ['coverage', 'evidence']) {
+      await t.test(`${verdict} requires ${missing}`, async () => {
+        const task = auditStageTask();
+        const { root, taskDir } = await makeRoot(task);
+        try {
+          const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+          const result = auditReturn('auditor', { verdict, [missing]: [] });
+
+          await assert.rejects(
+            recordSpecialistReturn(root, 'audit', '18', result),
+            new RegExp(`\\[record-schema\\].*${missing}`),
+          );
+          assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+});
+
+test('full-mode recording validates dependencies against the complete task store', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-record-full-'));
+  const firstDir = join(root, '.jeff', 'tasks', '001-first');
+  const secondDir = join(root, '.jeff', 'tasks', '002-second');
+  try {
+    await mkdir(firstDir, { recursive: true });
+    await mkdir(secondDir, { recursive: true });
+    await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify({ active: true }), 'utf8');
+    await writeFile(join(firstDir, 'task.json'), `${JSON.stringify(canonicalTask({ id: 1, slug: 'first', deps: [2] }), null, 2)}\n`, 'utf8');
+    await writeFile(join(secondDir, 'task.json'), `${JSON.stringify(canonicalTask({ id: 2, slug: 'second', stage: 'capture' }), null, 2)}\n`, 'utf8');
+
+    await recordSpecialistReturn(root, 'plan', '1', planReturn({ auditRequired: false }));
+
+    assert.equal((await readTask(firstDir)).stage, 'implement');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('record rejects a repository whose .jeff parent redirects task writes outside the root', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-record-root-'));
+  const outside = await mkdtemp(join(tmpdir(), 'jeff-record-outside-'));
+  const taskDir = join(outside, '.jeff', 'tasks', '018-record-specialists');
+  try {
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(outside, '.jeff', 'config.json'), JSON.stringify({ mode: 'lite' }), 'utf8');
+    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(canonicalTask(), null, 2)}\n`, 'utf8');
+    await symlink(join(outside, '.jeff'), join(root, '.jeff'));
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'plan', '18', planReturn()),
+      /\[record-task\].*(escape|symlink|outside)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('implement kickback persists its evidence and returns the task to plan', async () => {
+  const task = canonicalTask({ stage: 'implement', tests: { authored_by_agent_id: 'plan-agent', green: false, evidence: [] } });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer', {
+      result: 'kickback',
+      greenRun: { command: null, output: 'The test contract is over-specified.' },
+      kickback: { to: 'plan', reason: 'The plan must revise the behavior seam.' },
+    }));
+    const recorded = await readTask(taskDir);
+
+    assert.equal(recorded.stage, 'plan');
+    assert.equal(recorded.implement.result, 'kickback');
+    assert.equal(recorded.kickbacks.at(-1).reason, 'The plan must revise the behavior seam.');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('parallel review and audit judgments are all retained for every completion order', async () => {
+  /** @type {Array<[string, Record<string, unknown>]>} */
+  const judgments = [
+    ['review', reviewReturn('reviewer-one')],
+    ['review', reviewReturn('reviewer-two')],
+    ['audit', auditReturn('auditor')],
+  ];
+  const orders = [
+    [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+  ];
+
+  for (const order of orders) {
+    const task = parallelJudgmentTask();
+    const { root, taskDir } = await makeRoot(task);
+    try {
+      for (const index of order) {
+        const [stage, result] = judgments[index];
+        await recordSpecialistReturn(root, stage, '18', result);
+      }
+      const recorded = await readTask(taskDir);
+
+      assert.deepEqual(
+        new Set([recorded.review.reviewer_agent_id, recorded.review2.reviewer_agent_id]),
+        new Set(['reviewer-one', 'reviewer-two']),
+      );
+      assert.equal(recorded.audit.audit_agent_id, 'auditor');
+      assert.equal(recorded.status, 'done');
+      assert.equal(recorded.stage, 'done');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+});
+
+test('simultaneous review and audit writes do not lose any judgment', async () => {
+  /** @type {Array<[string, Record<string, unknown>]>} */
+  const judgments = [
+    ['review', reviewReturn('reviewer-one')],
+    ['review', reviewReturn('reviewer-two')],
+    ['audit', auditReturn('auditor')],
+  ];
+  const concurrent = await makeRoot(parallelJudgmentTask());
+  try {
+    await Promise.all(judgments.map(([stage, result]) => recordSpecialistReturn(concurrent.root, stage, '18', result)));
+    const recorded = await readTask(concurrent.taskDir);
+    assert.deepEqual(
+      new Set([recorded.review.reviewer_agent_id, recorded.review2.reviewer_agent_id]),
+      new Set(['reviewer-one', 'reviewer-two']),
+    );
+    assert.equal(recorded.audit.audit_agent_id, 'auditor');
+    assert.equal(recorded.status, 'done');
+  } finally {
+    await rm(concurrent.root, { recursive: true, force: true });
+  }
+});
+
+test('review re-entry clears stale outcomes and requires two fresh complex-task reviews', async () => {
+  const task = canonicalTask({
+    stage: 'review',
+    complexity: 'complex',
+    agents: { implementer_agent_id: 'implementer-old', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    const finding = blockingFinding();
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-old', {
+      verdict: 'needs-work',
+      findings: [finding],
+    }));
+    await recordSpecialistReturn(root, 'refute', '18', {
+      agent_id: 'refuter',
+      stage: 'refute',
+      finding: `${finding.file}:${finding.line} lost result`,
+      verdict: 'survives',
+      rationale: 'The completion order is reachable.',
+      evidence: [{ command: 'node --test', output: 'lost result reproduced' }],
+    });
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-fresh'));
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn());
+
+    const reset = await readTask(taskDir);
+    assert.equal(reset.agents.reviewer_agent_id, null);
+    assert.equal(reset.agents.reviewer2_agent_id, null);
+    assert.equal(reset.review.verdict, null);
+    assert.equal(reset.review2 ?? null, null);
+
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-fresh-one'));
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-fresh-two'));
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.review.reviewer_agent_id, 'reviewer-fresh-one');
+    assert.equal(recorded.review2.reviewer_agent_id, 'reviewer-fresh-two');
+    assert.equal(recorded.status, 'done');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('follow-up-only review progresses while retaining its judgment evidence', async () => {
+  const followup = blockingFinding({ class: 'follow-up', severity: 'low' });
+  const first = await makeRoot(canonicalTask({
+    stage: 'review',
+    agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+  }));
+  try {
+    await recordSpecialistReturn(first.root, 'review', '18', reviewReturn('reviewer', {
+      verdict: 'needs-work',
+      findings: [followup],
+    }));
+    const recorded = await readTask(first.taskDir);
+    assert.equal(recorded.status, 'done');
+    assert.deepEqual(recorded.review.findings, [followup]);
+    assert.deepEqual(recorded.review.evidence, [{ command: 'git diff --check', output: 'clean' }]);
+  } finally {
+    await rm(first.root, { recursive: true, force: true });
+  }
+
+});
+
+test('a refuted blocker progresses while retaining the finding and refute evidence', async () => {
+  const blocker = blockingFinding();
+  const second = await makeRoot(canonicalTask({
+    stage: 'review',
+    agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+  }));
+  try {
+    await recordSpecialistReturn(second.root, 'review', '18', reviewReturn('reviewer', {
+      verdict: 'needs-work',
+      findings: [blocker],
+    }));
+    await recordSpecialistReturn(second.root, 'refute', '18', {
+      agent_id: 'refuter',
+      stage: 'refute',
+      finding: `${blocker.file}:${blocker.line} lost result`,
+      verdict: 'refuted',
+      rationale: 'The upstream guard prevents the failure.',
+      evidence: [{ command: 'sed -n 1,20p src/core/record.js', output: 'guard present' }],
+    });
+    const recorded = await readTask(second.taskDir);
+    assert.equal(recorded.status, 'done');
+    assert.equal(recorded.review.findings[0].class, 'follow-up');
+    assert.equal(recorded.refutes[0].verdict, 'refuted');
+  } finally {
+    await rm(second.root, { recursive: true, force: true });
   }
 });
