@@ -55,7 +55,7 @@ export function transitionTask(task, stage, result) {
     const source = next.audit?.verdict === 'needs-work'
       ? 'audit'
       : next.review2?.verdict === 'needs-work' ? 'review2' : 'review';
-    const finding = next[source]?.findings?.find((item) => result.finding.startsWith(`${item.file}:${item.line}`));
+    const finding = next[source]?.findings?.find((/** @type {any} */ item) => result.finding.startsWith(`${item.file}:${item.line}`));
     if (!finding || finding.class !== 'blocking') throw new Error('[record-transition] refute finding is not an active blocker');
     const refute = { agent_id: result.agent_id, finding: result.finding, verdict: result.verdict, rationale: result.rationale, evidence: result.evidence };
     next.refutes = [...(next.refutes ?? []), refute];
