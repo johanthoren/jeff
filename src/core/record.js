@@ -17,6 +17,11 @@ function hasBlockingFinding(outcome) {
   return outcome?.findings?.some((/** @type {any} */ finding) => finding.class === 'blocking') === true;
 }
 
+/** @param {Record<string, any>} result @param {string} nonBlockingVerdict */
+function judgmentVerdict(result, nonBlockingVerdict) {
+  return hasBlockingFinding(result) ? 'needs-work' : nonBlockingVerdict;
+}
+
 /** @param {TaskJson} task */
 function settleJudgments(task) {
   const requiredReviews = task.complexity === 'simple' ? 1 : 2;
@@ -63,9 +68,8 @@ function recordReview(task, result) {
   const target = second ? 'review2' : 'review';
   if (second) task.agents.reviewer2_agent_id = result.agent_id;
   else task.agents.reviewer_agent_id = result.agent_id;
-  const blocking = result.findings.some((/** @type {any} */ finding) => finding.class === 'blocking');
   task[target] = {
-    verdict: blocking ? 'needs-work' : 'pass',
+    verdict: judgmentVerdict(result, 'pass'),
     reportedVerdict: result.verdict,
     reviewer_agent_id: result.agent_id,
     findings: result.findings,
@@ -77,11 +81,10 @@ function recordReview(task, result) {
 
 /** @param {TaskJson} task @param {Record<string, any>} result */
 function recordAudit(task, result) {
-  const blocking = result.findings.some((/** @type {any} */ finding) => finding.class === 'blocking');
   task.agents.audit_agent_id = result.agent_id;
   task.audit = {
     ...task.audit,
-    verdict: blocking ? 'needs-work' : result.verdict,
+    verdict: judgmentVerdict(result, result.verdict),
     reportedVerdict: result.verdict,
     audit_agent_id: result.agent_id,
     findings: result.findings,
@@ -94,9 +97,7 @@ function recordAudit(task, result) {
 
 /** @param {TaskJson} task @param {Record<string, any>} result @param {string} at */
 function recordRefute(task, result, at) {
-  const source = task.audit?.verdict === 'needs-work'
-    ? 'audit'
-    : task.review2?.verdict === 'needs-work' ? 'review2' : 'review';
+  const source = activeBlockingSource(task);
   const finding = task[source]?.findings?.find((/** @type {any} */ item) => result.finding.startsWith(`${item.file}:${item.line}`));
   if (!finding || finding.class !== 'blocking') throw new Error('[record-transition] refute finding is not an active blocker');
   const refute = { agent_id: result.agent_id, finding: result.finding, verdict: result.verdict, rationale: result.rationale, evidence: result.evidence };
@@ -118,6 +119,13 @@ function recordRefute(task, result, at) {
   task.kickbacks = [...task.kickbacks, { from: convergenceStage, to: finding.kickTo, reason: finding.what, at }];
   task.stage = finding.kickTo;
   task.status = 'in_progress';
+}
+
+/** @param {TaskJson} task */
+function activeBlockingSource(task) {
+  if (task.audit?.verdict === 'needs-work') return 'audit';
+  if (task.review2?.verdict === 'needs-work') return 'review2';
+  return 'review';
 }
 
 /** @param {TaskJson} task @param {string} stage @param {Record<string, any>} result @returns {TaskJson} */
@@ -158,14 +166,19 @@ export function transitionTask(task, stage, result) {
   return /** @type {TaskJson} */ (next);
 }
 
+/** @param {string} parent @param {string} child */
+function escapes(parent, child) {
+  const path = relative(parent, child);
+  return path === '..' || path.startsWith(`..${sep}`);
+}
+
 /** @param {string} root */
 async function assertStoreContained(root) {
   const rootPath = await realpath(root);
   const jeffPath = join(root, '.jeff');
   if ((await lstat(jeffPath)).isSymbolicLink()) throw new Error('[record-task] .jeff symlink escapes repository');
   const actualJeff = await realpath(jeffPath);
-  const rel = relative(rootPath, actualJeff);
-  if (rel === '..' || rel.startsWith(`..${sep}`)) throw new Error('[record-task] .jeff is outside repository');
+  if (escapes(rootPath, actualJeff)) throw new Error('[record-task] .jeff is outside repository');
 }
 
 /** @param {string} root @param {() => Promise<any>} operation */
@@ -196,8 +209,7 @@ async function locateTask(root, id, tasks) {
   const taskDir = dirname(taskFile);
   const base = await realpath(join(root, '.jeff', 'tasks'));
   const actualDir = await realpath(taskDir);
-  const rel = relative(base, actualDir);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || (await lstat(taskFile)).isSymbolicLink()) {
+  if (escapes(base, actualDir) || (await lstat(taskFile)).isSymbolicLink()) {
     throw new Error(`[record-task] task ${id} escapes .jeff/tasks`);
   }
   return { taskDir, taskPath: matches[0]._dir };
