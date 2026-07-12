@@ -150,6 +150,8 @@ function validateAudit(value) {
   findings(value.findings, 'findings', ['plan', 'implement', 'refactor'], true);
   evidence(value.evidence, 'evidence');
   if (value.verdict !== 'needs-work' && value.findings.length !== 0) invalid('findings');
+  if (value.verdict !== 'needs-work' && value.coverage.length === 0) invalid('coverage');
+  if (value.verdict !== 'needs-work' && value.evidence.length === 0) invalid('evidence');
 }
 
 /** @param {any} value */

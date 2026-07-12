@@ -1,7 +1,7 @@
 // @ts-check
 
 import { readConfig } from '../core/store.js';
-import { dispatchRoleSession, STAGES } from './role-session.js';
+import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
 import { recordSpecialistReturn } from '../core/record.js';
 
 /** @param {unknown} result */
@@ -191,8 +191,10 @@ const DispatchParams = {
 
 /**
  * @param {any} pi
+ * @param {{ dispatchRoleSession?: typeof runRoleSession }} [dependencies]
  */
-export default function jeffExtension(pi) {
+export default function jeffExtension(pi, dependencies = {}) {
+  const dispatchRoleSession = dependencies.dispatchRoleSession ?? runRoleSession;
   pi.registerCommand('jeff-status', {
     description: 'Report that the jeff Pi package is active',
     /**

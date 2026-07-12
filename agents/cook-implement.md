@@ -27,3 +27,9 @@ End your final message with exactly this strict JSON object, filled in, followed
 ```json
 {"agent_id":"<dispatch id>","stage":"implement","result":"green","files":["<production file>"],"greenRun":{"command":"<command>","output":"<output>"},"kickback":null}
 ```
+
+If the plan contract itself must change, return this strict object instead:
+
+```json
+{"agent_id":"<dispatch id>","stage":"implement","result":"kickback","files":[],"greenRun":{"command":null,"output":"<reason no green run is valid>"},"kickback":{"to":"plan","reason":"<reason>"}}
+```
