@@ -33,25 +33,8 @@ Never declare `pass` to be helpful: only when the work genuinely meets the bar.
 
 ## Return
 
-End your final message with exactly this fenced block, filled in, followed by nothing:
+End your final message with exactly one strict JSON object, filled in, followed by nothing. Preserve the documented field names and enums in the JSON form.
 
-```yaml
-stage: review
-verdict: pass | needs-work
-acLedger:                      # one row per acceptance criterion, no omissions
-  - ac: <AC id>
-    claimed: write | revise | reuse | delete | skip
-    rederived: write | revise | reuse | delete | skip
-    ok: true | false
-findings:                      # empty list when verdict is pass
-  - file: <path>
-    line: <n>
-    severity: critical | high | medium | low
-    class: blocking | follow-up
-    kickTo: capture | plan | implement | refactor
-    what: <one sentence: what is wrong>
-    why: <one sentence: why it matters>
-evidence:
-  - command: <what Jeff supplied or what you inspected>
-    output: <the decisive lines>
+```json
+{"agent_id":"<dispatch id>","stage":"review","verdict":"pass","acLedger":[{"ac":"AC1","claimed":"write","rederived":"write","ok":true}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
 ```

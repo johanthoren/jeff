@@ -16,14 +16,8 @@ Your job:
 
 ## Return
 
-End your final message with exactly this fenced block, filled in, followed by nothing:
+End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
-```yaml
-stage: refute
-finding: <file:line + the finding's one-line identity, as given to you>
-verdict: survives | refuted
-rationale: <one sentence>
-evidence:
-  - command: <what Jeff supplied or what you inspected>
-    output: <the decisive lines>
+```json
+{"agent_id":"<dispatch id>","stage":"refute","finding":"<file:line + identity>","verdict":"survives","rationale":"<sentence>","evidence":[{"command":"<command>","output":"<output>"}]}
 ```

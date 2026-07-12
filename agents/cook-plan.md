@@ -25,19 +25,8 @@ Escape by return: if the criteria contain a genuine unresolved fork, return an e
 
 ## Return
 
-End your final message with exactly this fenced block, filled in, followed by nothing:
+End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
-```yaml
-stage: plan
-result: red | plan | escalation
-complexity: simple | complex
-auditRequired: true | false
-slices:
-  - <slice, one line each, in order>
-testFiles:
-  - <test file changed>
-redRun:
-  command: <exact targeted-test command, or null when no write/revise disposition>
-  output: <decisive intended failing lines, or justification when no RED is owed>
-escalation: null               # or: {fork: <the fork>, options: [<option>, <option>]}
+```json
+{"agent_id":"<dispatch id>","stage":"plan","result":"red","complexity":"simple","auditRequired":false,"slices":["<slice>"],"testFiles":["<file>"],"redRun":{"command":"<command>","output":"<output>"},"escalation":null}
 ```

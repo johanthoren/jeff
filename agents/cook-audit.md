@@ -24,28 +24,8 @@ Be strict: a plausible exploit path is blocking `needs-work`, not a note.
 
 ## Return
 
-End your final message with exactly this fenced block, filled in, followed by nothing. Verdict `na` means the change touches nothing security-relevant after all, on inspection.
+End your final message with exactly one strict JSON object, filled in, followed by nothing. Verdict `na` means the change touches nothing security-relevant after all, on inspection. Preserve the documented field names and enums in the JSON form.
 
-```yaml
-stage: audit
-verdict: pass | needs-work | na
-scan:
-  command: <the review-security.sh invocation Jeff supplied>
-  recommendation: PASS | REVIEW | BLOCK
-  reportPath: <path from Jeff's supplied scan output>
-coverage:                      # every category from the scan report's coverage[cat].status, no omissions
-  - category: <category>
-    status: covered_with_hits | covered_no_hits | not_covered  # not_covered = inapplicable to scope, not a blocker
-findings:                      # empty list when verdict is pass or na
-  - file: <path>
-    line: <n>
-    severity: critical | high | medium | low
-    class: blocking | follow-up
-    cwe: <CWE-id or null>
-    kickTo: plan | implement | refactor
-    what: <one sentence: the exploit path>
-    why: <one sentence: the impact>
-evidence:
-  - command: <what Jeff supplied or what you inspected>
-    output: <the decisive lines>
+```json
+{"agent_id":"<dispatch id>","stage":"audit","verdict":"pass","scan":{"command":"<command>","recommendation":"PASS","reportPath":"<path>"},"coverage":[{"category":"<category>","status":"covered_no_hits"}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
 ```
