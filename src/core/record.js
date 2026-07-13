@@ -145,7 +145,8 @@ function archiveAndResetJudgments(task, at) {
 function resetJudgmentsAfterFix(task, at) {
   const hasCurrentJudgment = judgmentSources(task).some(({ outcome }) => (
     outcome?.reviewer_agent_id != null || outcome?.audit_agent_id != null
-  ));
+  )) || [task.agents.reviewer_agent_id, task.agents.reviewer2_agent_id, task.agents.audit_agent_id]
+    .some((agentId) => agentId != null);
   if (!hasCurrentJudgment) return;
   const latestJudgmentKickback = task.kickbacks.findLast((/** @type {any} */ kickback) => (
     ['review', 'audit'].includes(kickback.from)
@@ -210,11 +211,11 @@ function recordRefute(task, result, at) {
   const sourceFindings = result.source === undefined
     ? activeFindings
     : activeFindings.filter(({ source }) => source === result.source);
-  const candidates = sourceFindings.filter(({ finding }) => result.finding.startsWith(`${finding.file}:${finding.line}`));
-  const target = candidates.length === 1
-    ? candidates[0]
-    : candidates.find(({ finding }) => result.finding.includes(finding.what));
-  if (candidates.length > 1 && !target) throw new Error('[record-transition] refute finding identity is ambiguous');
+  const candidates = sourceFindings.filter(({ finding }) => (
+    result.finding === `${finding.file}:${finding.line} ${finding.what}`
+  ));
+  if (candidates.length > 1) throw new Error('[record-transition] refute finding identity is ambiguous');
+  const target = candidates[0];
   const source = target?.source;
   const finding = target?.finding;
   if (!finding || finding.class !== 'blocking') throw new Error('[record-transition] refute finding is not an active blocker');

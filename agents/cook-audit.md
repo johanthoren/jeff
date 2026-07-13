@@ -29,5 +29,5 @@ Every return carries nonempty evidence. A `needs-work` return also carries at le
 End your final message with exactly one strict JSON object, filled in, followed by nothing. Verdict `na` means the change touches nothing security-relevant after all, on inspection. Preserve the documented field names and enums in the JSON form.
 
 ```json
-{"agent_id":"<dispatch id>","stage":"audit","cycle":"<active cycle>","verdict":"pass","scan":{"command":"<command>","recommendation":"PASS","reportPath":"<path>"},"coverage":[{"category":"<category>","status":"covered_no_hits"}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
+{"agent_id":"<dispatch id>","stage":"audit","cycle":0,"verdict":"pass","scan":{"command":"<command>","recommendation":"PASS","reportPath":"<path>"},"coverage":[{"category":"<category>","status":"covered_no_hits"}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
 ```

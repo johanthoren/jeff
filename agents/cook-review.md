@@ -38,5 +38,5 @@ Every return carries nonempty evidence. A `needs-work` return also carries at le
 End your final message with exactly one strict JSON object, filled in, followed by nothing. Preserve the documented field names and enums in the JSON form.
 
 ```json
-{"agent_id":"<dispatch id>","stage":"review","cycle":"<active cycle>","verdict":"pass","acLedger":[{"ac":"AC1","claimed":"write","rederived":"write","ok":true}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
+{"agent_id":"<dispatch id>","stage":"review","cycle":0,"verdict":"pass","acLedger":[{"ac":"AC1","claimed":"write","rederived":"write","ok":true}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
 ```
