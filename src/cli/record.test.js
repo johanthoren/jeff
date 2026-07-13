@@ -1350,6 +1350,61 @@ test('issue 65 scoped council completion requires fresh verification after the r
   }
 });
 
+test('issue 65 council fix failed scoped implementation blocks atomically and cannot re-run', async () => {
+  const priorGate = {
+    hash: 'prior-gate',
+    clean: true,
+    green: true,
+    command: 'make test',
+    at: '2026-07-12T00:00:01Z',
+  };
+  const task = councilTask({
+    tests: {
+      authored_by_agent_id: 'plan-agent',
+      green: true,
+      evidence: ['prior gate'],
+      gate: priorGate,
+    },
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(root, 'council', '18', councilReturn());
+
+    const blocked = await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      implementReturn('scoped-fix-implementer', {
+        result: 'kickback',
+        files: ['src/core/record.js'],
+        greenRun: {
+          command: 'node --test src/cli/record.test.js',
+          output: '1 test failed',
+        },
+        kickback: { to: 'plan', reason: 'The scoped council fix still fails.' },
+      }),
+    );
+
+    assert.equal(blocked.status, 'blocked');
+    assert.equal(blocked.convergence.council.outcome, 'blocked-to-operator');
+    assert.equal(blocked.implement.result, 'kickback');
+    assert.equal(blocked.tests.green, false);
+    assert.equal(blocked.tests.gate, undefined);
+    assert.equal(blocked.kickbacks.length, task.kickbacks.length + 1);
+    assert.equal(blocked.kickbacks.at(-1).from, 'review');
+    assert.equal(blocked.kickbacks.at(-1).to, 'implement');
+
+    const beforeSecondCycle = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'implement', '18', implementReturn('second-scoped-fix-implementer')),
+      /\[record-transition\].*(?:blocked|terminal|council)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeSecondCycle);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 65 scoped council completion accepts a recorded fix followed by a fresh clean gate', async () => {
   const { root, taskDir } = await makeRoot(councilTask());
   try {
