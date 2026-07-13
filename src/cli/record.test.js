@@ -1595,6 +1595,22 @@ test('issue 68 reassessment permits old judges but rejects the scoped implemente
   }
 });
 
+test('issue 68 reassessment permits a prior-cycle refuter as a fresh reviewer', async () => {
+  const { root } = await prepareMixedStageReassessment();
+  try {
+    const recorded = await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      reviewReturn('refuter', { cycle: 1 }),
+    );
+
+    assert.equal(recorded.review.reviewer_agent_id, 'refuter');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 68 failed reassessment requires refute and permits no second implementation', async () => {
   const { root, taskDir } = await prepareMixedStageReassessment();
   try {
