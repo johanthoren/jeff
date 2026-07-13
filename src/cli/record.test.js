@@ -318,7 +318,60 @@ function councilReturn(outcome = null, memberOverrides = {}) {
   };
 }
 
-async function prepareScopedCouncilRecovery(task = councilTask()) {
+function mixedStageCouncilTask() {
+  const task = councilTask();
+  const auditFinding = {
+    ...blockingFinding({
+      line: 20,
+      what: 'The audit recovery path can accept stale judgment evidence.',
+      why: 'A scoped fix can ship while a parallel audit blocker remains current.',
+    }),
+    refute: {
+      agent_id: 'audit-refuter',
+      source: 'audit',
+      finding: 'src/core/record.js:20 The audit recovery path can accept stale judgment evidence.',
+      verdict: 'survives',
+      rationale: 'The mixed-stage recovery path is reachable.',
+      evidence: [{ command: 'node --test src/cli/record.test.js', output: 'failure reproduced' }],
+    },
+  };
+  return councilTask({
+    audit: {
+      ...task.audit,
+      verdict: 'needs-work',
+      reportedVerdict: 'needs-work',
+      findings: [auditFinding],
+      evidence: [{ command: 'review-security --json', output: 'blocking finding' }],
+    },
+    refutes: [...task.refutes, auditFinding.refute],
+    convergence: {
+      ...task.convergence,
+      stages: { review: { blockingKickbacks: 2 }, audit: { blockingKickbacks: 1 } },
+    },
+  });
+}
+
+function mixedStageCouncilReturn(outcome = null) {
+  const result = councilReturn(outcome);
+  return {
+    ...result,
+    council: {
+      ...result.council,
+      findings: [
+        ...result.council.findings,
+        {
+          id: 'F2',
+          summary: 'The audit recovery path can accept stale judgment evidence.',
+          blockingVotes: 3,
+          survived: true,
+          followupTaskId: null,
+        },
+      ],
+    },
+  };
+}
+
+async function prepareScopedCouncilRecovery(task = councilTask(), councilResult = councilReturn()) {
   const { root, taskDir } = await makeRoot(task);
   await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
   runGit(root, ['init', '-q']);
@@ -328,11 +381,35 @@ async function prepareScopedCouncilRecovery(task = councilTask()) {
   runGit(root, ['add', '.']);
   runGit(root, ['commit', '-qm', 'baseline']);
 
-  await recordSpecialistReturn(root, 'council', '18', councilReturn());
+  await recordSpecialistReturn(root, 'council', '18', councilResult);
   await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
   runGit(root, ['add', '.']);
   runGit(root, ['commit', '-qm', 'record scoped fix']);
   return { root, taskDir };
+}
+
+async function recordFreshCouncilJudgments(root, overrides = {}) {
+  await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-reviewer-one', {
+    cycle: 1,
+    ...overrides.review,
+  }));
+  if (overrides.includeAudit === true) {
+    await recordSpecialistReturn(root, 'audit', '18', auditReturn('fresh-auditor', {
+      cycle: 1,
+      ...overrides.audit,
+    }));
+  }
+}
+
+async function prepareMixedStageReassessment() {
+  const prepared = await prepareScopedCouncilRecovery(
+    mixedStageCouncilTask(),
+    mixedStageCouncilReturn(),
+  );
+  await recordSpecialistReturn(prepared.root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
+  runGit(prepared.root, ['add', '.']);
+  runGit(prepared.root, ['commit', '-qm', 'record scoped refactor']);
+  return prepared;
 }
 
 test('record accepts the strict plan return and advances the task atomically', async () => {
@@ -1338,6 +1415,8 @@ test('issue 65 scoped council completion requires fresh verification after the r
   try {
     await recordSpecialistReturn(root, 'council', '18', councilReturn());
     await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
+    await recordFreshCouncilJudgments(root);
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
     await assert.rejects(
@@ -1418,6 +1497,7 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
 
     await recordSpecialistReturn(root, 'council', '18', councilReturn());
     await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
     runGit(root, ['add', '.']);
     runGit(root, ['commit', '-qm', 'record scoped fix']);
     const scopedFixHash = runGit(root, ['rev-parse', 'HEAD']);
@@ -1429,6 +1509,7 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
     assert.equal(gated.tests.gate.clean, true);
     assert.equal(gated.tests.gate.green, true);
 
+    await recordFreshCouncilJudgments(root);
     await recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped'));
     const recorded = await readTask(taskDir);
     assert.equal(recorded.convergence.council.outcome, 'scoped-fix-shipped');
@@ -1442,9 +1523,13 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
 test('issue 65 cycle 1 review2-origin recovery accepts a recorded fix and fresh gate', async () => {
   const { root } = await prepareScopedCouncilRecovery(reviewTwoCouncilTask());
   try {
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'record scoped refactor']);
     const verification = await runVerify(root, '18');
     assert.equal(verification.code, 0, verification.stderr.join('\n'));
 
+    await recordFreshCouncilJudgments(root);
     const recorded = await recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped'));
     assert.deepEqual(
       [recorded.stage, recorded.status, recorded.convergence.council.outcome],
@@ -1458,8 +1543,12 @@ test('issue 65 cycle 1 review2-origin recovery accepts a recorded fix and fresh 
 test('issue 65 cycle 1 council recovery accepts semantically equal reordered keys', async () => {
   const { root } = await prepareScopedCouncilRecovery();
   try {
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'record scoped refactor']);
     const verification = await runVerify(root, '18');
     assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    await recordFreshCouncilJudgments(root);
     const original = councilReturn('scoped-fix-shipped').council;
     const reordered = {
       stage: 'council',
@@ -1495,6 +1584,141 @@ test('issue 65 cycle 1 recovery rejects a gate made stale by a later refactor', 
       /\[record-transition\].*(?:fresh|stale|verification)/,
     );
     assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 67 mixed-stage scoped recovery preserves old judgments and ships only fresh passes', async () => {
+  const original = mixedStageCouncilTask();
+  const { root, taskDir } = await prepareMixedStageReassessment();
+  try {
+    const afterFix = await readTask(taskDir);
+    assert.equal(afterFix.judgmentHistory.length, 1);
+    assert.deepEqual(afterFix.judgmentHistory[0].review, original.review);
+    assert.deepEqual(afterFix.judgmentHistory[0].review2, original.review2);
+    assert.deepEqual(afterFix.judgmentHistory[0].audit, original.audit);
+    assert.equal(afterFix.review.reviewer_agent_id, null);
+    assert.equal(afterFix.review2.reviewer_agent_id, 'reviewer-two');
+    assert.equal(afterFix.audit.audit_agent_id, null);
+
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    await recordFreshCouncilJudgments(root, { includeAudit: true });
+
+    const reassessed = await readTask(taskDir);
+    assert.equal(reassessed.status, 'in_progress');
+    assert.equal(reassessed.review.verdict, 'pass');
+    assert.equal(reassessed.review2.verdict, 'pass');
+    assert.equal(reassessed.audit.verdict, 'pass');
+    assert.deepEqual(reassessed.judgmentHistory[0].review, original.review);
+    assert.deepEqual(reassessed.judgmentHistory[0].review2, original.review2);
+    assert.deepEqual(reassessed.judgmentHistory[0].audit, original.audit);
+
+    const recorded = await recordSpecialistReturn(
+      root,
+      'council',
+      '18',
+      mixedStageCouncilReturn('scoped-fix-shipped'),
+    );
+    assert.deepEqual(
+      [recorded.stage, recorded.status, recorded.convergence.council.outcome],
+      ['done', 'done', 'scoped-fix-shipped'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 67 scoped completion rejects a fresh gate without passing current judgments atomically', async () => {
+  const { root, taskDir } = await prepareMixedStageReassessment();
+  try {
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped')),
+      /\[record-transition\].*(?:current|fresh).*judgment.*pass/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 67 fresh reassessment rejects every recovery identity atomically', async () => {
+  const { root, taskDir } = await prepareMixedStageReassessment();
+  try {
+    assert.equal((await readTask(taskDir)).judgmentHistory.length, 1);
+    const forbiddenAgentIds = [
+      'scoped-fix-implementer',
+      'reviewer-one',
+      'reviewer-two',
+      'auditor',
+      'refuter',
+      'audit-refuter',
+      'council-integrity',
+      'council-security',
+      'council-pragmatist',
+    ];
+
+    for (const agentId of forbiddenAgentIds) {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'review', '18', reviewReturn(agentId, { cycle: 1 })),
+        /\[(?:record-identity|record-transition)\]/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    }
+
+    const beforeAuditReuse = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'audit', '18', auditReturn('reviewer-one', { cycle: 1 })),
+      /\[record-identity\]/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeAuditReuse);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 67 failed fresh reassessment blocks without permitting another implementation cycle', async () => {
+  const { root, taskDir } = await prepareMixedStageReassessment();
+  try {
+    const blocker = blockingFinding({
+      line: 30,
+      what: 'The scoped recovery still fails reassessment.',
+      why: 'The original mixed-stage defect remains reachable after the scoped fix.',
+    });
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-failing-reviewer', {
+      cycle: 1,
+      verdict: 'needs-work',
+      findings: [blocker],
+    }));
+    const beforeShip = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped')),
+      /\[record-transition\].*(?:current|fresh).*judgment.*pass/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeShip);
+
+    const blocked = await recordSpecialistReturn(
+      root,
+      'council',
+      '18',
+      mixedStageCouncilReturn('blocked-to-operator'),
+    );
+    assert.equal(blocked.status, 'blocked');
+    assert.equal(blocked.convergence.council.outcome, 'blocked-to-operator');
+
+    const beforeSecondCycle = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'implement', '18', implementReturn('second-scoped-fix-implementer')),
+      /\[record-transition\].*(?:blocked|terminal|council)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeSecondCycle);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
