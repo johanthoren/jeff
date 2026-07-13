@@ -222,28 +222,25 @@ export function runInvariants(tasks, { lite }) {
       if (g === true && (ta === null || ta === im)) {
         out.push(`task ${id}: done but tests not authored by a non-implementer [inv4]`);
       }
-      const reviewCouncilShip = t.convergence?.council?.convened === true
-        && t.convergence.council.stage === 'review'
+      const councilShipStage = t.convergence?.council?.convened === true
         && t.convergence.council.verdict === 'ship'
-        && t.convergence.council.outcome === 'shipped';
-      if (reviewVerdict !== 'pass' && !reviewCouncilShip) {
+        && t.convergence.council.outcome === 'shipped'
+        ? t.convergence.council.stage
+        : null;
+      if (reviewVerdict !== 'pass' && councilShipStage !== 'review') {
         out.push(`task ${id}: done but review.verdict != pass [inv4]`);
       }
       const isHistoricalSingleReview = !Object.hasOwn(t, 'review2')
         && (Object.hasOwn(agents, 'plan_agent_id') || Object.hasOwn(agents, 'test_author_agent_id'));
       const isComplex = t.complexity !== 'simple' && !isHistoricalSingleReview;
-      if (isComplex && (!isType(t.review2, 'object') || (t.review2.verdict !== 'pass' && !reviewCouncilShip))) {
+      if (isComplex && (!isType(t.review2, 'object') || (t.review2.verdict !== 'pass' && councilShipStage !== 'review'))) {
         out.push(`task ${id}: complex done task requires a recorded second review with review2.verdict == pass [inv4]`);
       } else if (!isComplex && t.review2 !== null && t.review2 !== undefined
-        && t.review2.verdict !== 'pass' && !reviewCouncilShip) {
+        && t.review2.verdict !== 'pass' && councilShipStage !== 'review') {
         out.push(`task ${id}: done but review2.verdict != pass [inv4]`);
       }
       const av = jqOr(t.audit && t.audit.verdict, 'na');
-      const auditCouncilShip = t.convergence?.council?.convened === true
-        && t.convergence.council.stage === 'audit'
-        && t.convergence.council.verdict === 'ship'
-        && t.convergence.council.outcome === 'shipped';
-      if (av !== 'pass' && av !== 'na' && !auditCouncilShip) {
+      if (av !== 'pass' && av !== 'na' && councilShipStage !== 'audit') {
         out.push(`task ${id}: done but audit.verdict not pass|na [inv4]`);
       }
     }
