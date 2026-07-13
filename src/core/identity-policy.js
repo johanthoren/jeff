@@ -40,11 +40,11 @@ function refuterAgentIds(task) {
 
 /** @param {Record<string, any>} task */
 export function forbiddenRefuteAgentIds(task) {
-  return new Set(agentIds([
+  return new Set([
     ...recordedAgentIds(task),
     ...currentJudgeAgentIds(task),
     ...refuterAgentIds(task),
-  ]));
+  ]);
 }
 
 /** @param {Record<string, any>} task @param {unknown} agentId */
@@ -54,13 +54,10 @@ export function isRefuteAgentForbidden(task, agentId) {
 
 /** @param {Record<string, any>} task */
 export function forbiddenCouncilAgentIds(task) {
-  return new Set(agentIds([
-    task.agents?.implementer_agent_id,
-    task.agents?.reviewer_agent_id,
-    task.agents?.reviewer2_agent_id,
-    task.agents?.audit_agent_id,
+  return new Set([
+    ...recordedAgentIds(task),
     ...currentJudgeAgentIds(task),
     ...historicalJudgeAgentIds(task),
     ...refuterAgentIds(task),
-  ]));
+  ]);
 }
