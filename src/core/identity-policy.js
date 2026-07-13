@@ -6,18 +6,12 @@ function agentIds(values) {
 }
 
 /** @param {Record<string, any>} task */
-function recordedAgentIds(task) {
+function activeAgentIds(task) {
   return agentIds([
     task.agents?.implementer_agent_id,
     task.agents?.reviewer_agent_id,
     task.agents?.reviewer2_agent_id,
     task.agents?.audit_agent_id,
-  ]);
-}
-
-/** @param {Record<string, any>} task */
-function currentJudgeAgentIds(task) {
-  return agentIds([
     task.review?.reviewer_agent_id,
     task.review2?.reviewer_agent_id,
     task.audit?.audit_agent_id,
@@ -25,28 +19,17 @@ function currentJudgeAgentIds(task) {
 }
 
 /** @param {Record<string, any>} task */
-function historicalJudgeAgentIds(task) {
-  return (task.judgmentHistory ?? []).flatMap((/** @type {any} */ judgment) => agentIds([
-    judgment.review?.reviewer_agent_id,
-    judgment.review2?.reviewer_agent_id,
-    judgment.audit?.audit_agent_id,
-    judgment.agents?.reviewer_agent_id,
-    judgment.agents?.reviewer2_agent_id,
-    judgment.agents?.audit_agent_id,
-  ]));
-}
-
-/** @param {Record<string, any>} task */
-function refuterAgentIds(task) {
-  return agentIds((task.refutes ?? []).map((/** @type {any} */ refute) => refute.agent_id));
+function activeRefuterAgentIds(task) {
+  return [task.review, task.review2, task.audit]
+    .flatMap((/** @type {any} */ outcome) => outcome?.findings ?? [])
+    .flatMap((/** @type {any} */ finding) => agentIds([finding.refute?.agent_id]));
 }
 
 /** @param {Record<string, any>} task */
 export function forbiddenRefuteAgentIds(task) {
   return new Set([
-    ...recordedAgentIds(task),
-    ...currentJudgeAgentIds(task),
-    ...refuterAgentIds(task),
+    ...activeAgentIds(task),
+    ...activeRefuterAgentIds(task),
   ]);
 }
 
@@ -58,17 +41,7 @@ export function isRefuteAgentForbidden(task, agentId) {
 /** @param {Record<string, any>} task */
 export function forbiddenCouncilAgentIds(task) {
   return new Set([
-    ...recordedAgentIds(task),
-    ...currentJudgeAgentIds(task),
-    ...historicalJudgeAgentIds(task),
-    ...refuterAgentIds(task),
-  ]);
-}
-
-/** @param {Record<string, any>} task */
-export function forbiddenRecoveryAgentIds(task) {
-  return new Set([
-    ...forbiddenCouncilAgentIds(task),
-    ...agentIds((task.convergence?.council?.members ?? []).map((/** @type {any} */ member) => member.agent_id)),
+    ...activeAgentIds(task),
+    ...activeRefuterAgentIds(task),
   ]);
 }

@@ -130,11 +130,11 @@ never touched.
 - `council.stage`: which stage hit the cap: `review` or `audit` (when convened).
 - `council.members`: the K=3 lenses. `lens` ∈ `integrity | security | pragmatist`
   (each used exactly once). `temperature` records the intended decorrelation
-  temperature (or `null` where the dispatch can't set one).
+  temperature (or `null` where the dispatch can't set one). Member separation
+  is scoped to the active judgment cycle; historical identities may serve again.
 - `council.findings`: the enumerated contested findings handed to the council.
-  `source` is required on every new council finding and associates it with the
-  judgment slot it reopens during scoped recovery. Already-persisted historical
-  findings without it retain exact-summary matching and remain recoverable.
+  Optional `source` records the originating judgment slot as evidence. Scoped
+  recovery archives and clears every judgment slot regardless of this value.
   `blockingVotes` ∈ 0..3 (one per lens). `survived` is a pure function of the
   votes (see INV-9). `followupTaskId` references a spawned backlog task for
   demoted findings; `null` for survivors.
@@ -142,6 +142,8 @@ never touched.
 - `council.outcome`: `shipped` (verdict ship), `scoped-fix-shipped` (verdict
   block, the one scoped fix passed verification → reached done), or
   `blocked-to-operator` (scoped fix failed → handed off, `status=blocked`).
+  After a scoped fix, all reviews and the audit run fresh. Their identities must
+  differ from the scoped implementer, but may reuse identities from prior cycles.
 
 ### Validator invariants (INV-7..INV-11)
 
@@ -152,7 +154,7 @@ consistent with the existing invariants. **Absent `convergence` ⇒ all skipped.
   `stages.{review,audit}.blockingKickbacks` is an integer in `0..cap`.
 - **INV-8 (council distinctness):** when `convened`, `members` has exactly 3
   entries; their `agent_id`s are mutually distinct and none equals
-  `agents.reviewer_agent_id` or `agents.implementer_agent_id`; the three `lens`
+  the active `agents.reviewer_agent_id` or `agents.implementer_agent_id`; the three `lens`
   values are exactly `integrity`, `security`, `pragmatist`; `council.stage` ∈
   `{review, audit}`.
 - **INV-9 (per-finding determinism):** for each finding,
