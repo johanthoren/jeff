@@ -1604,11 +1604,11 @@ test('issue 74 council requires the exact source-bound blocker union atomically'
 
 test('issue 74 one mixed-source council can ship the complete blocker union', async () => {
   const returned = mixedStageCouncilReturn('shipped');
-  returned.council.findings = returned.council.findings.map((/** @type {any} */ finding, /** @type {number} */ index) => ({
+  returned.council.findings = returned.council.findings.map((/** @type {any} */ finding) => ({
     ...finding,
     blockingVotes: 1,
     survived: false,
-    followupTaskId: 18 + index,
+    followupTaskId: 18,
   }));
   returned.council.verdict = 'ship';
   const { root, taskDir } = await makeRoot(mixedStageCouncilTask());
