@@ -269,6 +269,31 @@ function councilTask(overrides = {}) {
   });
 }
 
+function reviewTwoCouncilTask() {
+  const task = councilTask();
+  const finding = structuredClone(task.review.findings[0]);
+  finding.refute.source = 'review2';
+  return councilTask({
+    review: {
+      ...task.review,
+      verdict: 'pass',
+      reportedVerdict: 'pass',
+      findings: [],
+      evidence: [{ command: 'git diff --check', output: 'clean' }],
+      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
+    },
+    review2: {
+      ...task.review2,
+      verdict: 'needs-work',
+      reportedVerdict: 'needs-work',
+      findings: [finding],
+      evidence: [{ command: 'git diff --check', output: 'blocking finding' }],
+      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: false }],
+    },
+    refutes: [finding.refute],
+  });
+}
+
 function councilReturn(outcome = null, memberOverrides = {}) {
   return {
     stage: 'council',
@@ -291,6 +316,23 @@ function councilReturn(outcome = null, memberOverrides = {}) {
       outcome,
     },
   };
+}
+
+async function prepareScopedCouncilRecovery(task = councilTask()) {
+  const { root, taskDir } = await makeRoot(task);
+  await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+  runGit(root, ['init', '-q']);
+  runGit(root, ['config', 'user.email', 'tests@example.com']);
+  runGit(root, ['config', 'user.name', 'Tests']);
+  runGit(root, ['config', 'commit.gpgsign', 'false']);
+  runGit(root, ['add', '.']);
+  runGit(root, ['commit', '-qm', 'baseline']);
+
+  await recordSpecialistReturn(root, 'council', '18', councilReturn());
+  await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
+  runGit(root, ['add', '.']);
+  runGit(root, ['commit', '-qm', 'record scoped fix']);
+  return { root, taskDir };
 }
 
 test('record accepts the strict plan return and advances the task atomically', async () => {
@@ -1157,6 +1199,76 @@ test('issue 65 refute identity cannot reuse the implementer', async () => {
   }
 });
 
+test('issue 65 cycle 1 refute rejects every current-finder identity representation atomically', async (t) => {
+  const representations = [
+    ['outcome-only', null, 'current-finder'],
+    ['agents-only', 'current-finder', null],
+  ];
+
+  for (const [name, agentsIdentity, outcomeIdentity] of representations) {
+    await t.test(name, async () => {
+      const blocker = blockingFinding();
+      const task = canonicalTask({
+        stage: 'review',
+        agents: {
+          implementer_agent_id: 'implementer',
+          reviewer_agent_id: agentsIdentity,
+          reviewer2_agent_id: null,
+          audit_agent_id: null,
+        },
+        tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+        review: {
+          verdict: 'needs-work',
+          reviewer_agent_id: outcomeIdentity,
+          findings: [blocker],
+          evidence: ['review evidence'],
+        },
+      });
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+        await assert.rejects(
+          recordSpecialistReturn(root, 'refute', '18', refuteReturn('current-finder', blocker)),
+          /\[record-identity\] refute agent current-finder violates specialist separation/,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 65 cycle 1 refute rejects prior-refuter reuse atomically with the identity error', async () => {
+  const first = blockingFinding({ line: 10, what: 'The first recording path loses a result.' });
+  const second = blockingFinding({ line: 11, what: 'The second recording path loses a result.' });
+  const task = canonicalTask({
+    stage: 'review',
+    agents: { implementer_agent_id: 'implementer', reviewer_agent_id: 'reviewer', reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+    review: {
+      verdict: 'needs-work',
+      reviewer_agent_id: 'reviewer',
+      findings: [first, second],
+      evidence: ['review evidence'],
+    },
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(root, 'refute', '18', refuteReturn('prior-refuter', first));
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'refute', '18', refuteReturn('prior-refuter', second)),
+      /\[record-identity\] refute agent prior-refuter violates specialist separation/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 65 council members cannot reuse any prior judge identity', async (t) => {
   const forbiddenAgentIds = [
     'implementer',
@@ -1245,6 +1357,67 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
     assert.equal(recorded.convergence.council.outcome, 'scoped-fix-shipped');
     assert.equal(recorded.stage, 'done');
     assert.equal(recorded.status, 'done');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 cycle 1 review2-origin recovery accepts a recorded fix and fresh gate', async () => {
+  const { root } = await prepareScopedCouncilRecovery(reviewTwoCouncilTask());
+  try {
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+
+    const recorded = await recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped'));
+    assert.deepEqual(
+      [recorded.stage, recorded.status, recorded.convergence.council.outcome],
+      ['done', 'done', 'scoped-fix-shipped'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 cycle 1 council recovery accepts semantically equal reordered keys', async () => {
+  const { root } = await prepareScopedCouncilRecovery();
+  try {
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    const original = councilReturn('scoped-fix-shipped').council;
+    const reordered = {
+      stage: 'council',
+      council: {
+        outcome: original.outcome,
+        verdict: original.verdict,
+        findings: original.findings,
+        members: original.members,
+        stage: original.stage,
+        convened: original.convened,
+      },
+    };
+
+    await assert.doesNotReject(recordSpecialistReturn(root, 'council', '18', reordered));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 cycle 1 recovery rejects a gate made stale by a later refactor', async () => {
+  const { root, taskDir } = await prepareScopedCouncilRecovery();
+  try {
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('later-refactorer'));
+    await writeFile(join(root, 'refactor-marker.txt'), 'later code-changing transition\n', 'utf8');
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'record later refactor']);
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped')),
+      /\[record-transition\].*(?:fresh|stale|verification)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

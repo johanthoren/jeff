@@ -600,6 +600,61 @@ function convergence(overrides = {}) {
   };
 }
 
+test('issue 65 cycle 1 INV-4 accepts scoped recovery when review2 found the council blocker', async () => {
+  const result = await verdictFor(
+    canonicalTask({
+      status: 'done',
+      stage: 'done',
+      tests: {
+        authored_by_agent_id: 'plan',
+        green: true,
+        evidence: ['make test'],
+      },
+      agents: {
+        ...canonicalTask().agents,
+        reviewer_agent_id: 'reviewer-one',
+        reviewer2_agent_id: 'reviewer-two',
+      },
+      review: {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer-one',
+        evidence: ['review one'],
+      },
+      review2: {
+        verdict: 'needs-work',
+        reviewer_agent_id: 'reviewer-two',
+        evidence: ['review two blocker'],
+      },
+      convergence: convergence({
+        stages: {
+          review: { blockingKickbacks: 2 },
+          audit: { blockingKickbacks: 0 },
+        },
+        council: {
+          convened: true,
+          stage: 'review',
+          members: [
+            { agent_id: 'c1', lens: 'integrity', temperature: null },
+            { agent_id: 'c2', lens: 'security', temperature: null },
+            { agent_id: 'c3', lens: 'pragmatist', temperature: null },
+          ],
+          findings: [{
+            id: 'F1',
+            summary: 'The review2 blocker survived.',
+            blockingVotes: 2,
+            survived: true,
+            followupTaskId: null,
+          }],
+          verdict: 'block',
+          outcome: 'scoped-fix-shipped',
+        },
+      }),
+    }),
+  );
+
+  assert.equal(result.ok, true, result.stderr.join('\n'));
+});
+
 test('convergence INV-7 through INV-11 are enforced by the authoritative core', async (t) => {
   /** @type {Array<[string, Record<string, any>]>} */
   const cases = [
