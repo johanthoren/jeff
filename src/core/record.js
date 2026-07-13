@@ -49,6 +49,17 @@ function isFailingJudgment(outcome) {
   return outcome?.verdict === 'needs-work' && isConsistentJudgment(outcome);
 }
 
+/** @param {MutableRecordTask} task */
+function haveActiveBlockersSurvivedRefute(task) {
+  return judgmentSources(task).every(({ source, outcome }) => (
+    (outcome?.findings ?? [])
+      .filter((/** @type {any} */ finding) => finding.class === 'blocking')
+      .every((/** @type {any} */ finding) => (
+        finding.refute?.source === source && finding.refute.verdict === 'survives'
+      ))
+  ));
+}
+
 /** @param {MutableRecordTask} task @param {string} at @param {Record<string, any>} [recovery] */
 function judgmentHistoryEntry(task, at, recovery) {
   return {
@@ -417,6 +428,9 @@ function recordCouncilRecovery(task, council) {
     if (!judgmentSources(task).some(({ outcome }) => isFailingJudgment(outcome))) {
       throw new Error('[record-transition] blocked council recovery requires a failed current judgment');
     }
+    if (!haveActiveBlockersSurvivedRefute(task)) {
+      throw new Error('[record-transition] every active blocking judgment finding requires a source-bound surviving refute');
+    }
     blockCouncilRecovery(task);
     return;
   }
@@ -560,7 +574,13 @@ export async function updateTask(root, id, update, options = {}) {
       if (head.status !== 0 || candidate.tests?.gate?.hash !== head.stdout.trim()) {
         throw new Error('[record-transition] current HEAD does not match the scoped recovery verification');
       }
-      if (treeDirty(root)) {
+      let dirty;
+      try {
+        dirty = treeDirty(root);
+      } catch {
+        throw new Error('[record-transition] git status working tree cleanliness probe failed');
+      }
+      if (dirty) {
         throw new Error('[record-transition] scoped recovery verification requires a clean working tree');
       }
     }
