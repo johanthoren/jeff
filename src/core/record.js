@@ -8,7 +8,7 @@ import { git, treeDirty } from './git.js';
 import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
-import { forbiddenCouncilAgentIds, isRefuteAgentForbidden } from './identity-policy.js';
+import { activeRefuterAgentIds, forbiddenCouncilAgentIds, isRefuteAgentForbidden } from './identity-policy.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 /** @typedef {Record<string, any>} MutableRecordTask */
@@ -102,8 +102,7 @@ function assertCurrentJudgment(task, result) {
     task.review?.reviewer_agent_id,
     task.review2?.reviewer_agent_id,
     task.audit?.audit_agent_id,
-    ...judgmentSources(task).flatMap(({ outcome }) => (outcome?.findings ?? [])
-      .map((/** @type {any} */ finding) => finding.refute?.agent_id)),
+    ...activeRefuterAgentIds(task),
   ];
   if (currentAgentIds.includes(result.agent_id)) {
     throw new Error(`[record-transition] duplicate agent return from ${result.agent_id}`);

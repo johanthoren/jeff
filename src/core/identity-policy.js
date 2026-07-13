@@ -19,7 +19,7 @@ function activeAgentIds(task) {
 }
 
 /** @param {Record<string, any>} task */
-function activeRefuterAgentIds(task) {
+export function activeRefuterAgentIds(task) {
   return [task.review, task.review2, task.audit]
     .flatMap((/** @type {any} */ outcome) => outcome?.findings ?? [])
     .flatMap((/** @type {any} */ finding) => agentIds([finding.refute?.agent_id]));
