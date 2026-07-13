@@ -893,7 +893,7 @@ test('simultaneous review and audit writes do not lose any judgment', async () =
 });
 
 test('issue 72 agents-only review re-entry archives once and requires two fresh reviews', async () => {
-  const finding = blockingFinding();
+  const finding = /** @type {any} */ (blockingFinding());
   const refute = { ...refuteReturn('refuter', finding), source: 'review' };
   finding.refute = refute;
   const task = canonicalTask({
@@ -1209,6 +1209,7 @@ test('issue 72 refutes bind blockers by exact file-line-what identity', async (t
     }
   });
 
+  /** @type {Array<[string, string, Record<string, any> | null, RegExp]>} */
   const invalid = [
     ['zero exact matches', `${short.file}:${short.line} A different finding.`, null, /\[record-transition\] refute finding is not an active blocker/],
     ['multiple exact matches', `${short.file}:${short.line} ${short.what}`, { verdict: 'needs-work', reviewer_agent_id: 'reviewer-two', findings: [{ ...short }], evidence: ['review two evidence'] }, /\[record-transition\] refute finding identity is ambiguous/],
