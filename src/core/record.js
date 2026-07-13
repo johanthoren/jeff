@@ -342,24 +342,21 @@ export function transitionTask(task, stage, result) {
     const isScopedCouncilFix = next.convergence?.council?.convened === true
       && next.convergence.council.verdict === 'block'
       && next.convergence.council.outcome === null;
-    if (isScopedCouncilFix && (result.result !== 'green' || result.kickback !== null)) {
-      next.agents.implementer_agent_id = result.agent_id;
-      next.implement = { result: result.result, files: result.files, greenRun: result.greenRun };
+    next.agents.implementer_agent_id = result.agent_id;
+    next.implement = { result: result.result, files: result.files, greenRun: result.greenRun };
+    if (isScopedCouncilFix) {
       next.tests = { ...next.tests, green: false };
       delete next.tests.gate;
+    }
+    if (isScopedCouncilFix && (result.result !== 'green' || result.kickback !== null)) {
       blockCouncilRecovery(next);
       return /** @type {TaskJson} */ (next);
     }
-    next.agents.implementer_agent_id = result.agent_id;
-    next.implement = { result: result.result, files: result.files, greenRun: result.greenRun };
     if (result.kickback) {
       next.kickbacks = [...next.kickbacks, { from: 'implement', to: result.kickback.to, reason: result.kickback.reason, at }];
       next.stage = result.kickback.to;
     } else {
-      if (isScopedCouncilFix) {
-        next.tests = { ...next.tests, green: false };
-        delete next.tests.gate;
-      } else {
+      if (!isScopedCouncilFix) {
         resetJudgmentsAfterFix(next, at);
       }
       next.stage = 'refactor';
