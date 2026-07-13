@@ -77,12 +77,12 @@ function resetJudgmentsAfterFix(task, at) {
     outcome?.reviewer_agent_id != null || outcome?.audit_agent_id != null
   ));
   if (!hasCurrentJudgment) return;
-  const unresolvedJudgmentKickback = task.kickbacks.findLast((/** @type {any} */ kickback) => (
+  const latestJudgmentKickback = task.kickbacks.findLast((/** @type {any} */ kickback) => (
     ['review', 'audit'].includes(kickback.from)
   ));
-  if (!unresolvedJudgmentKickback) return;
+  if (!latestJudgmentKickback) return;
   const latestHistoryAt = task.judgmentHistory?.at(-1)?.at;
-  if (latestHistoryAt && Date.parse(unresolvedJudgmentKickback.at) <= Date.parse(latestHistoryAt)) return;
+  if (latestHistoryAt && Date.parse(latestJudgmentKickback.at) <= Date.parse(latestHistoryAt)) return;
 
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
