@@ -527,7 +527,7 @@ test('INV-4 defaults omitted complexity to complex without legacy identity bypas
   });
 });
 
-test('single-review done path remains null-tolerant and historical gate omission remains accepted', async () => {
+test('issue 70 existing terminal ledger remains readable without a live Git repository', async () => {
   const task = canonicalTask({
     status: 'done',
     stage: 'done',
@@ -600,7 +600,7 @@ function convergence(overrides = {}) {
   };
 }
 
-test('issue 65 cycle 1 INV-4 accepts scoped recovery when review2 found the council blocker', async () => {
+test('issue 70 INV-4 rejects scoped recovery with a stale needs-work review', async () => {
   const result = await verdictFor(
     canonicalTask({
       status: 'done',
@@ -652,7 +652,8 @@ test('issue 65 cycle 1 INV-4 accepts scoped recovery when review2 found the coun
     }),
   );
 
-  assert.equal(result.ok, true, result.stderr.join('\n'));
+  assertNamedFailure(result, '[inv4]');
+  assert.ok(result.stderr.some((line) => line.includes('review2.verdict')));
 });
 
 test('issue 65 cycle 2 INV-4 rejects a non-convened scoped recovery marker', async () => {

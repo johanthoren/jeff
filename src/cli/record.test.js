@@ -8,10 +8,24 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { recordSpecialistReturn as recordObservedSpecialistReturn } from '../core/record.js';
+import { validateSpecialistReturn } from '../core/record-contract.js';
 import { runVerify } from '../core/verify.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COOK_JS = join(HERE, 'cook.js');
+const AUDIT_CATEGORIES = [
+  'secrets',
+  'injection_sql',
+  'injection_command',
+  'path_traversal',
+  'insecure_deserialization',
+  'weak_crypto',
+  'dynamic_execution',
+  'tls_transport',
+  'xss',
+  'sensitive_logging',
+  'insecure_permissions',
+];
 
 /** @param {Record<string, any>} [overrides] @returns {any} */
 function canonicalTask(overrides = {}) {
@@ -55,7 +69,29 @@ async function makeRoot(task = canonicalTask()) {
   await mkdir(taskDir, { recursive: true });
   await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify({ mode: 'lite' }), 'utf8');
   await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+  if (task.tests?.green === true) {
+    runGit(root, ['init', '-q']);
+    runGit(root, ['config', 'user.email', 'tests@example.com']);
+    runGit(root, ['config', 'user.name', 'Tests']);
+    runGit(root, ['config', 'commit.gpgsign', 'false']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'baseline']);
+    await recordCurrentGate(root, taskDir);
+  }
   return { root, taskDir };
+}
+
+/** @param {string} root @param {string} taskDir */
+async function recordCurrentGate(root, taskDir) {
+  const task = await readTask(taskDir);
+  task.tests.gate = {
+    hash: runGit(root, ['rev-parse', 'HEAD']),
+    clean: true,
+    green: true,
+    command: 'make test',
+    at: '2026-07-12T01:00:00Z',
+  };
+  await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
 }
 
 /** @param {string} root @param {string[]} args @param {NodeJS.ProcessEnv} [env] */
@@ -150,6 +186,11 @@ function reviewReturn(agentId, overrides = {}) {
   };
 }
 
+/** @param {string} [status] */
+function auditCoverage(status = 'covered_no_hits') {
+  return AUDIT_CATEGORIES.map((category) => ({ category, status }));
+}
+
 function auditReturn(agentId = 'auditor', overrides = {}) {
   return {
     agent_id: agentId,
@@ -157,7 +198,7 @@ function auditReturn(agentId = 'auditor', overrides = {}) {
     cycle: 0,
     verdict: 'pass',
     scan: { command: 'review-security --json', recommendation: 'PASS', reportPath: '/tmp/report.md' },
-    coverage: [{ category: 'path_traversal', status: 'covered_no_hits' }],
+    coverage: auditCoverage(),
     findings: [],
     evidence: [{ command: 'review-security --json', output: 'no findings' }],
     ...overrides,
@@ -212,6 +253,14 @@ function parallelJudgmentTask() {
   });
 }
 
+function terminalReviewTask() {
+  return canonicalTask({
+    stage: 'review',
+    agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+  });
+}
+
 /** @param {Record<string, any>} [overrides] @returns {any} */
 function councilTask(overrides = {}) {
   const finding = {
@@ -259,7 +308,7 @@ function councilTask(overrides = {}) {
       findings: [],
       evidence: [{ command: 'review-security --json', output: 'no findings' }],
       scan: { command: 'review-security --json', recommendation: 'PASS', reportPath: '/tmp/report.md' },
-      coverage: [{ category: 'identity_spoofing', status: 'covered_no_hits' }],
+      coverage: auditCoverage(),
     },
     refutes: [finding.refute],
     convergence: {
@@ -549,7 +598,7 @@ test('record rejects an implementer reused as reviewer before writing', async ()
       acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
       findings: [],
       evidence: [{ command: 'git diff', output: 'No findings.' }],
-    });
+    }, '.jeff/return.json');
 
     const result = runCook(root, ['record', 'review', '18', 'same-agent', file]);
 
@@ -561,29 +610,8 @@ test('record rejects an implementer reused as reviewer before writing', async ()
   }
 });
 
-test('record accepts a valid review return and persists its closed findings and evidence', async () => {
-  const task = canonicalTask({
-    stage: 'review',
-    agents: {
-      implementer_agent_id: 'implementer',
-      reviewer_agent_id: null,
-      reviewer2_agent_id: null,
-      audit_agent_id: null,
-    },
-    tests: {
-      authored_by_agent_id: 'plan-agent',
-      green: true,
-      evidence: [{ command: 'make test', output: 'pass' }],
-      gate: {
-        hash: '0123456789abcdef',
-        clean: true,
-        green: true,
-        command: 'make test',
-        at: '2026-07-12T01:00:00Z',
-      },
-    },
-  });
-  const { root, taskDir } = await makeRoot(task);
+test('issue 70 record accepts a terminal review at the current clean verified HEAD', async () => {
+  const { root, taskDir } = await makeRoot(terminalReviewTask());
   try {
     const specialistReturn = {
       agent_id: 'reviewer',
@@ -594,7 +622,7 @@ test('record accepts a valid review return and persists its closed findings and 
       findings: [],
       evidence: [{ command: 'git diff --check', output: 'clean' }],
     };
-    const file = await writeReturn(root, specialistReturn);
+    const file = await writeReturn(root, specialistReturn, '.jeff/return.json');
 
     const result = runCook(root, ['record', 'review', '18', 'reviewer', file]);
     const recorded = await readTask(taskDir);
@@ -607,6 +635,24 @@ test('record accepts a valid review return and persists its closed findings and 
     assert.deepEqual(recorded.review.evidence, specialistReturn.evidence);
     assert.equal(recorded.stage, 'done');
     assert.equal(recorded.status, 'done');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 70 terminal recording requires a present verification gate atomically', async () => {
+  const { root, taskDir } = await makeRoot(terminalReviewTask());
+  try {
+    const task = await readTask(taskDir);
+    delete task.tests.gate;
+    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer')),
+      /\[record-transition\]/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -646,7 +692,7 @@ test('record validates every finding and audit coverage enum at the shared bound
       const { root } = await makeRoot(task);
       try {
         await recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor', {
-          coverage: [{ category: 'path_traversal', status }],
+          coverage: auditCoverage(status),
         }));
       } finally {
         await rm(root, { recursive: true, force: true });
@@ -689,6 +735,23 @@ test('record rejects final audit outcomes without coverage or evidence', async (
         }
       });
     }
+  }
+});
+
+test('issue 70 shared evidence rejects empty review audit and refute evidence', () => {
+  const blocker = blockingFinding();
+  assert.throws(() => validateSpecialistReturn('review', reviewReturn('reviewer', { evidence: [] })), /evidence/);
+  assert.throws(() => validateSpecialistReturn('audit', auditReturn('auditor', { evidence: [] })), /evidence/);
+  assert.throws(() => validateSpecialistReturn('refute', refuteReturn('refuter', blocker, { evidence: [] })), /evidence/);
+});
+
+test('issue 70 audit coverage requires every canonical category exactly once', () => {
+  for (const [, coverage] of [
+    ['missing', auditCoverage().slice(1)],
+    ['unknown', [{ category: 'identity_spoofing', status: 'covered_no_hits' }, ...auditCoverage().slice(1)]],
+    ['duplicate', [...auditCoverage().slice(0, -1), auditCoverage()[0]]],
+  ]) {
+    assert.throws(() => validateSpecialistReturn('audit', auditReturn('auditor', { coverage })), /coverage/);
   }
 });
 
@@ -834,6 +897,7 @@ test('review re-entry clears stale outcomes and requires two fresh complex-task 
     });
     await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-fresh'));
     await recordSpecialistReturn(root, 'refactor', '18', refactorReturn());
+    await recordCurrentGate(root, taskDir);
 
     const reset = await readTask(taskDir);
     assert.equal(reset.agents.reviewer_agent_id, null);
@@ -1181,6 +1245,13 @@ test('full-mode recording persists transient done state before the prune gate', 
       agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
       tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['full gate'] },
     }), null, 2)}\n`, 'utf8');
+    runGit(root, ['init', '-q']);
+    runGit(root, ['config', 'user.email', 'tests@example.com']);
+    runGit(root, ['config', 'user.name', 'Tests']);
+    runGit(root, ['config', 'commit.gpgsign', 'false']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'baseline']);
+    await recordCurrentGate(root, taskDir);
 
     await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'));
     const recorded = await readTask(taskDir);
@@ -1368,6 +1439,24 @@ test('issue 68 council separation is limited to the active cycle', async () => {
     } finally {
       await rm(freshRoot.root, { recursive: true, force: true });
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 70 council ship terminates while preserving originating needs-work evidence', async () => {
+  const original = councilTask();
+  const { root } = await makeRoot(original);
+  try {
+    const returned = councilReturn('shipped');
+    Object.assign(returned.council.findings[0], { blockingVotes: 1, survived: false, followupTaskId: 18 });
+    returned.council.verdict = 'ship';
+    const recorded = await recordSpecialistReturn(root, 'council', '18', returned);
+
+    assert.equal(recorded.status, 'done');
+    assert.equal(recorded.convergence.council.verdict, 'ship');
+    assert.equal(recorded.convergence.council.outcome, 'shipped');
+    assert.deepEqual(recorded.review, original.review);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
