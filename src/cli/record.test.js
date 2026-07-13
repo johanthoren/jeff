@@ -1269,24 +1269,46 @@ test('issue 65 cycle 1 refute rejects prior-refuter reuse atomically with the id
   }
 });
 
-test('issue 65 council members cannot reuse any prior judge identity', async (t) => {
+test('issue 65 cycle 2 council members cannot reuse any prior judge identity', async (t) => {
+  /** @type {Array<[string, Record<string, any>]>} */
   const forbiddenAgentIds = [
-    'implementer',
-    'reviewer-one',
-    'reviewer-two',
-    'auditor',
-    'refuter',
-    'council-security',
+    ['implementer', {}],
+    ['reviewer-one', {}],
+    ['reviewer-two', {}],
+    ['auditor', {}],
+    ['refuter', {}],
+    ['council-security', {}],
+    ['historical-auditor', {
+      judgmentHistory: [{
+        at: '2026-07-12T00:00:01Z',
+        review: {
+          verdict: 'pass',
+          reviewer_agent_id: 'historical-reviewer',
+          findings: [],
+          evidence: ['historical review evidence'],
+        },
+        review2: null,
+        audit: {
+          required: true,
+          verdict: 'pass',
+          audit_agent_id: 'historical-auditor',
+          findings: [],
+          evidence: ['historical audit evidence'],
+        },
+      }],
+    }],
   ];
-  for (const agentId of forbiddenAgentIds) {
+  for (const [agentId, taskOverrides] of forbiddenAgentIds) {
     await t.test(agentId, async () => {
-      const { root, taskDir } = await makeRoot(councilTask());
+      const { root, taskDir } = await makeRoot(councilTask(taskOverrides));
       try {
         const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
         await assert.rejects(
           recordSpecialistReturn(root, 'council', '18', councilReturn(null, { 0: { agent_id: agentId } })),
-          /\[(?:record-identity|inv8)\]/,
+          agentId === 'historical-auditor'
+            ? /\[record-identity\] council member historical-auditor reuses a prior judge identity/
+            : /\[(?:record-identity|inv8)\]/,
         );
         assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
       } finally {
