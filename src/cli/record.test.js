@@ -8,7 +8,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { recordSpecialistReturn as recordObservedSpecialistReturn } from '../core/record.js';
-import { validateSpecialistReturn } from '../core/record-contract.js';
 import { runVerify } from '../core/verify.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -738,20 +737,41 @@ test('record rejects final audit outcomes without coverage or evidence', async (
   }
 });
 
-test('issue 70 shared evidence rejects empty review audit and refute evidence', () => {
+test('issue 70 public recorder rejects invalid specialist evidence and coverage atomically', async (t) => {
   const blocker = blockingFinding();
-  assert.throws(() => validateSpecialistReturn('review', reviewReturn('reviewer', { evidence: [] })), /evidence/);
-  assert.throws(() => validateSpecialistReturn('audit', auditReturn('auditor', { evidence: [] })), /evidence/);
-  assert.throws(() => validateSpecialistReturn('refute', refuteReturn('refuter', blocker, { evidence: [] })), /evidence/);
-});
+  const refuteTask = canonicalTask({
+    stage: 'review',
+    agents: { implementer_agent_id: 'implementer', reviewer_agent_id: 'reviewer', reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+    review: { verdict: 'needs-work', reviewer_agent_id: 'reviewer', findings: [blocker], evidence: ['review evidence'] },
+  });
+  const cases = [
+    ['empty review evidence', 'review', terminalReviewTask(), reviewReturn('reviewer', { evidence: [] }), /\[record-schema\] evidence is invalid/],
+    ['empty audit evidence', 'audit', auditStageTask(), auditReturn('auditor', { evidence: [] }), /\[record-schema\] evidence is invalid/],
+    ['empty refute evidence', 'refute', refuteTask, refuteReturn('refuter', blocker, { evidence: [] }), /\[record-schema\] evidence is invalid/],
+    ['missing audit coverage', 'audit', auditStageTask(), auditReturn('auditor', { coverage: auditCoverage().slice(1) }), /\[record-schema\] coverage is invalid/],
+    ['unknown audit coverage', 'audit', auditStageTask(), auditReturn('auditor', {
+      coverage: [{ category: 'identity_spoofing', status: 'covered_no_hits' }, ...auditCoverage().slice(1)],
+    }), /\[record-schema\] coverage\[0\]\.category is invalid/],
+    ['duplicate audit coverage', 'audit', auditStageTask(), auditReturn('auditor', {
+      coverage: [...auditCoverage().slice(0, -1), auditCoverage()[0]],
+    }), /\[record-schema\] coverage is invalid/],
+  ];
 
-test('issue 70 audit coverage requires every canonical category exactly once', () => {
-  for (const [, coverage] of [
-    ['missing', auditCoverage().slice(1)],
-    ['unknown', [{ category: 'identity_spoofing', status: 'covered_no_hits' }, ...auditCoverage().slice(1)]],
-    ['duplicate', [...auditCoverage().slice(0, -1), auditCoverage()[0]]],
-  ]) {
-    assert.throws(() => validateSpecialistReturn('audit', auditReturn('auditor', { coverage })), /coverage/);
+  for (const [name, stage, task, result, rejection] of cases) {
+    await t.test(name, async () => {
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordSpecialistReturn(root, stage, '18', result),
+          rejection,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   }
 });
 
