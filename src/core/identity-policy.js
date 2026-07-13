@@ -38,10 +38,4 @@ export function isRefuteAgentForbidden(task, agentId) {
   return forbiddenRefuteAgentIds(task).has(agentId);
 }
 
-/** @param {Record<string, any>} task */
-export function forbiddenCouncilAgentIds(task) {
-  return new Set([
-    ...activeAgentIds(task),
-    ...activeRefuterAgentIds(task),
-  ]);
-}
+export const forbiddenCouncilAgentIds = forbiddenRefuteAgentIds;

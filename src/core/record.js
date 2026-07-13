@@ -128,7 +128,7 @@ function settleJudgments(task) {
 }
 
 /** @param {MutableRecordTask} task @param {string} at */
-function reopenCouncilJudgments(task, at) {
+function archiveAndResetJudgments(task, at) {
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
     judgmentHistoryEntry(task, at),
@@ -158,22 +158,7 @@ function resetJudgmentsAfterFix(task, at) {
   const latestHistoryInstant = latestHistory ? Date.parse(latestHistory.at) : null;
   if (latestHistoryInstant !== null && Date.parse(latestJudgmentKickback.at) <= latestHistoryInstant) return;
 
-  task.judgmentHistory = [
-    ...(task.judgmentHistory ?? []),
-    judgmentHistoryEntry(task, at),
-  ];
-  task.agents.reviewer_agent_id = null;
-  task.agents.reviewer2_agent_id = null;
-  task.agents.audit_agent_id = null;
-  task.review = { verdict: null, reviewer_agent_id: null, findings: [], evidence: [] };
-  task.review2 = null;
-  task.audit = {
-    required: task.audit.required,
-    verdict: 'na',
-    audit_agent_id: null,
-    findings: [],
-    evidence: [],
-  };
+  archiveAndResetJudgments(task, at);
 }
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
@@ -455,7 +440,7 @@ export function transitionTask(task, stage, result) {
       next.kickbacks = [...next.kickbacks, { from: 'implement', to: result.kickback.to, reason: result.kickback.reason, at }];
       next.stage = result.kickback.to;
     } else {
-      if (isScopedCouncilFix) reopenCouncilJudgments(next, at);
+      if (isScopedCouncilFix) archiveAndResetJudgments(next, at);
       else resetJudgmentsAfterFix(next, at);
       next.stage = 'refactor';
     }
