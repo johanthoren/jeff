@@ -8,6 +8,19 @@ const RESULTS = {
   implement: ['green', 'kickback'],
   refactor: ['refactored', 'clean'],
 };
+const AUDIT_CATEGORIES = [
+  'secrets',
+  'injection_sql',
+  'injection_command',
+  'path_traversal',
+  'insecure_deserialization',
+  'weak_crypto',
+  'dynamic_execution',
+  'tls_transport',
+  'xss',
+  'sensitive_logging',
+  'insecure_permissions',
+];
 
 /** @param {string} path */
 function invalid(path) {
@@ -59,7 +72,7 @@ function run(value, path) {
 
 /** @param {any} value @param {string} path */
 function evidence(value, path) {
-  if (!Array.isArray(value)) invalid(path);
+  if (!Array.isArray(value) || value.length === 0) invalid(path);
   value.forEach((/** @type {any} */ item, /** @type {number} */ index) => {
     const at = `${path}[${index}]`;
     closed(item, at, ['command', 'output']);
@@ -144,7 +157,6 @@ function validateReview(value) {
   evidence(value.evidence, 'evidence');
   if (value.verdict === 'pass' && value.findings.length !== 0) invalid('findings');
   if (value.verdict === 'needs-work' && value.findings.length === 0) invalid('findings');
-  if (value.evidence.length === 0) invalid('evidence');
 }
 
 /** @param {any} value */
@@ -157,18 +169,19 @@ function validateAudit(value) {
   oneOf(value.scan.recommendation, 'scan.recommendation', ['PASS', 'REVIEW', 'BLOCK']);
   string(value.scan.reportPath, 'scan.reportPath');
   if (!Array.isArray(value.coverage)) invalid('coverage');
+  const categories = new Set();
   value.coverage.forEach((/** @type {any} */ item, /** @type {number} */ index) => {
     const at = `coverage[${index}]`;
     closed(item, at, ['category', 'status']);
-    string(item.category, `${at}.category`);
+    oneOf(item.category, `${at}.category`, AUDIT_CATEGORIES);
     oneOf(item.status, `${at}.status`, ['covered_with_hits', 'covered_no_hits', 'not_covered']);
+    categories.add(item.category);
   });
+  if (value.coverage.length !== AUDIT_CATEGORIES.length || categories.size !== AUDIT_CATEGORIES.length) invalid('coverage');
   findings(value.findings, 'findings', ['plan', 'implement', 'refactor'], true);
   evidence(value.evidence, 'evidence');
   if (value.verdict !== 'needs-work' && value.findings.length !== 0) invalid('findings');
   if (value.verdict === 'needs-work' && value.findings.length === 0) invalid('findings');
-  if (value.verdict !== 'needs-work' && value.coverage.length === 0) invalid('coverage');
-  if (value.evidence.length === 0) invalid('evidence');
 }
 
 /** @param {any} value */

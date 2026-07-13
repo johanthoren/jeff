@@ -519,11 +519,17 @@ export async function updateTask(root, id, update, options = {}) {
     const { taskDir, taskPath } = await locateTask(root, id, tasks);
     const task = await readTask(taskDir);
     const candidate = update(task);
-    if (task.convergence?.council?.outcome !== 'scoped-fix-shipped'
-      && candidate.convergence?.council?.outcome === 'scoped-fix-shipped') {
+    if (task.status !== 'done' && candidate.status === 'done') {
+      const gate = candidate.tests?.gate;
+      if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
+        throw new Error('[record-transition] terminal completion requires a present clean green verification gate');
+      }
       const head = git(root, ['rev-parse', 'HEAD']);
-      if (head.status !== 0 || candidate.tests?.gate?.hash !== head.stdout.trim()) {
-        throw new Error('[record-transition] current HEAD does not match the scoped recovery verification');
+      if (head.status !== 0) {
+        throw new Error('[record-transition] git HEAD probe failed');
+      }
+      if (gate.hash !== head.stdout.trim()) {
+        throw new Error('[record-transition] current HEAD does not match the terminal verification');
       }
       let dirty;
       try {
@@ -532,7 +538,7 @@ export async function updateTask(root, id, update, options = {}) {
         throw new Error('[record-transition] git status working tree cleanliness probe failed');
       }
       if (dirty) {
-        throw new Error('[record-transition] scoped recovery verification requires a clean working tree');
+        throw new Error('[record-transition] terminal verification requires a clean working tree');
       }
     }
     const lite = (await readMode(root)) === 'lite';
