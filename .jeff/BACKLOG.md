@@ -6,8 +6,8 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Release candidate:** 3.3.0 contains the host-neutral specialist recorder, the archived-cycle reset fix, and simplified scoped recovery.
-- **Release blockers, in order:** `#72` mechanical recorder corrections, `#73` trusted scanner-floor persistence, then `#74` one task-wide council.
+- **Release candidate:** 3.3.0 is fully gated. It contains the host-neutral specialist recorder, archived-cycle reset fix, trusted scanner-floor persistence, and one task-wide council.
+- **Release blockers:** none. `#72`, `#73`, and `#74` are done; `#71` remains conditional and deferred.
 - **Parallel/non-blocking: `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
 
 ## NEXT
