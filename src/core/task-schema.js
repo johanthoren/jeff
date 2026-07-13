@@ -23,7 +23,7 @@ function isNullableString(value) {
 }
 
 /** @param {unknown} value */
-export function isIsoDate(value) {
+export function isIsoDateTime(value) {
   if (typeof value !== 'string') return false;
   const match = ISO_DATETIME.exec(value);
   if (match === null) return false;
@@ -99,7 +99,7 @@ function validateTests(value, out) {
   requireField(out, 'tests.gate.clean', typeof value.gate.clean === 'boolean');
   requireField(out, 'tests.gate.green', typeof value.gate.green === 'boolean');
   requireField(out, 'tests.gate.command', typeof value.gate.command === 'string');
-  requireField(out, 'tests.gate.at', isIsoDate(value.gate.at));
+  requireField(out, 'tests.gate.at', isIsoDateTime(value.gate.at));
 }
 
 /**
@@ -116,7 +116,7 @@ function validateKickbacks(value, out) {
     requireField(out, `${field}.from`, isOneOf(kickback.from, KICKBACK_SOURCES));
     requireField(out, `${field}.to`, isOneOf(kickback.to, KICKBACK_DESTINATIONS));
     requireField(out, `${field}.reason`, typeof kickback.reason === 'string');
-    requireField(out, `${field}.at`, isIsoDate(kickback.at));
+    requireField(out, `${field}.at`, isIsoDateTime(kickback.at));
   });
 }
 
@@ -194,8 +194,8 @@ export function taskSchemaViolations(task, { lite }) {
   requireField(out, 'stage', isOneOf(task.stage, STAGES));
   requireField(out, 'priority', isOneOf(task.priority, PRIORITIES));
   requireField(out, 'deps', Array.isArray(task.deps) && task.deps.every(isId));
-  requireField(out, 'createdAt', isIsoDate(task.createdAt));
-  requireField(out, 'updatedAt', isIsoDate(task.updatedAt));
+  requireField(out, 'createdAt', isIsoDateTime(task.createdAt));
+  requireField(out, 'updatedAt', isIsoDateTime(task.updatedAt));
   if (task.complexity !== undefined) requireField(out, 'complexity', isOneOf(task.complexity, ['simple', 'complex']));
   if (task.externalRef !== undefined) requireField(out, 'externalRef', typeof task.externalRef === 'string');
   if (task.branch !== undefined) requireField(out, 'branch', isNullableString(task.branch));
