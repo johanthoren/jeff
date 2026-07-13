@@ -1025,7 +1025,7 @@ test('parallel refutes cover every blocking finding and settle each stage union 
     const beforeReplay = await readFile(join(taskDir, 'task.json'), 'utf8');
     await assert.rejects(
       recordSpecialistReturn(root, 'refute', '18', refutes[0]),
-      /\[record-transition\].*(already|refute)/,
+      /\[record-identity\] refute agent refuter-0 violates specialist separation/,
     );
     assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeReplay);
   } finally {
