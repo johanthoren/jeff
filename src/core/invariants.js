@@ -242,7 +242,9 @@ export function runInvariants(tasks, { lite }) {
         out.push(`task ${id}: done but review2.verdict != pass [inv4]`);
       }
       const av = jqOr(t.audit && t.audit.verdict, 'na');
-      const recoveredAuditCouncil = t.convergence?.council?.stage === 'audit'
+      const recoveredAuditCouncil = t.convergence?.council?.convened === true
+        && t.convergence.council.stage === 'audit'
+        && t.convergence.council.verdict === 'block'
         && t.convergence.council.outcome === 'scoped-fix-shipped';
       if (av !== 'pass' && av !== 'na' && !recoveredAuditCouncil) {
         out.push(`task ${id}: done but audit.verdict not pass|na [inv4]`);

@@ -265,6 +265,17 @@ function isPreservedCouncilBlock(pending, returned) {
     && isDeepStrictEqual(returned, { ...pending, outcome: returned.outcome });
 }
 
+/** @param {MutableRecordTask} task */
+function blockCouncilRecovery(task) {
+  const council = task.convergence.council;
+  council.outcome = 'blocked-to-operator';
+  task.status = 'blocked';
+  task.blockedReason = council.findings
+    .filter((/** @type {any} */ finding) => finding.survived)
+    .map((/** @type {any} */ finding) => finding.summary)
+    .join('; ');
+}
+
 /** @param {MutableRecordTask} task @param {Record<string, any>} council */
 function recordCouncilRecovery(task, council) {
   const pending = task.convergence.council;
@@ -285,12 +296,7 @@ function recordCouncilRecovery(task, council) {
     return;
   }
   if (council.outcome === 'blocked-to-operator') {
-    task.convergence.council.outcome = council.outcome;
-    task.status = 'blocked';
-    task.blockedReason = pending.findings
-      .filter((/** @type {any} */ finding) => finding.survived)
-      .map((/** @type {any} */ finding) => finding.summary)
-      .join('; ');
+    blockCouncilRecovery(task);
     return;
   }
   throw new Error('[record-transition] council recovery outcome must terminate the scoped cycle');
@@ -310,6 +316,10 @@ export function transitionTask(task, stage, result) {
   const at = now();
   const next = /** @type {any} */ (structuredClone(task));
   const isJudgment = stage === 'review' || stage === 'audit';
+  if (stage === 'implement' && next.status === 'blocked'
+    && next.convergence?.council?.outcome === 'blocked-to-operator') {
+    throw new Error('[record-transition] task is blocked after failed council recovery');
+  }
   if (stage === 'refute' && isRefuteAgentForbidden(next, result.agent_id)) {
     throw new Error(`[record-identity] refute agent ${result.agent_id} violates specialist separation`);
   }
@@ -333,7 +343,12 @@ export function transitionTask(task, stage, result) {
       && next.convergence.council.verdict === 'block'
       && next.convergence.council.outcome === null;
     if (isScopedCouncilFix && (result.result !== 'green' || result.kickback !== null)) {
-      throw new Error('[record-transition] scoped council recovery permits one green implementation return');
+      next.agents.implementer_agent_id = result.agent_id;
+      next.implement = { result: result.result, files: result.files, greenRun: result.greenRun };
+      next.tests = { ...next.tests, green: false };
+      delete next.tests.gate;
+      blockCouncilRecovery(next);
+      return /** @type {TaskJson} */ (next);
     }
     next.agents.implementer_agent_id = result.agent_id;
     next.implement = { result: result.result, files: result.files, greenRun: result.greenRun };
