@@ -1798,9 +1798,9 @@ test('issue 67 failed fresh reassessment blocks without permitting another imple
 
     const blocked = await recordSpecialistReturn(
       root,
-      'council',
+      'refute',
       '18',
-      mixedStageCouncilReturn('blocked-to-operator'),
+      refuteReturn('fresh-review-refuter', blocker, { cycle: 1, source: 'review' }),
     );
     assert.equal(blocked.status, 'blocked');
     assert.equal(blocked.convergence.council.outcome, 'blocked-to-operator');
