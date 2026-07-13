@@ -102,7 +102,8 @@ function assertCurrentJudgment(task, result) {
     task.review?.reviewer_agent_id,
     task.review2?.reviewer_agent_id,
     task.audit?.audit_agent_id,
-    ...(task.refutes ?? []).map((/** @type {any} */ refute) => refute.agent_id),
+    ...judgmentSources(task).flatMap(({ outcome }) => (outcome?.findings ?? [])
+      .map((/** @type {any} */ finding) => finding.refute?.agent_id)),
   ];
   if (currentAgentIds.includes(result.agent_id)) {
     throw new Error(`[record-transition] duplicate agent return from ${result.agent_id}`);
