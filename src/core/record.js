@@ -4,6 +4,7 @@ import { readFile, lstat, mkdir, realpath, rmdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { collectTasks, readMode, readTask, writeTask } from './store.js';
+import { git } from './git.js';
 import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
@@ -30,6 +31,45 @@ function hasBlockingFinding(outcome) {
 /** @param {Record<string, any>} result @param {string} nonBlockingVerdict */
 function judgmentVerdict(result, nonBlockingVerdict) {
   return hasBlockingFinding(result) ? 'needs-work' : nonBlockingVerdict;
+}
+
+/** @param {any} outcome */
+function isConsistentJudgment(outcome) {
+  if (!['pass', 'needs-work'].includes(outcome?.verdict)) return !hasBlockingFinding(outcome);
+  return outcome.verdict === judgmentVerdict(outcome, 'pass');
+}
+
+/** @param {any} outcome */
+function isPassingJudgment(outcome) {
+  return outcome?.verdict === 'pass' && isConsistentJudgment(outcome);
+}
+
+/** @param {any} outcome */
+function isFailingJudgment(outcome) {
+  return outcome?.verdict === 'needs-work' && isConsistentJudgment(outcome);
+}
+
+/** @param {MutableRecordTask} task @param {string} at @param {boolean} recovery */
+function judgmentHistoryEntry(task, at, recovery) {
+  const entry = {
+    at,
+    review: task.review,
+    review2: task.review2 ?? null,
+    audit: task.audit,
+    agents: {
+      reviewer_agent_id: task.agents.reviewer_agent_id,
+      reviewer2_agent_id: task.agents.reviewer2_agent_id,
+      audit_agent_id: task.agents.audit_agent_id,
+    },
+  };
+  if (!recovery) return entry;
+  return {
+    ...entry,
+    recovery: {
+      council: structuredClone(task.convergence.council),
+      implementer_agent_id: task.implement?.agent_id,
+    },
+  };
 }
 
 /** @param {MutableRecordTask} task */
@@ -84,29 +124,29 @@ function settleJudgments(task) {
   }
 }
 
-/** @param {MutableRecordTask} task @param {any} outcome */
-function councilRequiresReassessment(task, outcome) {
-  if (outcome?.verdict !== 'needs-work') return false;
-  const survivingSummaries = new Set(task.convergence.council.findings
+/** @param {MutableRecordTask} task @param {string} source @param {any} outcome */
+function councilRequiresReassessment(task, source, outcome) {
+  return task.convergence.council.findings
     .filter((/** @type {any} */ finding) => finding.survived)
-    .map((/** @type {any} */ finding) => finding.summary));
-  return outcome.findings?.some((/** @type {any} */ finding) => (
-    finding.class === 'blocking' && survivingSummaries.has(finding.what)
-  )) === true;
+    .some((/** @type {any} */ finding) => finding.source !== undefined
+      ? finding.source === source
+      : outcome?.verdict === 'needs-work' && outcome.findings?.some((/** @type {any} */ current) => (
+        current.class === 'blocking' && current.what === finding.summary
+      )) === true);
 }
 
 /** @param {MutableRecordTask} task @param {string} at */
 function reopenCouncilJudgments(task, at) {
-  const reopenReview = councilRequiresReassessment(task, task.review);
-  const reopenReview2 = councilRequiresReassessment(task, task.review2);
-  const reopenAudit = councilRequiresReassessment(task, task.audit);
+  const reopenReview = councilRequiresReassessment(task, 'review', task.review);
+  const reopenReview2 = councilRequiresReassessment(task, 'review2', task.review2);
+  const reopenAudit = councilRequiresReassessment(task, 'audit', task.audit);
   if (!reopenReview && !reopenReview2 && !reopenAudit) {
     throw new Error('[record-transition] council survivors do not match current needs-work judgments');
   }
 
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
-    { at, review: task.review, review2: task.review2 ?? null, audit: task.audit },
+    judgmentHistoryEntry(task, at, true),
   ];
   if (reopenReview) {
     task.agents.reviewer_agent_id = null;
@@ -141,7 +181,7 @@ function resetJudgmentsAfterFix(task, at) {
 
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
-    { at, review: task.review, review2: task.review2 ?? null, audit: task.audit },
+    judgmentHistoryEntry(task, at, false),
   ];
   task.agents.reviewer_agent_id = null;
   task.agents.reviewer2_agent_id = null;
@@ -337,19 +377,32 @@ function recordCouncilRecovery(task, council) {
   if (council.outcome === 'scoped-fix-shipped') {
     const requiredReviews = task.complexity === 'simple' ? 1 : 2;
     const reviews = [task.review, task.review2].filter((outcome) => outcome?.reviewer_agent_id);
-    const judgmentsFailed = reviews.some((outcome) => outcome.verdict === 'needs-work')
-      || (task.audit.required && task.audit.verdict === 'needs-work');
+    const currentJudgments = judgmentSources(task).map(({ outcome }) => outcome).filter(Boolean);
+    if (currentJudgments.some((outcome) => !isConsistentJudgment(outcome))) {
+      throw new Error('[record-transition] current persisted judgment is inconsistent with its blocking findings');
+    }
+    if (currentJudgments.some(isFailingJudgment)) {
+      throw new Error('[record-transition] current recovery judgment did not pass');
+    }
     const judgmentsPass = reviews.length === requiredReviews
-      && reviews.every((outcome) => outcome.verdict === 'pass')
-      && (!task.audit.required || task.audit.verdict === 'pass');
-    if (judgmentsFailed) {
-      throw new Error('[record-transition] scoped council completion requires current recovery judgments to pass');
+      && reviews.every(isPassingJudgment)
+      && (!task.audit.required || isPassingJudgment(task.audit));
+    const latestHistory = task.judgmentHistory?.at(-1);
+    const recovery = latestHistory?.recovery;
+    const scopedImplementer = task.implement?.agent_id;
+    const recoveryIsActive = recovery
+      && isDeepStrictEqual(recovery.council, pending)
+      && typeof scopedImplementer === 'string'
+      && recovery.implementer_agent_id === scopedImplementer
+      && task.agents.implementer_agent_id === scopedImplementer;
+    if (!recoveryIsActive) {
+      throw new Error('[record-transition] scoped recovery history and implementation are not bound to the active council cycle');
     }
     const gate = task.tests?.gate;
     if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
       throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
     }
-    if (!task.judgmentHistory?.length || !judgmentsPass) {
+    if (!judgmentsPass) {
       throw new Error('[record-transition] scoped council completion requires current recovery judgments to pass');
     }
     task.convergence.council.outcome = council.outcome;
@@ -358,7 +411,7 @@ function recordCouncilRecovery(task, council) {
     return;
   }
   if (council.outcome === 'blocked-to-operator') {
-    if (!judgmentSources(task).some(({ outcome }) => outcome?.verdict === 'needs-work')) {
+    if (!judgmentSources(task).some(({ outcome }) => isFailingJudgment(outcome))) {
       throw new Error('[record-transition] blocked council recovery requires a failed current judgment');
     }
     blockCouncilRecovery(task);
@@ -406,7 +459,7 @@ export function transitionTask(task, stage, result) {
   } else if (stage === 'implement') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
     next.agents.implementer_agent_id = result.agent_id;
-    next.implement = { result: result.result, files: result.files, greenRun: result.greenRun };
+    next.implement = { agent_id: result.agent_id, result: result.result, files: result.files, greenRun: result.greenRun };
     if (isScopedCouncilFix) {
       next.tests = { ...next.tests, green: false };
       delete next.tests.gate;
@@ -498,6 +551,13 @@ export async function updateTask(root, id, update, options = {}) {
     const { taskDir, taskPath } = await locateTask(root, id, tasks);
     const task = await readTask(taskDir);
     const candidate = update(task);
+    if (task.convergence?.council?.outcome !== 'scoped-fix-shipped'
+      && candidate.convergence?.council?.outcome === 'scoped-fix-shipped') {
+      const head = git(root, ['rev-parse', 'HEAD']);
+      if (head.status !== 0 || candidate.tests?.gate?.hash !== head.stdout.trim()) {
+        throw new Error('[record-transition] current HEAD does not match the scoped recovery verification');
+      }
+    }
     const lite = (await readMode(root)) === 'lite';
     const store = tasks.map((stored) => stored._dir === taskPath ? { ...candidate, _dir: taskPath } : stored);
     const candidatePrunePrefix = `task ${String(candidate.id)}:`;

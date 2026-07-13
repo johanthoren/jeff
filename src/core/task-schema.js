@@ -166,6 +166,9 @@ function validateConvergence(value, out) {
       if (!isType(finding, 'object')) return;
       requireField(out, `${field}.id`, typeof finding.id === 'string');
       requireField(out, `${field}.summary`, typeof finding.summary === 'string');
+      if (finding.source !== undefined) {
+        requireField(out, `${field}.source`, isOneOf(finding.source, ['review', 'review2', 'audit']));
+      }
       requireField(out, `${field}.blockingVotes`, Number.isInteger(finding.blockingVotes));
       requireField(out, `${field}.survived`, typeof finding.survived === 'boolean');
       if (finding.followupTaskId !== undefined) {

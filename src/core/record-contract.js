@@ -200,9 +200,10 @@ function validateCouncil(value) {
   if (!Array.isArray(council.findings) || council.findings.length === 0) invalid('council.findings');
   council.findings.forEach((/** @type {any} */ finding, /** @type {number} */ index) => {
     const at = `council.findings[${index}]`;
-    closed(finding, at, ['id', 'summary', 'blockingVotes', 'survived', 'followupTaskId']);
+    closedOptional(finding, at, ['id', 'summary', 'blockingVotes', 'survived', 'followupTaskId'], ['source']);
     string(finding.id, `${at}.id`);
     string(finding.summary, `${at}.summary`);
+    if (finding.source !== undefined) oneOf(finding.source, `${at}.source`, ['review', 'review2', 'audit']);
     if (!Number.isInteger(finding.blockingVotes) || finding.blockingVotes < 0 || finding.blockingVotes > 3) invalid(`${at}.blockingVotes`);
     if (typeof finding.survived !== 'boolean') invalid(`${at}.survived`);
     if (finding.followupTaskId !== null && !['string', 'number'].includes(typeof finding.followupTaskId)) invalid(`${at}.followupTaskId`);

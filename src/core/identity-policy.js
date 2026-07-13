@@ -30,6 +30,9 @@ function historicalJudgeAgentIds(task) {
     judgment.review?.reviewer_agent_id,
     judgment.review2?.reviewer_agent_id,
     judgment.audit?.audit_agent_id,
+    judgment.agents?.reviewer_agent_id,
+    judgment.agents?.reviewer2_agent_id,
+    judgment.agents?.audit_agent_id,
   ]));
 }
 
