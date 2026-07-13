@@ -4,7 +4,7 @@ import { readFile, lstat, mkdir, realpath, rmdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { collectTasks, readMode, readTask, writeTask } from './store.js';
-import { git } from './git.js';
+import { git, treeDirty } from './git.js';
 import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
@@ -263,6 +263,10 @@ function recordRefute(task, result, at) {
 
   const kickbacks = [];
   const hasSurvivor = activeFindings.some(({ finding: item }) => item.refute?.verdict === 'survives');
+  if (hasSurvivor && isPendingCouncilRecovery(task)) {
+    blockCouncilRecovery(task);
+    return;
+  }
   if (hasSurvivor && task.convergence === undefined) {
     task.convergence = structuredClone(DEFAULT_CONVERGENCE);
   }
@@ -316,6 +320,9 @@ function recordCouncil(task, result, at) {
   }
   if (pending.stage !== council.stage || !counter || counter.blockingKickbacks < task.convergence.cap) {
     throw new Error(`[record-transition] ${council.stage} council is not active`);
+  }
+  if (council.findings.some((/** @type {any} */ finding) => finding.source === undefined)) {
+    throw new Error('[record-transition] council finding source is required for a new council');
   }
   const forbidden = forbiddenCouncilAgentIds(task);
   const reused = council.members.find((/** @type {any} */ member) => forbidden.has(member.agent_id));
@@ -552,6 +559,9 @@ export async function updateTask(root, id, update, options = {}) {
       const head = git(root, ['rev-parse', 'HEAD']);
       if (head.status !== 0 || candidate.tests?.gate?.hash !== head.stdout.trim()) {
         throw new Error('[record-transition] current HEAD does not match the scoped recovery verification');
+      }
+      if (treeDirty(root)) {
+        throw new Error('[record-transition] scoped recovery verification requires a clean working tree');
       }
     }
     const lite = (await readMode(root)) === 'lite';

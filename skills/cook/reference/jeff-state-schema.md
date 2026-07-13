@@ -111,7 +111,7 @@ never touched.
     "members": [],                           // when convened: EXACTLY 3
     //   member = { "agent_id": str, "lens": "integrity"|"security"|"pragmatist", "temperature": number|null }
     "findings": [],                          // when convened: the enumerated contested findings
-    //   finding = { "id": str, "summary": str, "source"?: "review"|"review2"|"audit",
+    //   finding = { "id": str, "summary": str, "source": "review"|"review2"|"audit",
     //               "blockingVotes": int 0..3,
     //               "survived": bool, "followupTaskId": int|null }
     "verdict": null,                         // null | "ship" | "block"
@@ -132,8 +132,9 @@ never touched.
   (each used exactly once). `temperature` records the intended decorrelation
   temperature (or `null` where the dispatch can't set one).
 - `council.findings`: the enumerated contested findings handed to the council.
-  `source` associates a finding with the judgment slot it reopens during scoped
-  recovery; historical findings without it retain exact-summary matching.
+  `source` is required on every new council finding and associates it with the
+  judgment slot it reopens during scoped recovery. Already-persisted historical
+  findings without it retain exact-summary matching and remain recoverable.
   `blockingVotes` ∈ 0..3 (one per lens). `survived` is a pure function of the
   votes (see INV-9). `followupTaskId` references a spawned backlog task for
   demoted findings; `null` for survivors.
