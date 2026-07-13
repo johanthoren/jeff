@@ -323,6 +323,13 @@ function councilReturn(outcome = null, memberOverrides = {}) {
   };
 }
 
+/** @param {string | null} [outcome] @returns {any} */
+function reviewTwoCouncilReturn(outcome = null) {
+  const result = councilReturn(outcome);
+  result.council.findings[0].source = 'review2';
+  return result;
+}
+
 /** @returns {any} */
 function mixedStageCouncilTask() {
   const task = councilTask();
@@ -1545,7 +1552,7 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
 });
 
 test('issue 65 cycle 1 review2-origin recovery accepts a recorded fix and fresh gate', async () => {
-  const { root } = await prepareScopedCouncilRecovery(reviewTwoCouncilTask());
+  const { root } = await prepareScopedCouncilRecovery(reviewTwoCouncilTask(), reviewTwoCouncilReturn());
   try {
     await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
     runGit(root, ['add', '.']);
@@ -1554,7 +1561,12 @@ test('issue 65 cycle 1 review2-origin recovery accepts a recorded fix and fresh 
     assert.equal(verification.code, 0, verification.stderr.join('\n'));
 
     await recordFreshCouncilJudgments(root);
-    const recorded = await recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped'));
+    const recorded = await recordSpecialistReturn(
+      root,
+      'council',
+      '18',
+      reviewTwoCouncilReturn('scoped-fix-shipped'),
+    );
     assert.deepEqual(
       [recorded.stage, recorded.status, recorded.convergence.council.outcome],
       ['done', 'done', 'scoped-fix-shipped'],
