@@ -7,7 +7,7 @@ import { collectTasks, readMode, readTask, writeTask } from './store.js';
 import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
-import { forbiddenCouncilAgentIds, isRefuteAgentForbidden } from './identity-policy.js';
+import { forbiddenCouncilAgentIds, forbiddenRecoveryAgentIds, isRefuteAgentForbidden } from './identity-policy.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 /** @typedef {Record<string, any>} MutableRecordTask */
@@ -37,6 +37,13 @@ function activeJudgmentCycle(task) {
   return task.judgmentHistory?.length ?? 0;
 }
 
+/** @param {MutableRecordTask} task */
+function isPendingCouncilRecovery(task) {
+  return task.convergence?.council?.convened === true
+    && task.convergence.council.verdict === 'block'
+    && task.convergence.council.outcome === null;
+}
+
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function assertCurrentJudgment(task, result) {
   if (task.status === 'done' || task.stage === 'done') {
@@ -44,6 +51,9 @@ function assertCurrentJudgment(task, result) {
   }
   if (result.cycle !== activeJudgmentCycle(task)) {
     throw new Error(`[record-transition] judgment cycle ${result.cycle} is not active`);
+  }
+  if (isPendingCouncilRecovery(task) && forbiddenRecoveryAgentIds(task).has(result.agent_id)) {
+    throw new Error(`[record-identity] recovery judge ${result.agent_id} violates specialist separation`);
   }
   const currentAgentIds = [
     task.review?.reviewer_agent_id,
@@ -67,9 +77,48 @@ function settleJudgments(task) {
   if (blockingAudit) task.stage = 'audit';
   else if (blockingReview || reviews.length < requiredReviews) task.stage = 'review';
   else if (task.audit.required && !task.audit.audit_agent_id) task.stage = 'audit';
+  else if (isPendingCouncilRecovery(task)) task.stage = task.convergence.council.stage;
   else {
     task.stage = 'done';
     task.status = 'done';
+  }
+}
+
+/** @param {MutableRecordTask} task @param {any} outcome */
+function councilRequiresReassessment(task, outcome) {
+  if (outcome?.verdict !== 'needs-work') return false;
+  const survivingSummaries = new Set(task.convergence.council.findings
+    .filter((/** @type {any} */ finding) => finding.survived)
+    .map((/** @type {any} */ finding) => finding.summary));
+  return outcome.findings?.some((/** @type {any} */ finding) => (
+    finding.class === 'blocking' && survivingSummaries.has(finding.what)
+  )) === true;
+}
+
+/** @param {MutableRecordTask} task @param {string} at */
+function reopenCouncilJudgments(task, at) {
+  const reopenReview = councilRequiresReassessment(task, task.review);
+  const reopenReview2 = councilRequiresReassessment(task, task.review2);
+  const reopenAudit = councilRequiresReassessment(task, task.audit);
+  if (!reopenReview && !reopenReview2 && !reopenAudit) {
+    throw new Error('[record-transition] council survivors do not match current needs-work judgments');
+  }
+
+  task.judgmentHistory = [
+    ...(task.judgmentHistory ?? []),
+    { at, review: task.review, review2: task.review2 ?? null, audit: task.audit },
+  ];
+  if (reopenReview) {
+    task.agents.reviewer_agent_id = null;
+    task.review = { verdict: null, reviewer_agent_id: null, findings: [], evidence: [] };
+  }
+  if (reopenReview2) {
+    task.agents.reviewer2_agent_id = null;
+    task.review2 = null;
+  }
+  if (reopenAudit) {
+    task.agents.audit_agent_id = null;
+    task.audit = { required: task.audit.required, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] };
   }
 }
 
@@ -286,9 +335,22 @@ function recordCouncilRecovery(task, council) {
     throw new Error('[record-transition] council recovery requires a separately recorded scoped implementation');
   }
   if (council.outcome === 'scoped-fix-shipped') {
+    const requiredReviews = task.complexity === 'simple' ? 1 : 2;
+    const reviews = [task.review, task.review2].filter((outcome) => outcome?.reviewer_agent_id);
+    const judgmentsFailed = reviews.some((outcome) => outcome.verdict === 'needs-work')
+      || (task.audit.required && task.audit.verdict === 'needs-work');
+    const judgmentsPass = reviews.length === requiredReviews
+      && reviews.every((outcome) => outcome.verdict === 'pass')
+      && (!task.audit.required || task.audit.verdict === 'pass');
+    if (judgmentsFailed) {
+      throw new Error('[record-transition] scoped council completion requires current recovery judgments to pass');
+    }
     const gate = task.tests?.gate;
     if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
       throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
+    }
+    if (!task.judgmentHistory?.length || !judgmentsPass) {
+      throw new Error('[record-transition] scoped council completion requires current recovery judgments to pass');
     }
     task.convergence.council.outcome = council.outcome;
     task.stage = 'done';
@@ -296,6 +358,9 @@ function recordCouncilRecovery(task, council) {
     return;
   }
   if (council.outcome === 'blocked-to-operator') {
+    if (!judgmentSources(task).some(({ outcome }) => outcome?.verdict === 'needs-work')) {
+      throw new Error('[record-transition] blocked council recovery requires a failed current judgment');
+    }
     blockCouncilRecovery(task);
     return;
   }
@@ -339,9 +404,7 @@ export function transitionTask(task, stage, result) {
     next.plan = { result: result.result, slices: result.slices, testFiles: result.testFiles, redRun: result.redRun, escalation: result.escalation };
     next.stage = result.result === 'escalation' ? 'capture' : 'implement';
   } else if (stage === 'implement') {
-    const isScopedCouncilFix = next.convergence?.council?.convened === true
-      && next.convergence.council.verdict === 'block'
-      && next.convergence.council.outcome === null;
+    const isScopedCouncilFix = isPendingCouncilRecovery(next);
     next.agents.implementer_agent_id = result.agent_id;
     next.implement = { result: result.result, files: result.files, greenRun: result.greenRun };
     if (isScopedCouncilFix) {
@@ -356,9 +419,8 @@ export function transitionTask(task, stage, result) {
       next.kickbacks = [...next.kickbacks, { from: 'implement', to: result.kickback.to, reason: result.kickback.reason, at }];
       next.stage = result.kickback.to;
     } else {
-      if (!isScopedCouncilFix) {
-        resetJudgmentsAfterFix(next, at);
-      }
+      if (isScopedCouncilFix) reopenCouncilJudgments(next, at);
+      else resetJudgmentsAfterFix(next, at);
       next.stage = 'refactor';
     }
   } else if (stage === 'refactor') {

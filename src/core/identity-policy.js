@@ -61,3 +61,11 @@ export function forbiddenCouncilAgentIds(task) {
     ...refuterAgentIds(task),
   ]);
 }
+
+/** @param {Record<string, any>} task */
+export function forbiddenRecoveryAgentIds(task) {
+  return new Set([
+    ...forbiddenCouncilAgentIds(task),
+    ...agentIds((task.convergence?.council?.members ?? []).map((/** @type {any} */ member) => member.agent_id)),
+  ]);
+}
