@@ -291,6 +291,9 @@ function assertCouncilInput(task, council) {
     throw new Error('[record-transition] council requires a source-bound surviving refute for every active blocker');
   }
   const expectedFindings = new Set(blockers.map(({ source, summary }) => `${source}\0${summary}`));
+  if (blockers.length !== expectedFindings.size) {
+    throw new Error('[record-transition] council findings must exactly match the active source-bound blocker union');
+  }
   const returnedFindings = council.findings.map((/** @type {any} */ finding) => `${finding.source}\0${finding.summary}`);
   if (returnedFindings.length !== expectedFindings.size
     || new Set(returnedFindings).size !== returnedFindings.length
