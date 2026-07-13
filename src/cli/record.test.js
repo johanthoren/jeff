@@ -639,6 +639,96 @@ test('review re-entry clears stale outcomes and requires two fresh complex-task 
   }
 });
 
+test('implementation resets a current-cycle judgment despite a later implement kickback', async () => {
+  const priorCycle = { at: '2026-07-12T01:00:00+01:00', review: {}, review2: null, audit: {} };
+  const currentReview = {
+    verdict: 'needs-work',
+    reviewer_agent_id: 'reviewer-current',
+    findings: [blockingFinding()],
+    evidence: [{ command: 'node --test', output: 'failure reproduced' }],
+  };
+  const task = canonicalTask({
+    stage: 'implement',
+    agents: {
+      implementer_agent_id: 'implementer-old',
+      reviewer_agent_id: 'reviewer-current',
+      reviewer2_agent_id: null,
+      audit_agent_id: null,
+    },
+    review: currentReview,
+    judgmentHistory: [priorCycle],
+    kickbacks: [
+      { from: 'review', to: 'implement', reason: 'Current review blocker.', at: '2026-07-12T00:30:00Z' },
+      { from: 'implement', to: 'plan', reason: 'Plan revision.', at: '2026-07-12T00:45:00Z' },
+    ],
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-fresh'));
+    const recorded = await readTask(taskDir);
+
+    assert.equal(recorded.judgmentHistory.length, 2);
+    assert.deepEqual(recorded.judgmentHistory[1].review, currentReview);
+    assert.equal(recorded.agents.reviewer_agent_id, null);
+    assert.equal(recorded.review.reviewer_agent_id, null);
+    assert.equal(recorded.review.verdict, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('implementation preserves judgments when history consumed the latest judgment kickback', async (t) => {
+  const cases = [
+    ['older with offset', '2026-07-12T00:30:00-01:00', '2026-07-12T01:00:00Z'],
+    ['equal instant', '2026-07-12T01:00:00+01:00', '2026-07-12T00:00:00Z'],
+  ];
+
+  for (const [name, boundary, kickbackAt] of cases) {
+    await t.test(name, async () => {
+      const currentReview = {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer-current',
+        findings: [],
+        evidence: [{ command: 'git diff --check', output: 'clean' }],
+      };
+      const currentAudit = {
+        required: true,
+        verdict: 'pass',
+        audit_agent_id: 'auditor-current',
+        findings: [],
+        evidence: [{ command: 'review-security --json', output: 'no findings' }],
+      };
+      const history = [{ at: boundary, review: {}, review2: null, audit: {} }];
+      const task = canonicalTask({
+        stage: 'implement',
+        agents: {
+          implementer_agent_id: 'implementer-old',
+          reviewer_agent_id: 'reviewer-current',
+          reviewer2_agent_id: null,
+          audit_agent_id: 'auditor-current',
+        },
+        review: currentReview,
+        audit: currentAudit,
+        judgmentHistory: history,
+        kickbacks: [{ from: 'review', to: 'implement', reason: 'Consumed review blocker.', at: kickbackAt }],
+      });
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-fresh'));
+        const recorded = await readTask(taskDir);
+
+        assert.deepEqual(recorded.judgmentHistory, history);
+        assert.equal(recorded.agents.reviewer_agent_id, 'reviewer-current');
+        assert.equal(recorded.agents.audit_agent_id, 'auditor-current');
+        assert.deepEqual(recorded.review, currentReview);
+        assert.deepEqual(recorded.audit, currentAudit);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test('follow-up-only review progresses while retaining its judgment evidence', async () => {
   const followup = blockingFinding({ class: 'follow-up', severity: 'low' });
   const first = await makeRoot(canonicalTask({
