@@ -1486,7 +1486,7 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
     assert.equal(gated.tests.gate.clean, true);
     assert.equal(gated.tests.gate.green, true);
 
-    await recordFreshCouncilJudgments(root);
+    await recordFreshCouncilJudgments(root, { includeAudit: true });
     await recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped'));
     const recorded = await readTask(taskDir);
     assert.equal(recorded.convergence.council.outcome, 'scoped-fix-shipped');
