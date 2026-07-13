@@ -1272,6 +1272,7 @@ test('issue 65 refute identity cannot reuse the implementer', async () => {
 });
 
 test('issue 65 cycle 1 refute rejects every current-finder identity representation atomically', async (t) => {
+  /** @type {Array<[string, string | null, string | null]>} */
   const representations = [
     ['outcome-only', null, 'current-finder'],
     ['agents-only', 'current-finder', null],
