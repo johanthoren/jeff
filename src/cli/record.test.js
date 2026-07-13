@@ -58,10 +58,10 @@ async function makeRoot(task = canonicalTask()) {
   return { root, taskDir };
 }
 
-/** @param {string} root @param {string[]} args */
-function runCook(root, args) {
+/** @param {string} root @param {string[]} args @param {NodeJS.ProcessEnv} [env] */
+function runCook(root, args, env = {}) {
   const result = spawnSync(process.execPath, [COOK_JS, ...args], {
-    env: { ...process.env, COOK_ROOT: root },
+    env: { ...process.env, ...env, COOK_ROOT: root },
     encoding: 'utf8',
   });
   return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
@@ -331,6 +331,51 @@ function reviewTwoCouncilReturn(outcome = null) {
 }
 
 /** @returns {any} */
+function dualReviewCouncilTask() {
+  const task = councilTask();
+  const finding = {
+    ...blockingFinding({
+      line: 11,
+      what: 'The second review recovery path loses a result.',
+      why: 'A second-review blocker can remain active after a scoped fix.',
+    }),
+    refute: {
+      agent_id: 'review-two-refuter',
+      source: 'review2',
+      finding: 'src/core/record.js:11 The second review recovery path loses a result.',
+      verdict: 'survives',
+      rationale: 'The second-review failure is reachable.',
+      evidence: [{ command: 'node --test src/cli/record.test.js', output: 'failure reproduced' }],
+    },
+  };
+  return councilTask({
+    review2: {
+      ...task.review2,
+      verdict: 'needs-work',
+      reportedVerdict: 'needs-work',
+      findings: [finding],
+      evidence: [{ command: 'git diff --check', output: 'blocking finding' }],
+      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: false }],
+    },
+    refutes: [...task.refutes, finding.refute],
+  });
+}
+
+/** @param {string | null} [outcome] @returns {any} */
+function dualReviewCouncilReturn(outcome = null) {
+  const result = councilReturn(outcome);
+  result.council.findings.push({
+    id: 'F2',
+    summary: 'The second review recovery path loses a result.',
+    source: 'review2',
+    blockingVotes: 3,
+    survived: true,
+    followupTaskId: null,
+  });
+  return result;
+}
+
+/** @returns {any} */
 function mixedStageCouncilTask() {
   const task = councilTask();
   const auditFinding = {
@@ -440,6 +485,17 @@ async function prepareCompletedMixedStageReassessment() {
   const verification = await runVerify(prepared.root, '18');
   assert.equal(verification.code, 0, verification.stderr.join('\n'));
   await recordFreshCouncilJudgments(prepared.root, { includeAudit: true });
+  return prepared;
+}
+
+async function prepareDualReviewReassessment() {
+  const prepared = await prepareScopedCouncilRecovery(
+    dualReviewCouncilTask(),
+    dualReviewCouncilReturn(),
+  );
+  await recordSpecialistReturn(prepared.root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
+  runGit(prepared.root, ['add', '.']);
+  runGit(prepared.root, ['commit', '-qm', 'record scoped refactor']);
   return prepared;
 }
 
@@ -1798,6 +1854,69 @@ test('issue 67 review cycle 2 surviving non-council refute cannot reopen impleme
   }
 });
 
+test('issue 67 council scoped recovery requires every fresh review blocker refute', async (t) => {
+  /** @type {Array<'review' | 'review2'>} */
+  const sources = ['review', 'review2'];
+  for (const missingSource of sources) {
+    await t.test(missingSource, async () => {
+      const { root, taskDir } = await prepareDualReviewReassessment();
+      try {
+        const blockers = {
+          review: blockingFinding({
+            line: 32,
+            what: 'The fresh primary review still finds a recovery failure.',
+            why: 'The primary review blocker must survive its own refute before terminal blocking.',
+          }),
+          review2: blockingFinding({
+            line: 33,
+            what: 'The fresh second review still finds a recovery failure.',
+            why: 'The second review blocker must survive its own refute before terminal blocking.',
+          }),
+        };
+        await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-failing-reviewer-one', {
+          cycle: 1,
+          verdict: 'needs-work',
+          findings: [blockers.review],
+        }));
+        await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-failing-reviewer-two', {
+          cycle: 1,
+          verdict: 'needs-work',
+          findings: [blockers.review2],
+        }));
+
+        const completedSource = missingSource === 'review' ? 'review2' : 'review';
+        await recordSpecialistReturn(root, 'refute', '18', refuteReturn(
+          `fresh-${completedSource}-refuter`,
+          blockers[completedSource],
+          { cycle: 1, source: completedSource },
+        ));
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+        await assert.rejects(
+          recordSpecialistReturn(
+            root,
+            'council',
+            '18',
+            dualReviewCouncilReturn('blocked-to-operator'),
+          ),
+          /\[record-transition\].*(?:active|blocking|refute)/,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+
+        const blocked = await recordSpecialistReturn(root, 'refute', '18', refuteReturn(
+          `fresh-${missingSource}-refuter`,
+          blockers[missingSource],
+          { cycle: 1, source: missingSource },
+        ));
+        assert.equal(blocked.status, 'blocked');
+        assert.equal(blocked.convergence.council.outcome, 'blocked-to-operator');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test('issue 67 review cycle 1 source-bound findings reopen paraphrased colliding review and audit blockers', async () => {
   const task = mixedStageCouncilTask();
   const collidingWhat = 'A shared recorder defect leaves the recovery evidence stale.';
@@ -2012,6 +2131,35 @@ test('issue 67 review cycle 2 scoped completion rejects current non-state dirt a
         await rm(root, { recursive: true, force: true });
       }
     });
+  }
+});
+
+test('issue 67 council scoped completion fails closed when git status probe fails', async () => {
+  const { root, taskDir } = await prepareCompletedMixedStageReassessment();
+  try {
+    const corruptIndex = join(root, '.jeff', 'corrupt-index');
+    await writeFile(corruptIndex, 'invalid index\n', 'utf8');
+    const env = { GIT_INDEX_FILE: corruptIndex };
+    const head = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], {
+      env: { ...process.env, ...env },
+      encoding: 'utf8',
+    });
+    const status = spawnSync('git', ['-C', root, 'status', '--porcelain', '--', ':(exclude).jeff'], {
+      env: { ...process.env, ...env },
+      encoding: 'utf8',
+    });
+    assert.equal(head.status, 0, head.stderr);
+    assert.notEqual(status.status, 0);
+
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    const file = await writeReturn(root, mixedStageCouncilReturn('scoped-fix-shipped'));
+    const recorded = runCook(root, ['record', 'council', '18', file], env);
+
+    assert.notEqual(recorded.code, 0);
+    assert.match(recorded.stderr, /\[record-transition\].*(?:git status|cleanliness|probe|working tree)/);
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
