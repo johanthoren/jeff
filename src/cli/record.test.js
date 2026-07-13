@@ -1511,6 +1511,121 @@ test('issue 68 council separation is limited to the active cycle', async () => {
   }
 });
 
+test('issue 74 council waits for every required judgment atomically', async (t) => {
+  /** @type {Array<[string, () => any]>} */
+  const incomplete = [
+    ['second review pending', () => {
+      const task = councilTask();
+      task.agents.reviewer2_agent_id = null;
+      task.review2 = null;
+      return task;
+    }],
+    ['required audit pending', () => {
+      const task = councilTask();
+      task.agents.audit_agent_id = null;
+      task.audit = { required: true, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] };
+      return task;
+    }],
+  ];
+
+  for (const [name, taskFactory] of incomplete) await t.test(name, async () => {
+    const { root, taskDir } = await makeRoot(taskFactory());
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+      await assert.rejects(
+        recordSpecialistReturn(root, 'council', '18', councilReturn()),
+        /\[record-transition\]/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 74 council requires the exact source-bound blocker union atomically', async (t) => {
+  const extra = {
+    id: 'F2',
+    summary: 'An invented blocker that no active judgment returned.',
+    source: 'audit',
+    blockingVotes: 2,
+    survived: true,
+    followupTaskId: null,
+  };
+  /** @type {Array<[string, () => [any, any]]>} */
+  const invalid = [
+    ['omitted blocker', () => [mixedStageCouncilTask(), councilReturn()]],
+    ['invented blocker', () => {
+      const result = councilReturn();
+      result.council.findings.push(extra);
+      return [councilTask(), result];
+    }],
+    ['duplicate blocker', () => {
+      const result = councilReturn();
+      result.council.findings.push({ ...result.council.findings[0], id: 'F2' });
+      return [councilTask(), result];
+    }],
+    ['missing surviving refute', () => {
+      const task = councilTask();
+      delete task.review.findings[0].refute;
+      task.refutes = [];
+      return [task, councilReturn()];
+    }],
+    ['wrong council source', () => {
+      const result = councilReturn();
+      result.council.findings[0].source = 'audit';
+      return [councilTask(), result];
+    }],
+    ['wrong refute source', () => {
+      const task = councilTask();
+      task.review.findings[0].refute.source = 'audit';
+      task.refutes[0].source = 'audit';
+      return [task, councilReturn()];
+    }],
+  ];
+
+  for (const [name, fixture] of invalid) await t.test(name, async () => {
+    const [task, result] = fixture();
+    const { root, taskDir } = await makeRoot(task);
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+      await assert.rejects(
+        recordSpecialistReturn(root, 'council', '18', result),
+        /\[record-transition\]/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 74 one mixed-source council can ship the complete blocker union', async () => {
+  const returned = mixedStageCouncilReturn('shipped');
+  returned.council.findings = returned.council.findings.map((/** @type {any} */ finding, /** @type {number} */ index) => ({
+    ...finding,
+    blockingVotes: 1,
+    survived: false,
+    followupTaskId: 18 + index,
+  }));
+  returned.council.verdict = 'ship';
+  const { root, taskDir } = await makeRoot(mixedStageCouncilTask());
+  try {
+    const recorded = await recordSpecialistReturn(root, 'council', '18', returned);
+
+    assert.equal(recorded.status, 'done');
+    assert.equal(recorded.convergence.council.outcome, 'shipped');
+    assert.deepEqual(
+      recorded.convergence.council.findings.map((/** @type {any} */ finding) => finding.source),
+      ['review', 'audit'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 70 council ship terminates while preserving originating needs-work evidence', async () => {
   const original = councilTask();
   const { root } = await makeRoot(original);
