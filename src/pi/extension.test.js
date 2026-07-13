@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import jeffExtension, { formatDispatchResult } from './extension.js';
 
 /** @param {Record<string, unknown>} [dependencies] */
@@ -347,10 +348,11 @@ test('cook_dispatch taskId persists the specialist result through the shared rec
 test('cook_dispatch transports the judgment cycle through the shared record contract', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-record-cycle-'));
   const taskDir = join(cwd, '.jeff', 'tasks', '018-record-specialists');
+  const taskFile = join(taskDir, 'task.json');
   try {
     await mkdir(taskDir, { recursive: true });
     await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
-    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify({
+    await writeFile(taskFile, `${JSON.stringify({
       schemaVersion: 1,
       id: '18',
       slug: 'record-specialists',
@@ -376,6 +378,24 @@ test('cook_dispatch transports the judgment cycle through the shared record cont
       blockedReason: null,
       abandonReason: null,
     }, null, 2)}\n`, 'utf8');
+    execFileSync('git', ['-C', cwd, 'init', '-q']);
+    execFileSync('git', ['-C', cwd, 'add', '.']);
+    execFileSync('git', [
+      '-C', cwd,
+      '-c', 'user.email=tests@example.com',
+      '-c', 'user.name=Tests',
+      '-c', 'commit.gpgsign=false',
+      'commit', '-qm', 'baseline',
+    ]);
+    const task = JSON.parse(await readFile(taskFile, 'utf8'));
+    task.tests.gate = {
+      hash: execFileSync('git', ['-C', cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      clean: true,
+      green: true,
+      command: 'make test',
+      at: '2026-07-12T01:00:00Z',
+    };
+    await writeFile(taskFile, `${JSON.stringify(task, null, 2)}\n`, 'utf8');
     const transcript = JSON.stringify({
       agent_id: 'pi-review-agent',
       stage: 'review',
@@ -401,10 +421,10 @@ test('cook_dispatch transports the judgment cycle through the shared record cont
       undefined,
       { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
     );
-    const task = JSON.parse(await readFile(join(taskDir, 'task.json'), 'utf8'));
+    const recorded = JSON.parse(await readFile(taskFile, 'utf8'));
 
-    assert.equal(task.review.reviewer_agent_id, 'pi-review-agent');
-    assert.equal(task.status, 'done');
+    assert.equal(recorded.review.reviewer_agent_id, 'pi-review-agent');
+    assert.equal(recorded.status, 'done');
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
