@@ -892,34 +892,32 @@ test('simultaneous review and audit writes do not lose any judgment', async () =
   }
 });
 
-test('review re-entry clears stale outcomes and requires two fresh complex-task reviews', async () => {
+test('issue 72 agents-only review re-entry archives once and requires two fresh reviews', async () => {
+  const finding = blockingFinding();
+  const refute = { ...refuteReturn('refuter', finding), source: 'review' };
+  finding.refute = refute;
   const task = canonicalTask({
-    stage: 'review',
+    stage: 'implement',
     complexity: 'complex',
-    agents: { implementer_agent_id: 'implementer-old', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+    agents: { implementer_agent_id: 'implementer-old', reviewer_agent_id: 'reviewer-old', reviewer2_agent_id: null, audit_agent_id: null },
     tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+    review: { verdict: 'needs-work', reviewer_agent_id: null, findings: [finding], evidence: ['review evidence'] },
+    refutes: [refute],
+    convergence: {
+      ...canonicalTask().convergence,
+      stages: { review: { blockingKickbacks: 1 }, audit: { blockingKickbacks: 0 } },
+    },
+    kickbacks: [{ from: 'review', to: 'implement', reason: finding.what, at: '2026-07-12T00:30:00Z' }],
   });
   const { root, taskDir } = await makeRoot(task);
   try {
-    const finding = blockingFinding();
-    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-old', {
-      verdict: 'needs-work',
-      findings: [finding],
-    }));
-    await recordSpecialistReturn(root, 'refute', '18', {
-      agent_id: 'refuter',
-      stage: 'refute',
-      cycle: 0,
-      finding: `${finding.file}:${finding.line} lost result`,
-      verdict: 'survives',
-      rationale: 'The completion order is reachable.',
-      evidence: [{ command: 'node --test', output: 'lost result reproduced' }],
-    });
     await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-fresh'));
     await recordSpecialistReturn(root, 'refactor', '18', refactorReturn());
     await recordCurrentGate(root, taskDir);
 
     const reset = await readTask(taskDir);
+    assert.equal(reset.judgmentHistory.length, 1);
+    assert.equal(reset.judgmentHistory[0].agents.reviewer_agent_id, 'reviewer-old');
     assert.equal(reset.agents.reviewer_agent_id, null);
     assert.equal(reset.agents.reviewer2_agent_id, null);
     assert.equal(reset.review.verdict, null);
@@ -1129,7 +1127,7 @@ test('a refuted blocker progresses while retaining the finding and refute eviden
       agent_id: 'refuter',
       stage: 'refute',
       cycle: 0,
-      finding: `${blocker.file}:${blocker.line} lost result`,
+      finding: `${blocker.file}:${blocker.line} ${blocker.what}`,
       verdict: 'refuted',
       rationale: 'The upstream guard prevents the failure.',
       evidence: [{ command: 'sed -n 1,20p src/core/record.js', output: 'guard present' }],
@@ -1187,6 +1185,54 @@ test('parallel refutes cover every blocking finding and settle each stage union 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('issue 72 refutes bind blockers by exact file-line-what identity', async (t) => {
+  const short = blockingFinding({ what: 'The recording path loses a result' });
+  const long = blockingFinding({ what: 'The recording path loses a result during reassessment.' });
+
+  await t.test('overlapping same-line text binds the exact finding', async () => {
+    const task = canonicalTask({
+      stage: 'review',
+      agents: { implementer_agent_id: 'implementer', reviewer_agent_id: 'reviewer', reviewer2_agent_id: null, audit_agent_id: null },
+      review: { verdict: 'needs-work', reviewer_agent_id: 'reviewer', findings: [short, long], evidence: ['review evidence'] },
+    });
+    const { root, taskDir } = await makeRoot(task);
+    try {
+      await recordSpecialistReturn(root, 'refute', '18', refuteReturn('refuter', long));
+      const recorded = await readTask(taskDir);
+
+      assert.equal(recorded.review.findings[0].refute, undefined);
+      assert.equal(recorded.review.findings[1].refute.finding, `${long.file}:${long.line} ${long.what}`);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  const invalid = [
+    ['zero exact matches', `${short.file}:${short.line} A different finding.`, null, /\[record-transition\] refute finding is not an active blocker/],
+    ['multiple exact matches', `${short.file}:${short.line} ${short.what}`, { verdict: 'needs-work', reviewer_agent_id: 'reviewer-two', findings: [{ ...short }], evidence: ['review two evidence'] }, /\[record-transition\] refute finding identity is ambiguous/],
+  ];
+  for (const [name, identity, review2, error] of invalid) await t.test(`${name} reject atomically`, async () => {
+    const task = canonicalTask({
+      stage: 'review',
+      complexity: review2 ? 'complex' : 'simple',
+      agents: { implementer_agent_id: 'implementer', reviewer_agent_id: 'reviewer-one', reviewer2_agent_id: review2 ? 'reviewer-two' : null, audit_agent_id: null },
+      review: { verdict: 'needs-work', reviewer_agent_id: 'reviewer-one', findings: [short], evidence: ['review evidence'] },
+      ...(review2 ? { review2 } : {}),
+    });
+    const { root, taskDir } = await makeRoot(task);
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'refute', '18', refuteReturn('refuter', short, { finding: identity })),
+        error,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 test('judgment contracts require a nonnegative active cycle identity', async (t) => {

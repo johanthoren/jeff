@@ -88,6 +88,6 @@ test('judgment role return examples expose the active cycle identity', async () 
     const file = new URL(relative, import.meta.url);
     const text = await readFile(file, 'utf8');
 
-    assert.match(text, /"cycle":"<active cycle>"/, `${relative} must return its dispatch cycle`);
+    assert.match(text, /"cycle":0/, `${relative} must show cycle as a JSON number`);
   }
 });
