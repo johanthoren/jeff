@@ -230,9 +230,13 @@ export function runInvariants(tasks, { lite }) {
       const isHistoricalSingleReview = !Object.hasOwn(t, 'review2')
         && (Object.hasOwn(agents, 'plan_agent_id') || Object.hasOwn(agents, 'test_author_agent_id'));
       const isComplex = t.complexity !== 'simple' && !isHistoricalSingleReview;
-      if (isComplex && (!isType(t.review2, 'object') || t.review2.verdict !== 'pass')) {
+      const review2Recovered = recoveredReviewCouncil
+        && isType(t.review2, 'object')
+        && t.review2.verdict === 'needs-work';
+      if (isComplex && (!isType(t.review2, 'object') || (t.review2.verdict !== 'pass' && !review2Recovered))) {
         out.push(`task ${id}: complex done task requires a recorded second review with review2.verdict == pass [inv4]`);
-      } else if (!isComplex && t.review2 !== null && t.review2 !== undefined && t.review2.verdict !== 'pass') {
+      } else if (!isComplex && t.review2 !== null && t.review2 !== undefined
+        && t.review2.verdict !== 'pass' && !review2Recovered) {
         out.push(`task ${id}: done but review2.verdict != pass [inv4]`);
       }
       const av = jqOr(t.audit && t.audit.verdict, 'na');

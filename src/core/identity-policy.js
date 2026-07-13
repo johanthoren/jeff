@@ -6,6 +6,16 @@ function agentIds(values) {
 }
 
 /** @param {Record<string, any>} task */
+function recordedAgentIds(task) {
+  return agentIds([
+    task.agents?.implementer_agent_id,
+    task.agents?.reviewer_agent_id,
+    task.agents?.reviewer2_agent_id,
+    task.agents?.audit_agent_id,
+  ]);
+}
+
+/** @param {Record<string, any>} task */
 function currentJudgeAgentIds(task) {
   return agentIds([
     task.review?.reviewer_agent_id,
@@ -31,10 +41,15 @@ function refuterAgentIds(task) {
 /** @param {Record<string, any>} task */
 export function forbiddenRefuteAgentIds(task) {
   return new Set(agentIds([
-    task.agents?.implementer_agent_id,
+    ...recordedAgentIds(task),
     ...currentJudgeAgentIds(task),
     ...refuterAgentIds(task),
   ]));
+}
+
+/** @param {Record<string, any>} task @param {unknown} agentId */
+export function isRefuteAgentForbidden(task, agentId) {
+  return forbiddenRefuteAgentIds(task).has(agentId);
 }
 
 /** @param {Record<string, any>} task */

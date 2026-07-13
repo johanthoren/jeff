@@ -2,11 +2,12 @@
 
 import { readFile, lstat, mkdir, realpath, rmdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { collectTasks, readMode, readTask, writeTask } from './store.js';
 import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
-import { forbiddenCouncilAgentIds, forbiddenRefuteAgentIds } from './identity-policy.js';
+import { forbiddenCouncilAgentIds, isRefuteAgentForbidden } from './identity-policy.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 /** @typedef {Record<string, any>} MutableRecordTask */
@@ -150,9 +151,6 @@ function recordAudit(task, result) {
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result @param {string} at */
 function recordRefute(task, result, at) {
-  if (forbiddenRefuteAgentIds(task).has(result.agent_id)) {
-    throw new Error(`[record-identity] refute agent ${result.agent_id} violates specialist separation`);
-  }
   const activeFindings = judgmentSources(task).flatMap(({ source, outcome }) => (
     (outcome?.findings ?? []).map((/** @type {any} */ finding) => ({ source, finding }))
   ));
@@ -260,11 +258,17 @@ function recordCouncil(task, result, at) {
   task.status = 'in_progress';
 }
 
+/** @param {Record<string, any>} pending @param {Record<string, any>} returned */
+function isPreservedCouncilBlock(pending, returned) {
+  return pending.verdict === 'block'
+    && pending.outcome === null
+    && isDeepStrictEqual(returned, { ...pending, outcome: returned.outcome });
+}
+
 /** @param {MutableRecordTask} task @param {Record<string, any>} council */
 function recordCouncilRecovery(task, council) {
   const pending = task.convergence.council;
-  const expected = { ...pending, outcome: council.outcome };
-  if (pending.verdict !== 'block' || pending.outcome !== null || JSON.stringify(council) !== JSON.stringify(expected)) {
+  if (!isPreservedCouncilBlock(pending, council)) {
     throw new Error('[record-transition] council recovery must preserve the recorded block');
   }
   if (task.stage === 'implement') {
@@ -306,6 +310,9 @@ export function transitionTask(task, stage, result) {
   const at = now();
   const next = /** @type {any} */ (structuredClone(task));
   const isJudgment = stage === 'review' || stage === 'audit';
+  if (stage === 'refute' && isRefuteAgentForbidden(next, result.agent_id)) {
+    throw new Error(`[record-identity] refute agent ${result.agent_id} violates specialist separation`);
+  }
   if (isJudgment || stage === 'refute') assertCurrentJudgment(next, result);
   if (!isJudgment && stage !== 'refute' && stage !== 'council' && next.stage !== stage) {
     throw new Error(`[record-transition] task is at ${next.stage}, not ${stage}`);
@@ -344,6 +351,7 @@ export function transitionTask(task, stage, result) {
     }
   } else if (stage === 'refactor') {
     next.refactor = { agent_id: result.agent_id, result: result.result, files: result.files, outsideDiff: result.outsideDiff, greenRun: result.greenRun, summary: result.summary };
+    delete next.tests.gate;
     next.stage = 'review';
   } else if (stage === 'review') recordReview(next, result);
   else if (stage === 'audit') recordAudit(next, result);
