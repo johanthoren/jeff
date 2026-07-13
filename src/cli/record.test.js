@@ -1566,6 +1566,19 @@ test('issue 74 council requires the exact source-bound blocker union atomically'
       result.council.findings.push({ ...result.council.findings[0], id: 'F2' });
       return [councilTask(), result];
     }],
+    ['duplicate active blocker identity', () => {
+      const task = councilTask();
+      const finding = structuredClone(task.review.findings[0]);
+      finding.line = 11;
+      finding.refute = {
+        ...finding.refute,
+        agent_id: 'refuter-two',
+        finding: 'src/core/record.js:11 The recording path loses a result.',
+      };
+      task.review.findings.push(finding);
+      task.refutes.push(finding.refute);
+      return [task, councilReturn()];
+    }],
     ['missing surviving refute', () => {
       const task = councilTask();
       delete task.review.findings[0].refute;
