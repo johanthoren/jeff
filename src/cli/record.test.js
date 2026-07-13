@@ -1724,6 +1724,212 @@ test('issue 67 failed fresh reassessment blocks without permitting another imple
   }
 });
 
+test('issue 67 review cycle 1 source-bound findings reopen paraphrased colliding review and audit blockers', async () => {
+  const task = mixedStageCouncilTask();
+  const collidingWhat = 'A shared recorder defect leaves the recovery evidence stale.';
+  task.review.findings[0].what = collidingWhat;
+  task.review.findings[0].refute.finding = `${task.review.findings[0].file}:${task.review.findings[0].line} ${collidingWhat}`;
+  task.audit.findings[0].what = collidingWhat;
+  task.audit.findings[0].refute.finding = `${task.audit.findings[0].file}:${task.audit.findings[0].line} ${collidingWhat}`;
+  task.refutes = [task.review.findings[0].refute, task.audit.findings[0].refute];
+  const result = mixedStageCouncilReturn();
+  result.council.findings[0] = {
+    ...result.council.findings[0],
+    source: 'review',
+    summary: 'Review found stale recovery evidence after a successful fix.',
+  };
+  result.council.findings[1] = {
+    ...result.council.findings[1],
+    source: 'audit',
+    summary: 'Audit independently found stale evidence at the terminal boundary.',
+  };
+
+  const { root, taskDir } = await prepareScopedCouncilRecovery(task, result);
+  try {
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.review.reviewer_agent_id, null);
+    assert.equal(recorded.review2.reviewer_agent_id, 'reviewer-two');
+    assert.equal(recorded.audit.audit_agent_id, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 67 review cycle 1 source-bound net-new council finding reopens its affected review slot', async () => {
+  const result = councilReturn();
+  result.council.findings[0] = {
+    ...result.council.findings[0],
+    source: 'review2',
+    summary: 'The council found a distinct boundary failure not copied from specialist prose.',
+  };
+
+  const { root, taskDir } = await prepareScopedCouncilRecovery(reviewTwoCouncilTask(), result);
+  try {
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.review.reviewer_agent_id, 'reviewer-one');
+    assert.equal(recorded.review2, null);
+    assert.equal(recorded.audit.audit_agent_id, 'auditor');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 67 review cycle 1 archives agents-only reviewer and auditor identities before clearing slots', async (t) => {
+  const cases = [
+    ['review', 'agents-only-reviewer'],
+    ['audit', 'agents-only-auditor'],
+  ];
+
+  for (const [stage, agentId] of cases) {
+    await t.test(stage, async () => {
+      const task = mixedStageCouncilTask();
+      task.agents.reviewer_agent_id = 'agents-only-reviewer';
+      task.review.reviewer_agent_id = null;
+      task.agents.audit_agent_id = 'agents-only-auditor';
+      task.audit.audit_agent_id = null;
+      const { root, taskDir } = await prepareScopedCouncilRecovery(task, mixedStageCouncilReturn());
+      try {
+        await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
+        const archived = await readTask(taskDir);
+        assert.equal(archived.judgmentHistory[0].review.reviewer_agent_id, null);
+        assert.equal(archived.judgmentHistory[0].audit.audit_agent_id, null);
+        assert.equal(archived.judgmentHistory[0].agents?.reviewer_agent_id, 'agents-only-reviewer');
+        assert.equal(archived.judgmentHistory[0].agents?.audit_agent_id, 'agents-only-auditor');
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        const returned = stage === 'review'
+          ? reviewReturn(agentId, { cycle: 1 })
+          : auditReturn(agentId, { cycle: 1 });
+
+        await assert.rejects(
+          recordSpecialistReturn(root, stage, '18', returned),
+          /\[record-identity\].*specialist separation/,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 67 review cycle 1 scoped completion rejects post-verify HEAD drift atomically', async () => {
+  const { root, taskDir } = await prepareMixedStageReassessment();
+  try {
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    await recordFreshCouncilJudgments(root, { includeAudit: true });
+    await writeFile(join(root, 'post-verify-change.txt'), 'content committed after verification\n', 'utf8');
+    runGit(root, ['add', 'post-verify-change.txt']);
+    runGit(root, ['commit', '-qm', 'post verify content change']);
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped')),
+      /\[record-transition\].*(?:HEAD|current).*verification/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 67 review cycle 1 scoped completion rejects persisted pass labels with blockers atomically', async () => {
+  const { root, taskDir } = await prepareMixedStageReassessment();
+  try {
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    await recordFreshCouncilJudgments(root, { includeAudit: true });
+    const inconsistent = await readTask(taskDir);
+    inconsistent.review.findings = [blockingFinding({
+      line: 40,
+      what: 'A persisted pass still contains a blocking review finding.',
+      why: 'Terminal recovery must derive pass consistency from current findings.',
+    })];
+    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(inconsistent, null, 2)}\n`, 'utf8');
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped')),
+      /\[record-transition\].*(?:current|persisted).*judgment.*(?:block|consistent|pass)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 67 review cycle 1 scoped completion rejects unbound history and implementation evidence atomically', async () => {
+  const task = councilTask({
+    implement: {
+      result: 'green',
+      files: ['src/core/record.js'],
+      greenRun: { command: 'node --test src/cli/record.test.js', output: 'prior pass' },
+    },
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    runGit(root, ['init', '-q']);
+    runGit(root, ['config', 'user.email', 'tests@example.com']);
+    runGit(root, ['config', 'user.name', 'Tests']);
+    runGit(root, ['config', 'commit.gpgsign', 'false']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'baseline']);
+    await recordSpecialistReturn(root, 'council', '18', councilReturn());
+
+    const forged = await readTask(taskDir);
+    forged.stage = 'review';
+    forged.review = {
+      verdict: 'pass',
+      reviewer_agent_id: 'fresh-reviewer-one',
+      findings: [],
+      evidence: ['fresh review evidence'],
+    };
+    forged.review2 = {
+      verdict: 'pass',
+      reviewer_agent_id: 'fresh-reviewer-two',
+      findings: [],
+      evidence: ['fresh second review evidence'],
+    };
+    forged.audit = {
+      required: true,
+      verdict: 'pass',
+      audit_agent_id: 'fresh-auditor',
+      findings: [],
+      evidence: ['fresh audit evidence'],
+    };
+    forged.agents.reviewer_agent_id = 'fresh-reviewer-one';
+    forged.agents.reviewer2_agent_id = 'fresh-reviewer-two';
+    forged.agents.audit_agent_id = 'fresh-auditor';
+    forged.judgmentHistory = [{
+      at: '2026-07-12T00:00:01Z',
+      review: task.review,
+      review2: task.review2,
+      audit: task.audit,
+    }];
+    forged.tests = {
+      ...forged.tests,
+      green: true,
+      gate: {
+        hash: runGit(root, ['rev-parse', 'HEAD']),
+        clean: true,
+        green: true,
+        command: 'true',
+        at: '2026-07-12T00:00:02Z',
+      },
+    };
+    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(forged, null, 2)}\n`, 'utf8');
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped')),
+      /\[record-transition\].*(?:active|scoped|recovery).*(?:cycle|history|implementation)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('recording against abandoned lock state returns a bounded named outcome without changing the task', async () => {
   const { root, taskDir } = await makeRoot();
   try {
