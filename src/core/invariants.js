@@ -222,7 +222,9 @@ export function runInvariants(tasks, { lite }) {
       if (g === true && (ta === null || ta === im)) {
         out.push(`task ${id}: done but tests not authored by a non-implementer [inv4]`);
       }
-      const recoveredReviewCouncil = t.convergence?.council?.stage === 'review'
+      const recoveredReviewCouncil = t.convergence?.council?.convened === true
+        && t.convergence.council.stage === 'review'
+        && t.convergence.council.verdict === 'block'
         && t.convergence.council.outcome === 'scoped-fix-shipped';
       if (reviewVerdict !== 'pass' && !recoveredReviewCouncil) {
         out.push(`task ${id}: done but review.verdict != pass [inv4]`);
