@@ -7,6 +7,7 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 ## NOW
 
 - **Release candidate:** 3.3.0 contains the host-neutral specialist recorder, the archived-cycle reset fix, and simplified scoped recovery.
+- **Release blockers, in order:** `#72` mechanical recorder corrections, `#73` trusted scanner-floor persistence, then `#74` one task-wide council.
 - **Parallel/non-blocking: `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
 
 ## NEXT
@@ -29,4 +30,5 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 - **`#56`** retain the Codex-native UX follow-up; keep it outside model routing and the shared method.
 - **`#47`** clarify the legacy in-flight branch example in the migration guide; non-blocking review-council follow-up from #38.
+- **`#71`** add a separate Git HEAD-probe failure regression only if the HEAD and status probe paths diverge or a regression reaches that branch.
 - Long-tail security scanners are frozen. `#26` is closed; reopen or supersede only when run history shows a new engine catches unique actionable findings.
