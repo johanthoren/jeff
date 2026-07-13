@@ -49,9 +49,9 @@ function isFailingJudgment(outcome) {
   return outcome?.verdict === 'needs-work' && isConsistentJudgment(outcome);
 }
 
-/** @param {MutableRecordTask} task @param {string} at @param {boolean} recovery */
+/** @param {MutableRecordTask} task @param {string} at @param {Record<string, any>} [recovery] */
 function judgmentHistoryEntry(task, at, recovery) {
-  const entry = {
+  return {
     at,
     review: task.review,
     review2: task.review2 ?? null,
@@ -61,14 +61,7 @@ function judgmentHistoryEntry(task, at, recovery) {
       reviewer2_agent_id: task.agents.reviewer2_agent_id,
       audit_agent_id: task.agents.audit_agent_id,
     },
-  };
-  if (!recovery) return entry;
-  return {
-    ...entry,
-    recovery: {
-      council: structuredClone(task.convergence.council),
-      implementer_agent_id: task.implement?.agent_id,
-    },
+    ...(recovery ? { recovery } : {}),
   };
 }
 
@@ -146,7 +139,10 @@ function reopenCouncilJudgments(task, at) {
 
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
-    judgmentHistoryEntry(task, at, true),
+    judgmentHistoryEntry(task, at, {
+      council: structuredClone(task.convergence.council),
+      implementer_agent_id: task.implement?.agent_id,
+    }),
   ];
   if (reopenReview) {
     task.agents.reviewer_agent_id = null;
@@ -181,7 +177,7 @@ function resetJudgmentsAfterFix(task, at) {
 
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
-    judgmentHistoryEntry(task, at, false),
+    judgmentHistoryEntry(task, at),
   ];
   task.agents.reviewer_agent_id = null;
   task.agents.reviewer2_agent_id = null;
