@@ -222,25 +222,30 @@ export function runInvariants(tasks, { lite }) {
       if (g === true && (ta === null || ta === im)) {
         out.push(`task ${id}: done but tests not authored by a non-implementer [inv4]`);
       }
-      const councilShipStage = t.convergence?.council?.convened === true
+      const shippedCouncil = t.convergence?.council?.convened === true
         && t.convergence.council.verdict === 'ship'
-        && t.convergence.council.outcome === 'shipped'
-        ? t.convergence.council.stage
-        : null;
-      if (reviewVerdict !== 'pass' && councilShipStage !== 'review') {
+        && t.convergence.council.outcome === 'shipped';
+      const councilSources = shippedCouncil
+        ? new Set(t.convergence.council.findings.map((/** @type {any} */ finding) => finding.source))
+        : new Set();
+      const legacyCouncilStage = councilSources.has(undefined) ? t.convergence.council.stage : null;
+      const councilResolved = (/** @type {'review' | 'review2' | 'audit'} */ source) => (
+        councilSources.has(source) || (legacyCouncilStage === 'review' && source !== 'audit') || legacyCouncilStage === source
+      );
+      if (reviewVerdict !== 'pass' && !councilResolved('review')) {
         out.push(`task ${id}: done but review.verdict != pass [inv4]`);
       }
       const isHistoricalSingleReview = !Object.hasOwn(t, 'review2')
         && (Object.hasOwn(agents, 'plan_agent_id') || Object.hasOwn(agents, 'test_author_agent_id'));
       const isComplex = t.complexity !== 'simple' && !isHistoricalSingleReview;
-      if (isComplex && (!isType(t.review2, 'object') || (t.review2.verdict !== 'pass' && councilShipStage !== 'review'))) {
+      if (isComplex && (!isType(t.review2, 'object') || (t.review2.verdict !== 'pass' && !councilResolved('review2')))) {
         out.push(`task ${id}: complex done task requires a recorded second review with review2.verdict == pass [inv4]`);
       } else if (!isComplex && t.review2 !== null && t.review2 !== undefined
-        && t.review2.verdict !== 'pass' && councilShipStage !== 'review') {
+        && t.review2.verdict !== 'pass' && !councilResolved('review2')) {
         out.push(`task ${id}: done but review2.verdict != pass [inv4]`);
       }
       const av = jqOr(t.audit && t.audit.verdict, 'na');
-      if (av !== 'pass' && av !== 'na' && councilShipStage !== 'audit') {
+      if (av !== 'pass' && av !== 'na' && !councilResolved('audit')) {
         out.push(`task ${id}: done but audit.verdict not pass|na [inv4]`);
       }
     }

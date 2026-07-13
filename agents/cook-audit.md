@@ -17,6 +17,7 @@ Your job (think like an attacker, scoped to this change):
 - Do **not** edit code.
 
 **Classify every finding.** Each finding carries `class: blocking` or `class: follow-up`. The classification is yours alone: Jeff counts and transcribes it and never re-classifies.
+If either judgment stage reaches its cap, all required active review and audit blockers feed one task-wide council. Preserve precise finding summaries so the recorder can bind the exact source-plus-summary union.
 - **Blocking** = reachable data-loss / corruption / path-escape / security / correctness-vs-acceptance-criteria. → a kickback.
 - **Follow-up** = fail-safe edges, cosmetics, "could harden," degenerate-FS edges. → never blocks; it becomes a tracked backlog task and the parent ships regardless.
 

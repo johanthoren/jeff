@@ -275,6 +275,30 @@ function recordRefute(task, result, at) {
   task.status = 'in_progress';
 }
 
+/** @param {MutableRecordTask} task @param {Record<string, any>} council */
+function assertCouncilInput(task, council) {
+  const requiredReviews = task.complexity === 'simple' ? 1 : 2;
+  const reviews = [task.review, task.review2].filter((outcome) => outcome?.reviewer_agent_id);
+  if (reviews.length !== requiredReviews || (task.audit.required && !task.audit.audit_agent_id)) {
+    throw new Error('[record-transition] council requires every active judgment return');
+  }
+  const blockers = judgmentSources(task).flatMap(({ source, outcome }) => (
+    (outcome?.findings ?? [])
+      .filter((/** @type {any} */ finding) => finding.class === 'blocking')
+      .map((/** @type {any} */ finding) => ({ source, summary: finding.what, refute: finding.refute }))
+  ));
+  if (blockers.some(({ source, refute }) => refute?.source !== source || refute.verdict !== 'survives')) {
+    throw new Error('[record-transition] council requires a source-bound surviving refute for every active blocker');
+  }
+  const expectedFindings = new Set(blockers.map(({ source, summary }) => `${source}\0${summary}`));
+  const returnedFindings = council.findings.map((/** @type {any} */ finding) => `${finding.source}\0${finding.summary}`);
+  if (returnedFindings.length !== expectedFindings.size
+    || new Set(returnedFindings).size !== returnedFindings.length
+    || returnedFindings.some((/** @type {string} */ finding) => !expectedFindings.has(finding))) {
+    throw new Error('[record-transition] council findings must exactly match the active source-bound blocker union');
+  }
+}
+
 /** @param {MutableRecordTask} task @param {Record<string, any>} result @param {string} at */
 function recordCouncil(task, result, at) {
   const council = result.council;
@@ -290,6 +314,7 @@ function recordCouncil(task, result, at) {
   if (pending.stage !== council.stage || !counter || counter.blockingKickbacks < task.convergence.cap) {
     throw new Error(`[record-transition] ${council.stage} council is not active`);
   }
+  assertCouncilInput(task, council);
   const forbidden = forbiddenCouncilAgentIds(task);
   const reused = council.members.find((/** @type {any} */ member) => forbidden.has(member.agent_id));
   if (reused) {
