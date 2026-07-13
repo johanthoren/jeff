@@ -6,6 +6,7 @@ import { collectTasks, readMode, readTask, writeTask } from './store.js';
 import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
+import { forbiddenCouncilAgentIds, forbiddenRefuteAgentIds } from './identity-policy.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 /** @typedef {Record<string, any>} MutableRecordTask */
@@ -149,6 +150,9 @@ function recordAudit(task, result) {
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result @param {string} at */
 function recordRefute(task, result, at) {
+  if (forbiddenRefuteAgentIds(task).has(result.agent_id)) {
+    throw new Error(`[record-identity] refute agent ${result.agent_id} violates specialist separation`);
+  }
   const activeFindings = judgmentSources(task).flatMap(({ source, outcome }) => (
     (outcome?.findings ?? []).map((/** @type {any} */ finding) => ({ source, finding }))
   ));
@@ -220,26 +224,27 @@ function recordCouncil(task, result, at) {
   const council = result.council;
   const pending = task.convergence?.council;
   const counter = task.convergence?.stages?.[council.stage];
-  if (!pending || pending.convened === true) {
+  if (!pending) {
     throw new Error('[record-transition] council is not awaiting a return');
+  }
+  if (pending.convened === true) {
+    recordCouncilRecovery(task, council);
+    return;
   }
   if (pending.stage !== council.stage || !counter || counter.blockingKickbacks < task.convergence.cap) {
     throw new Error(`[record-transition] ${council.stage} council is not active`);
   }
+  const forbidden = forbiddenCouncilAgentIds(task);
+  const reused = council.members.find((/** @type {any} */ member) => forbidden.has(member.agent_id));
+  if (reused) {
+    throw new Error(`[record-identity] council member ${reused.agent_id} reuses a prior judge identity`);
+  }
+  if (council.verdict === 'block' && council.outcome !== null) {
+    throw new Error('[record-transition] initial council block must have outcome null');
+  }
 
   task.convergence.council = council;
   if (council.verdict === 'ship') {
-    task.stage = 'done';
-    task.status = 'done';
-    return;
-  }
-  if (council.outcome === 'blocked-to-operator') {
-    task.stage = 'implement';
-    task.status = 'blocked';
-    task.blockedReason = council.findings.filter((/** @type {any} */ finding) => finding.survived).map((/** @type {any} */ finding) => finding.summary).join('; ');
-    return;
-  }
-  if (council.outcome === 'scoped-fix-shipped') {
     task.stage = 'done';
     task.status = 'done';
     return;
@@ -253,6 +258,38 @@ function recordCouncil(task, result, at) {
   }];
   task.stage = 'implement';
   task.status = 'in_progress';
+}
+
+/** @param {MutableRecordTask} task @param {Record<string, any>} council */
+function recordCouncilRecovery(task, council) {
+  const pending = task.convergence.council;
+  const expected = { ...pending, outcome: council.outcome };
+  if (pending.verdict !== 'block' || pending.outcome !== null || JSON.stringify(council) !== JSON.stringify(expected)) {
+    throw new Error('[record-transition] council recovery must preserve the recorded block');
+  }
+  if (task.stage === 'implement') {
+    throw new Error('[record-transition] council recovery requires a separately recorded scoped implementation');
+  }
+  if (council.outcome === 'scoped-fix-shipped') {
+    const gate = task.tests?.gate;
+    if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
+      throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
+    }
+    task.convergence.council.outcome = council.outcome;
+    task.stage = 'done';
+    task.status = 'done';
+    return;
+  }
+  if (council.outcome === 'blocked-to-operator') {
+    task.convergence.council.outcome = council.outcome;
+    task.status = 'blocked';
+    task.blockedReason = pending.findings
+      .filter((/** @type {any} */ finding) => finding.survived)
+      .map((/** @type {any} */ finding) => finding.summary)
+      .join('; ');
+    return;
+  }
+  throw new Error('[record-transition] council recovery outcome must terminate the scoped cycle');
 }
 
 /** @param {MutableRecordTask} task */
@@ -285,13 +322,24 @@ export function transitionTask(task, stage, result) {
     next.plan = { result: result.result, slices: result.slices, testFiles: result.testFiles, redRun: result.redRun, escalation: result.escalation };
     next.stage = result.result === 'escalation' ? 'capture' : 'implement';
   } else if (stage === 'implement') {
+    const isScopedCouncilFix = next.convergence?.council?.convened === true
+      && next.convergence.council.verdict === 'block'
+      && next.convergence.council.outcome === null;
+    if (isScopedCouncilFix && (result.result !== 'green' || result.kickback !== null)) {
+      throw new Error('[record-transition] scoped council recovery permits one green implementation return');
+    }
     next.agents.implementer_agent_id = result.agent_id;
     next.implement = { result: result.result, files: result.files, greenRun: result.greenRun };
     if (result.kickback) {
       next.kickbacks = [...next.kickbacks, { from: 'implement', to: result.kickback.to, reason: result.kickback.reason, at }];
       next.stage = result.kickback.to;
     } else {
-      resetJudgmentsAfterFix(next, at);
+      if (isScopedCouncilFix) {
+        next.tests = { ...next.tests, green: false };
+        delete next.tests.gate;
+      } else {
+        resetJudgmentsAfterFix(next, at);
+      }
       next.stage = 'refactor';
     }
   } else if (stage === 'refactor') {
@@ -386,16 +434,19 @@ export async function updateTask(root, id, update, options = {}) {
   });
 }
 
-/** @param {string} root @param {string} stage @param {string} id @param {string} file */
-export async function recordSpecialistFile(root, stage, id, file) {
+/** @param {string} root @param {string} stage @param {string} id @param {string} file @param {string} [observedAgentId] */
+export async function recordSpecialistFile(root, stage, id, file, observedAgentId) {
   let parsed;
   try { parsed = JSON.parse(await readFile(file, 'utf8')); }
   catch { throw new Error(`[record-json] invalid JSON in ${file}`); }
-  return recordSpecialistReturn(root, stage, id, parsed);
+  return recordSpecialistReturn(root, stage, id, parsed, observedAgentId);
 }
 
-/** @param {string} root @param {string} stage @param {string} id @param {unknown} value */
-export async function recordSpecialistReturn(root, stage, id, value) {
+/** @param {string} root @param {string} stage @param {string} id @param {unknown} value @param {string} [observedAgentId] */
+export async function recordSpecialistReturn(root, stage, id, value, observedAgentId) {
   const specialistReturn = validateSpecialistReturn(stage, value);
+  if (stage !== 'council' && specialistReturn.agent_id !== observedAgentId) {
+    throw new Error(`[record-identity] claimed agent ${specialistReturn.agent_id} does not match observed agent ${observedAgentId ?? '<missing>'}`);
+  }
   return updateTask(root, id, (task) => transitionTask(task, stage, specialistReturn), { allowTransientTerminal: true });
 }

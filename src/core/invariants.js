@@ -14,6 +14,7 @@
  */
 
 import { isType } from './validate.js';
+import { forbiddenCouncilAgentIds } from './identity-policy.js';
 
 /**
  * jq's `a // b`: yield `b` when `a` is null, false, or absent.
@@ -221,7 +222,9 @@ export function runInvariants(tasks, { lite }) {
       if (g === true && (ta === null || ta === im)) {
         out.push(`task ${id}: done but tests not authored by a non-implementer [inv4]`);
       }
-      if (reviewVerdict !== 'pass') {
+      const recoveredReviewCouncil = t.convergence?.council?.stage === 'review'
+        && t.convergence.council.outcome === 'scoped-fix-shipped';
+      if (reviewVerdict !== 'pass' && !recoveredReviewCouncil) {
         out.push(`task ${id}: done but review.verdict != pass [inv4]`);
       }
       const isHistoricalSingleReview = !Object.hasOwn(t, 'review2')
@@ -233,7 +236,9 @@ export function runInvariants(tasks, { lite }) {
         out.push(`task ${id}: done but review2.verdict != pass [inv4]`);
       }
       const av = jqOr(t.audit && t.audit.verdict, 'na');
-      if (av !== 'pass' && av !== 'na') {
+      const recoveredAuditCouncil = t.convergence?.council?.stage === 'audit'
+        && t.convergence.council.outcome === 'scoped-fix-shipped';
+      if (av !== 'pass' && av !== 'na' && !recoveredAuditCouncil) {
         out.push(`task ${id}: done but audit.verdict not pass|na [inv4]`);
       }
     }
@@ -251,7 +256,7 @@ export function runInvariants(tasks, { lite }) {
     }
 
     // convergence block (inv7-11); absent ⇒ skipped
-    convergenceChecks(t, id, ids, rv, im, out);
+    convergenceChecks(t, id, ids, out);
 
     // status-conditional required fields
     if (t.status === 'blocked' && jqOr(t.blockedReason, '') === '') {
@@ -304,12 +309,10 @@ export function runInvariants(tasks, { lite }) {
  * @param {any} t - the task object
  * @param {string} id - jq-rendered `t.id`
  * @param {any[]} ids - all task ids (for followupTaskId existence)
- * @param {any} rv - reviewer_agent_id (null if absent)
- * @param {any} im - implementer_agent_id (null if absent)
  * @param {string[]} out - violation accumulator
  * @returns {void}
  */
-function convergenceChecks(t, id, ids, rv, im, out) {
+function convergenceChecks(t, id, ids, out) {
   const c = t.convergence;
   if (c === null || c === undefined) return;
   const cl = c.council;
@@ -360,13 +363,14 @@ function convergenceChecks(t, id, ids, rv, im, out) {
     const mem = jqOr(cl.members, []);
     const mids = mem.map((/** @type {any} */ m) => (m == null ? null : m.agent_id));
     const lenses = mem.map((/** @type {any} */ m) => (m == null ? null : m.lens));
+    const forbidden = forbiddenCouncilAgentIds(t);
     if (mem.length !== 3) out.push(`task ${id}: convened council must have exactly 3 members [inv8]`);
     if (new Set(mids).size !== mids.length) {
       out.push(`task ${id}: council member agent_ids must be mutually distinct [inv8]`);
     }
     for (const mid of mids) {
-      if (mid === rv || mid === im) {
-        out.push(`task ${id}: council member ${jqStr(mid)} overlaps reviewer/implementer [inv8]`);
+      if (forbidden.has(mid)) {
+        out.push(`task ${id}: council member ${jqStr(mid)} overlaps a forbidden prior judge [inv8]`);
       }
     }
     if (JSON.stringify([...lenses].sort()) !== JSON.stringify(['integrity', 'pragmatist', 'security'])) {

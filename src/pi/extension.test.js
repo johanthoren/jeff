@@ -296,6 +296,8 @@ test('cook_dispatch taskId persists the specialist result through the shared rec
       abandonReason: null,
     }, null, 2)}\n`, 'utf8');
     const transcript = JSON.stringify({
+      agent_id: 'pi-plan-agent',
+      stage: 'plan',
       result: 'red',
       complexity: 'complex',
       auditRequired: true,
@@ -375,6 +377,8 @@ test('cook_dispatch transports the judgment cycle through the shared record cont
       abandonReason: null,
     }, null, 2)}\n`, 'utf8');
     const transcript = JSON.stringify({
+      agent_id: 'pi-review-agent',
+      stage: 'review',
       cycle: 0,
       verdict: 'pass',
       acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
@@ -401,6 +405,76 @@ test('cook_dispatch transports the judgment cycle through the shared record cont
 
     assert.equal(task.review.reviewer_agent_id, 'pi-review-agent');
     assert.equal(task.status, 'done');
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('cook_dispatch rejects mismatched claimed identity without changing ledger bytes', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-record-identity-'));
+  const taskDir = join(cwd, '.jeff', 'tasks', '018-record-specialists');
+  const taskFile = join(taskDir, 'task.json');
+  try {
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    await writeFile(taskFile, `${JSON.stringify({
+      schemaVersion: 1,
+      id: '18',
+      slug: 'record-specialists',
+      title: 'Record specialists',
+      status: 'in_progress',
+      stage: 'plan',
+      priority: 'p2',
+      deps: [],
+      complexity: 'simple',
+      createdAt: '2026-07-12T00:00:00Z',
+      updatedAt: '2026-07-12T00:00:00Z',
+      agents: { implementer_agent_id: null, reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+      tests: { authored_by_agent_id: null, green: false, evidence: [] },
+      review: { verdict: null, reviewer_agent_id: null, findings: [], evidence: [] },
+      audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+      commits: [],
+      kickbacks: [],
+      convergence: {
+        cap: 2,
+        stages: { review: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
+        council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+      },
+      blockedReason: null,
+      abandonReason: null,
+    }, null, 2)}\n`, 'utf8');
+    const before = await readFile(taskFile, 'utf8');
+    const transcript = JSON.stringify({
+      agent_id: 'claimed-plan-agent',
+      stage: 'plan',
+      result: 'red',
+      complexity: 'complex',
+      auditRequired: true,
+      slices: ['Record one specialist result'],
+      testFiles: ['src/pi/extension.test.js'],
+      redRun: { command: 'node --test src/pi/extension.test.js', output: 'missing identity binding' },
+      escalation: null,
+    });
+    const tool = registeredDispatchTool({
+      dispatchRoleSession: async () => ({
+        stage: 'plan',
+        agent_id: 'observed-plan-agent',
+        brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
+        transcript,
+      }),
+    });
+
+    await assert.rejects(
+      () => tool.execute(
+        'call-1',
+        { stage: 'plan', brief: 'Plan task 18.', taskId: '18' },
+        undefined,
+        undefined,
+        { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+      ),
+      /\[record-identity\] claimed agent claimed-plan-agent does not match observed agent observed-plan-agent/,
+    );
+    assert.equal(await readFile(taskFile, 'utf8'), before);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

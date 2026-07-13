@@ -239,11 +239,7 @@ export default function jeffExtension(pi, dependencies = {}) {
         } catch {
           throw new Error('cook_dispatch: specialist return is not strict JSON [record-json]');
         }
-        await recordSpecialistReturn(ctx.cwd, params.stage, params.taskId, {
-          ...specialistReturn,
-          agent_id: result.agent_id,
-          stage: params.stage,
-        });
+        await recordSpecialistReturn(ctx.cwd, params.stage, params.taskId, specialistReturn, result.agent_id);
       }
 
       return {

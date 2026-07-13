@@ -1520,7 +1520,8 @@ cook: Jeff v1-lean CLI.
 Subcommands:
   validate     Check .jeff state against the schema + invariants (skips if not a jeff project).
   verify       Run the configured test command (full-suite gate); exit code is the verdict. Full mode appends a hash-keyed line to .jeff/test-runs.jsonl.
-  record <stage> <id> <file>  Validate and atomically record one strict JSON specialist return.
+  record <stage> <id> <observed-agent-id> <file>  Atomically record a strict JSON specialist return bound to its observed dispatch id.
+  record council <id> <file>  Atomically record a council aggregate.
   baseline check [<hash>]  Exit 0 iff <hash> (default HEAD) is a green+clean baseline in the run log AND the tree is currently clean at it.
   ls           List tasks (id, status, stage, priority, title).
   status       In-flight tasks + backlog health.
