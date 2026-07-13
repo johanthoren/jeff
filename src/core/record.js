@@ -81,6 +81,8 @@ function resetJudgmentsAfterFix(task, at) {
     ['review', 'audit'].includes(kickback.from)
   ));
   if (!unresolvedJudgmentKickback) return;
+  const latestHistoryAt = task.judgmentHistory?.at(-1)?.at;
+  if (latestHistoryAt && Date.parse(unresolvedJudgmentKickback.at) <= Date.parse(latestHistoryAt)) return;
 
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
