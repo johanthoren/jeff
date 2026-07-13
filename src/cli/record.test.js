@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { recordSpecialistReturn } from '../core/record.js';
+import { recordSpecialistReturn as recordObservedSpecialistReturn } from '../core/record.js';
+import { runVerify } from '../core/verify.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COOK_JS = join(HERE, 'cook.js');
@@ -63,6 +64,23 @@ function runCook(root, args) {
     encoding: 'utf8',
   });
   return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** @param {string} root @param {string[]} args */
+function runGit(root, args) {
+  const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+/**
+ * @param {string} root
+ * @param {string} stage
+ * @param {string} id
+ * @param {Record<string, any>} value
+ */
+function recordSpecialistReturn(root, stage, id, value) {
+  return recordObservedSpecialistReturn(root, stage, id, value, value.agent_id);
 }
 
 /** @param {string} root @param {unknown} value @param {string} [name] */
@@ -193,12 +211,94 @@ function parallelJudgmentTask() {
   });
 }
 
+function councilTask(overrides = {}) {
+  const finding = {
+    ...blockingFinding(),
+    refute: {
+      agent_id: 'refuter',
+      source: 'review',
+      finding: 'src/core/record.js:10 The recording path loses a result.',
+      verdict: 'survives',
+      rationale: 'The failure is reachable.',
+      evidence: [{ command: 'node --test src/cli/record.test.js', output: 'failure reproduced' }],
+    },
+  };
+  return canonicalTask({
+    stage: 'review',
+    complexity: 'complex',
+    agents: {
+      implementer_agent_id: 'implementer',
+      reviewer_agent_id: 'reviewer-one',
+      reviewer2_agent_id: 'reviewer-two',
+      audit_agent_id: 'auditor',
+    },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+    review: {
+      verdict: 'needs-work',
+      reportedVerdict: 'needs-work',
+      reviewer_agent_id: 'reviewer-one',
+      findings: [finding],
+      evidence: [{ command: 'git diff --check', output: 'blocking finding' }],
+      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: false }],
+    },
+    review2: {
+      verdict: 'pass',
+      reportedVerdict: 'pass',
+      reviewer_agent_id: 'reviewer-two',
+      findings: [],
+      evidence: [{ command: 'git diff --check', output: 'clean' }],
+      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
+    },
+    audit: {
+      required: true,
+      verdict: 'pass',
+      reportedVerdict: 'pass',
+      audit_agent_id: 'auditor',
+      findings: [],
+      evidence: [{ command: 'review-security --json', output: 'no findings' }],
+      scan: { command: 'review-security --json', recommendation: 'PASS', reportPath: '/tmp/report.md' },
+      coverage: [{ category: 'identity_spoofing', status: 'covered_no_hits' }],
+    },
+    refutes: [finding.refute],
+    convergence: {
+      cap: 2,
+      stages: { review: { blockingKickbacks: 2 }, audit: { blockingKickbacks: 0 } },
+      council: { convened: false, stage: 'review', members: [], findings: [], verdict: null, outcome: null },
+    },
+    ...overrides,
+  });
+}
+
+function councilReturn(outcome = null, memberOverrides = {}) {
+  return {
+    stage: 'council',
+    council: {
+      convened: true,
+      stage: 'review',
+      members: [
+        { agent_id: 'council-integrity', lens: 'integrity', temperature: 0.3 },
+        { agent_id: 'council-security', lens: 'security', temperature: 0.7 },
+        { agent_id: 'council-pragmatist', lens: 'pragmatist', temperature: 1.0 },
+      ].map((member, index) => ({ ...member, ...(memberOverrides[index] ?? {}) })),
+      findings: [{
+        id: 'F1',
+        summary: 'The recording path loses a result.',
+        blockingVotes: 2,
+        survived: true,
+        followupTaskId: null,
+      }],
+      verdict: 'block',
+      outcome,
+    },
+  };
+}
+
 test('record accepts the strict plan return and advances the task atomically', async () => {
   const { root, taskDir } = await makeRoot();
   try {
     const file = await writeReturn(root, planReturn());
 
-    const result = runCook(root, ['record', 'plan', '18', file]);
+    const result = runCook(root, ['record', 'plan', '18', 'plan-agent', file]);
     const task = await readTask(taskDir);
 
     assert.equal(result.code, 0, result.stderr);
@@ -218,7 +318,7 @@ test('record rejects malformed JSON with a named error and preserves the task by
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
     const file = await writeReturn(root, '{');
 
-    const result = runCook(root, ['record', 'plan', '18', file]);
+    const result = runCook(root, ['record', 'plan', '18', 'plan-agent', file]);
 
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /\[record-json\]/);
@@ -234,7 +334,7 @@ test('record rejects extra return fields with a named schema error and preserves
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
     const file = await writeReturn(root, planReturn({ extra: true }));
 
-    const result = runCook(root, ['record', 'plan', '18', file]);
+    const result = runCook(root, ['record', 'plan', '18', 'plan-agent', file]);
 
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /\[record-schema\].*extra/);
@@ -276,7 +376,7 @@ test('record validates closed finding fields and final-stage evidence before wri
       evidence: [],
     });
 
-    const result = runCook(root, ['record', 'review', '18', file]);
+    const result = runCook(root, ['record', 'review', '18', 'reviewer', file]);
 
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /\[record-schema\].*findings\[0\]\.class/);
@@ -303,7 +403,7 @@ test('record rejects a plan author reused as implementer before writing', async 
       kickback: null,
     });
 
-    const result = runCook(root, ['record', 'implement', '18', file]);
+    const result = runCook(root, ['record', 'implement', '18', 'same-agent', file]);
 
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /\[inv1\]/);
@@ -337,7 +437,7 @@ test('record rejects an implementer reused as reviewer before writing', async ()
       evidence: [{ command: 'git diff', output: 'No findings.' }],
     });
 
-    const result = runCook(root, ['record', 'review', '18', file]);
+    const result = runCook(root, ['record', 'review', '18', 'same-agent', file]);
 
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /\[inv2\]/);
@@ -382,7 +482,7 @@ test('record accepts a valid review return and persists its closed findings and 
     };
     const file = await writeReturn(root, specialistReturn);
 
-    const result = runCook(root, ['record', 'review', '18', file]);
+    const result = runCook(root, ['record', 'review', '18', 'reviewer', file]);
     const recorded = await readTask(taskDir);
 
     assert.equal(result.code, 0, result.stderr);
@@ -996,6 +1096,155 @@ test('follow-up-only audit reaches an INV-4-compatible terminal outcome with evi
     assert.equal(recorded.audit.reportedVerdict, 'needs-work');
     assert.deepEqual(recorded.audit.findings, [followup]);
     assert.deepEqual(recorded.audit.evidence, [{ command: 'review-security --json', output: 'no findings' }]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 shared recorder rejects a spoofed specialist identity without changing the task', async () => {
+  const { root, taskDir } = await makeRoot();
+  try {
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordObservedSpecialistReturn(root, 'plan', '18', planReturn({ agent_id: 'claimed-agent' }), 'observed-agent'),
+      /\[record-identity\]/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 CLI passes observed identity separately and rejects payload spoofing atomically', async () => {
+  const { root, taskDir } = await makeRoot();
+  try {
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    const file = await writeReturn(root, planReturn({ agent_id: 'claimed-agent' }));
+
+    const result = runCook(root, ['record', 'plan', '18', 'observed-agent', file]);
+
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /\[record-identity\]/);
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 refute identity cannot reuse the implementer', async () => {
+  const blocker = blockingFinding();
+  const task = canonicalTask({
+    stage: 'review',
+    agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer', {
+      verdict: 'needs-work',
+      findings: [blocker],
+    }));
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'refute', '18', refuteReturn('implementer', blocker)),
+      /\[(?:record-identity|record-transition)\]/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 council members cannot reuse any prior judge identity', async (t) => {
+  const forbiddenAgentIds = [
+    'implementer',
+    'reviewer-one',
+    'reviewer-two',
+    'auditor',
+    'refuter',
+    'council-security',
+  ];
+  for (const agentId of forbiddenAgentIds) {
+    await t.test(agentId, async () => {
+      const { root, taskDir } = await makeRoot(councilTask());
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+        await assert.rejects(
+          recordSpecialistReturn(root, 'council', '18', councilReturn(null, { 0: { agent_id: agentId } })),
+          /\[(?:record-identity|inv8)\]/,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 65 initial council block cannot claim scoped-fix-shipped', async () => {
+  const { root, taskDir } = await makeRoot(councilTask());
+  try {
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped')),
+      /\[record-transition\]/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 scoped council completion requires fresh verification after the recorded fix', async () => {
+  const { root, taskDir } = await makeRoot(councilTask());
+  try {
+    await recordSpecialistReturn(root, 'council', '18', councilReturn());
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped')),
+      /\[record-transition\]/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 65 scoped council completion accepts a recorded fix followed by a fresh clean gate', async () => {
+  const { root, taskDir } = await makeRoot(councilTask());
+  try {
+    await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+    runGit(root, ['init', '-q']);
+    runGit(root, ['config', 'user.email', 'tests@example.com']);
+    runGit(root, ['config', 'user.name', 'Tests']);
+    runGit(root, ['config', 'commit.gpgsign', 'false']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'baseline']);
+
+    await recordSpecialistReturn(root, 'council', '18', councilReturn());
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'record scoped fix']);
+    const scopedFixHash = runGit(root, ['rev-parse', 'HEAD']);
+
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    const gated = await readTask(taskDir);
+    assert.equal(gated.tests.gate.hash, scopedFixHash);
+    assert.equal(gated.tests.gate.clean, true);
+    assert.equal(gated.tests.gate.green, true);
+
+    await recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped'));
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.convergence.council.outcome, 'scoped-fix-shipped');
+    assert.equal(recorded.stage, 'done');
+    assert.equal(recorded.status, 'done');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
