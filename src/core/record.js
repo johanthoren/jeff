@@ -3,7 +3,7 @@
 import { readFile, lstat, mkdir, realpath, rmdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { collectTasks, readMode, readTask, writeTask } from './store.js';
-import { taskSchemaViolations } from './task-schema.js';
+import { isIsoDate, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
 
@@ -82,10 +82,10 @@ function resetJudgmentsAfterFix(task, at) {
   ));
   if (!latestJudgmentKickback) return;
   const latestHistory = task.judgmentHistory?.at(-1);
-  const latestHistoryInstant = latestHistory ? Date.parse(latestHistory.at) : null;
-  if (latestHistory && Number.isNaN(latestHistoryInstant)) {
+  if (latestHistory && !isIsoDate(latestHistory.at)) {
     throw new Error('[record-transition] judgmentHistory latest at is invalid');
   }
+  const latestHistoryInstant = latestHistory ? Date.parse(latestHistory.at) : null;
   if (latestHistoryInstant !== null && Date.parse(latestJudgmentKickback.at) <= latestHistoryInstant) return;
 
   task.judgmentHistory = [

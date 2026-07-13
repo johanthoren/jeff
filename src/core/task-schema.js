@@ -23,7 +23,7 @@ function isNullableString(value) {
 }
 
 /** @param {unknown} value */
-function isIsoDate(value) {
+export function isIsoDate(value) {
   if (typeof value !== 'string') return false;
   const match = ISO_DATETIME.exec(value);
   if (match === null) return false;
