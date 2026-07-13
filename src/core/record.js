@@ -81,8 +81,12 @@ function resetJudgmentsAfterFix(task, at) {
     ['review', 'audit'].includes(kickback.from)
   ));
   if (!latestJudgmentKickback) return;
-  const latestHistoryAt = task.judgmentHistory?.at(-1)?.at;
-  if (latestHistoryAt && Date.parse(latestJudgmentKickback.at) <= Date.parse(latestHistoryAt)) return;
+  const latestHistory = task.judgmentHistory?.at(-1);
+  const latestHistoryInstant = latestHistory ? Date.parse(latestHistory.at) : null;
+  if (latestHistory && Number.isNaN(latestHistoryInstant)) {
+    throw new Error('[record-transition] judgmentHistory latest at is invalid');
+  }
+  if (latestHistoryInstant !== null && Date.parse(latestJudgmentKickback.at) <= latestHistoryInstant) return;
 
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
