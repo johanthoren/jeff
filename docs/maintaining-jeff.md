@@ -36,6 +36,11 @@ in its store and not in a model's memory, and why knowledge lives in files the
 harness reasons over rather than baked into prompts. Bolt a fast-changing concern
 into a slow-changing store and every small change becomes a demolition.
 
+Keep shared operational instructions host-neutral: depend on the bundled
+first-party standards floor and explicit validation plus CI. Treat ambient
+instruction files, hooks, dispatch, and effort mechanics as host adapters used
+only when applicable, and label host-specific guidance.
+
 ## Two drifts; watch model drift
 
 A long-lived agent system is squeezed between two moving things. **World drift**

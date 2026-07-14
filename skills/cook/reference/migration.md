@@ -9,7 +9,7 @@ byte-for-byte.
 What jeff's tooling actually reads (everything else in the config is ignored):
 
 - **state dir** is hardcoded to `.jeff/` (was `.bakehouse/`).
-- `config.json` `active == true` (the PreToolUse gate engages only on this).
+- `config.json` `active == true` (jeff operates only then; Claude Code's optional `PreToolUse` backstop also self-gates on this).
 - `config.json` `mode == "lite"` (else full).
 - `config.json` `testCommand` (full mode only, for `cook verify`).
 
@@ -74,8 +74,9 @@ git status --short
 
 # 0b. Remove any stale git pre-commit hook. Some older bakehouse setups installed
 #     .git/hooks/pre-commit ("bakehouse-validate-hook") that exec's a now-missing
-#     bin/bake and BLOCKS every commit. jeff uses NO git hook (it gates via the
-#     PreToolUse Claude hook + CI), so delete it. Local-only, never tracked.
+#     bin/bake and BLOCKS every commit. jeff uses NO git hook (the shared gate is
+#     explicit validation before commit + CI; Claude Code may add an optional
+#     PreToolUse backstop), so delete it. Local-only, never tracked.
 grep -ql 'bakehouse-validate-hook\|bin/bake' .git/hooks/pre-commit 2>/dev/null && rm -f .git/hooks/pre-commit
 
 # 1. Rename the store. `git mv` does a filesystem rename, so untracked files
@@ -108,7 +109,7 @@ perl -i -pe 's{^\.bakehouse/}{.jeff/}' .git/info/exclude
 COOK_ROOT="$PWD" <cook> validate     # expect: validation OK (N task(s))
 COOK_ROOT="$PWD" <cook> doctor       # expect: mode: full / jeff: ACTIVE
 
-# 7. Commit. (Jeff's own PreToolUse gate will re-validate this commit.)
+# 7. Commit. (Claude Code's optional PreToolUse backstop re-validates when enabled.)
 git commit -m "Migrate bakehouse state to jeff"
 ```
 
@@ -213,10 +214,10 @@ cross-order constraint is each order's `dependsOn`, preserved as `deps`.
 
 ## After migration
 
-- **bakehouse plugin handoff** is automatic: once `.bakehouse/` is gone, the
-  bakehouse PreToolUse hook finds no project and stands down, while jeff's hook
-  engages on the new `.jeff/`. Disabling the bakehouse plugin is still cleaner
-  while both are installed.
+- **Claude Code plugin handoff** is automatic when its optional hooks are enabled:
+  once `.bakehouse/` is gone, the bakehouse `PreToolUse` hook finds no project and
+  stands down, while jeff's can engage on the new `.jeff/`. Disabling the
+  bakehouse plugin is still cleaner while both are installed.
 - **In-flight branches** (`task/<id>-<slug>` for complex tasks) are unaffected:
   branch names do not reference the state dir.
 - `cook validate` is safe to run anywhere; it skips cleanly when the cwd is not
