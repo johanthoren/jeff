@@ -100,7 +100,11 @@ the remaining transition verbs until `#61`.
 
 ## 9. Ambient entry
 
-**Activation gate:** the skill engages only in an *active* jeff project (`.jeff/config.json` with `active: true`, set by `cook init`); elsewhere it stands down to vanilla Claude Code + the Chef's `CLAUDE.md`. Within an active project, the `cook` skill triggers on work-intent in ordinary conversation: the Chef need not type a command. Before **formulating/locking a task** (the `capture` stage), it **asks for confirmation**, so it never silently commits to a pipeline. Explicit commands remain available.
+**Activation gate:** the skill engages only in an *active* jeff project (`.jeff/config.json` with `active: true`, set by `cook init`); elsewhere it stands down to vanilla Claude Code + the Chef's `CLAUDE.md`. Within an active project, ordinary work-intent triggers ad hoc current-context work, not task creation or specialist dispatch. The Chef can preserve a finding without creating work, record future work as pending, or separately ask to start tracked execution. Recording never starts capture or lite adoption.
+
+Full mode keeps durable findings under `.jeff/memory/`. Outside full mode, Jeff prefers a suitable existing Git-tracked memory, decisions, learnings, or handoff file and preserves its purpose and format; local `.jeff/memory/` is the fallback. `AGENTS.md`, READMEs, and ordinary product documentation are not memory stores.
+
+Jeff suggests tracking only when a semantic obligation makes durable structure useful, never because an attempt count was reached. The suggestion names what to track, why, and how to record or explicitly start it. Once the Chef starts tracked work, the existing capture, separation, verification, review, audit, convergence, and done-gate contracts apply unchanged. `skills/cook/SKILL.md` is authoritative for the operational boundary.
 
 ## 10. Standards & skill-leaning policy
 

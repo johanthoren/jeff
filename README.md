@@ -134,10 +134,22 @@ Activate Jeff per repo, once. Two modes:
 
 ## Use
 
-Just say what you want done. "Add rate limiting to the upload endpoint." "Chef,
-I've found a bug in the parser." He takes it from there: confirms the order with
-you, then runs it down the line. Open with "Chef," or "Jeff," or just the work;
-intent is the trigger, not a command.
+Just say what you want done. In an active project, ordinary intent starts as ad
+hoc work in the current context, with no task or specialist. Experiment freely,
+then choose what deserves durability:
+
+- **Explore:** keep quick, reversible work in the current context.
+- **Remember:** preserve a finding without creating work. Full mode uses
+  `.jeff/memory/`; elsewhere Jeff prefers a suitable existing tracked memory,
+  decisions, learnings, or handoff file, then falls back to local
+  `.jeff/memory/`.
+- **Record:** create pending future work without starting it.
+- **Start:** explicitly ask Jeff to run a recorded item through the pipeline.
+
+Jeff suggests tracking only when a meaningful obligation emerges, and explains
+what to track, why structure helps, and how to record or start it. Recording and
+starting are separate choices. Once tracked work starts, every quality gate above
+still applies.
 
 Re-fire until it's worthy.
 
