@@ -100,7 +100,15 @@ the remaining transition verbs until `#61`.
 
 ## 9. Ambient entry
 
-**Activation gate:** the skill engages only in an *active* jeff project (`.jeff/config.json` with `active: true`, set by `cook init`); elsewhere it stands down to vanilla Claude Code + the Chef's `CLAUDE.md`. Within an active project, the `cook` skill triggers on work-intent in ordinary conversation: the Chef need not type a command. Before **formulating/locking a task** (the `capture` stage), it **asks for confirmation**, so it never silently commits to a pipeline. Explicit commands remain available.
+**Activation gate:** the skill engages only in an *active* jeff project (`.jeff/config.json` with `active: true`, set by `cook init`); elsewhere it stands down to vanilla Claude Code + the Chef's `CLAUDE.md`. Within an active project, the normal host agent handles ordinary work-intent in the current context under the user's and repository's ordinary instructions, not as task creation or specialist dispatch. Addressing Jeff or the Chef and using engineering verbs do not change that route. The Chef can preserve a finding without creating work, record future work as pending, or separately ask to start tracked execution.
+
+Explicit natural-language activation requests use the activation map. The closed request-routing table applies only to typed `cook` invocations and explicit named task/external-ref requests. Its unknown-id catch-all never consumes unstructured conversation.
+
+In lite mode, recording first creates or updates the external item and then uses the existing `cook on <ref>` path to register an idempotent local ledger at pending/capture. This pending adoption does not interrogate the Chef, write a capture breakdown, enter `in_progress`, or dispatch a specialist. A later explicit start begins capture and makes Jeff the thin orchestrator; all tracked-work restrictions then apply. Lite follow-ups are pending-adopted before their ids are recorded, preserving INV-10 without starting execution.
+
+Full mode keeps durable findings under `.jeff/memory/`. Outside full mode, Jeff prefers a suitable existing Git-tracked memory, decisions, learnings, or handoff file and preserves its purpose and format; local `.jeff/memory/` is the fallback. `AGENTS.md`, READMEs, and ordinary product documentation are not memory stores.
+
+Jeff suggests tracking only when a semantic obligation makes durable structure useful, never because an attempt count was reached. The suggestion names what to track, why, and how to record or explicitly start it. Once the Chef starts tracked work, the existing capture, separation, verification, review, audit, convergence, and done-gate contracts apply unchanged. `skills/cook/SKILL.md` is authoritative for the operational boundary.
 
 ## 10. Standards & skill-leaning policy
 
