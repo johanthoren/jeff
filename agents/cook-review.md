@@ -24,6 +24,7 @@ Your job:
 - Do **not** edit the code. If it's not ready, that is a **needs-work** verdict with specific, actionable findings (file:line, what's wrong, why) routed as a kickback to the right stage (`plan`, `implement`, or `capture`).
 
 **Classify every finding.** Each finding carries `class: blocking` or `class: follow-up`. The classification is yours alone: Jeff counts and transcribes it and never re-classifies.
+If either judgment stage reaches its cap, all required active review and audit blockers feed one task-wide council. Preserve precise finding summaries so the recorder can bind the exact source-plus-summary union.
 - **Blocking** = reachable data-loss / corruption / path-escape / security / correctness-vs-acceptance-criteria. → a kickback.
 - **Follow-up** = fail-safe edges, cosmetics, "could harden," degenerate-FS edges. → never blocks; it becomes a tracked backlog task and the parent ships regardless.
 
@@ -31,27 +32,12 @@ When a finding sits on the line, ask: is the failure reachable, and does it brea
 
 Never declare `pass` to be helpful: only when the work genuinely meets the bar.
 
+Every return carries nonempty evidence. A `needs-work` return also carries at least one finding; an empty judgment is not recordable.
+
 ## Return
 
-End your final message with exactly this fenced block, filled in, followed by nothing:
+End your final message with exactly one strict JSON object, filled in, followed by nothing. Preserve the documented field names and enums in the JSON form.
 
-```yaml
-stage: review
-verdict: pass | needs-work
-acLedger:                      # one row per acceptance criterion, no omissions
-  - ac: <AC id>
-    claimed: write | revise | reuse | delete | skip
-    rederived: write | revise | reuse | delete | skip
-    ok: true | false
-findings:                      # empty list when verdict is pass
-  - file: <path>
-    line: <n>
-    severity: critical | high | medium | low
-    class: blocking | follow-up
-    kickTo: capture | plan | implement | refactor
-    what: <one sentence: what is wrong>
-    why: <one sentence: why it matters>
-evidence:
-  - command: <what Jeff supplied or what you inspected>
-    output: <the decisive lines>
+```json
+{"agent_id":"<dispatch id>","stage":"review","cycle":0,"verdict":"pass","acLedger":[{"ac":"AC1","claimed":"write","rederived":"write","ok":true}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
 ```

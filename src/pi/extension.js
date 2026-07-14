@@ -1,7 +1,8 @@
 // @ts-check
 
 import { readConfig } from '../core/store.js';
-import { dispatchRoleSession, STAGES } from './role-session.js';
+import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
+import { recordSpecialistReturn } from '../core/record.js';
 
 /** @param {unknown} result */
 export function formatDispatchResult(result) {
@@ -184,13 +185,16 @@ const DispatchParams = {
     stage: { type: 'string', enum: STAGES, description: 'jeff stage to dispatch' },
     brief: { type: 'string', description: 'Task-specific dispatch brief' },
     taskDir: { type: 'string', description: 'Optional .jeff task directory path' },
+    taskId: { type: 'string', description: 'Optional task id whose specialist return is recorded' },
   },
 };
 
 /**
  * @param {any} pi
+ * @param {{ dispatchRoleSession?: typeof runRoleSession }} [dependencies]
  */
-export default function jeffExtension(pi) {
+export default function jeffExtension(pi, dependencies = {}) {
+  const dispatchRoleSession = dependencies.dispatchRoleSession ?? runRoleSession;
   pi.registerCommand('jeff-status', {
     description: 'Report that the jeff Pi package is active',
     /**
@@ -212,7 +216,7 @@ export default function jeffExtension(pi) {
     renderResult: renderDispatchResult,
     /**
      * @param {string} _toolCallId
-     * @param {{ stage: string, brief: string, taskDir?: string }} params
+     * @param {{ stage: string, brief: string, taskDir?: string, taskId?: string }} params
      * @param {AbortSignal | undefined} _signal
      * @param {unknown} _onUpdate
      * @param {any} ctx
@@ -227,6 +231,16 @@ export default function jeffExtension(pi) {
         currentModel: ctx.model,
         modelRegistry: ctx.modelRegistry,
       });
+
+      if (params.taskId) {
+        let specialistReturn;
+        try {
+          specialistReturn = JSON.parse(result.transcript);
+        } catch {
+          throw new Error('cook_dispatch: specialist return is not strict JSON [record-json]');
+        }
+        await recordSpecialistReturn(ctx.cwd, params.stage, params.taskId, specialistReturn, result.agent_id);
+      }
 
       return {
         content: [{ type: 'text', text: formatDispatchResult(result) }],

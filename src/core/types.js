@@ -86,6 +86,7 @@
  * @typedef {Object} CouncilFinding
  * @property {string} id
  * @property {string} summary
+ * @property {'review' | 'review2' | 'audit'} [source]
  * @property {number} blockingVotes
  * @property {boolean} survived
  * @property {number | string | null} followupTaskId

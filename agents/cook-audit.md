@@ -17,35 +17,18 @@ Your job (think like an attacker, scoped to this change):
 - Do **not** edit code.
 
 **Classify every finding.** Each finding carries `class: blocking` or `class: follow-up`. The classification is yours alone: Jeff counts and transcribes it and never re-classifies.
+If either judgment stage reaches its cap, all required active review and audit blockers feed one task-wide council. Preserve precise finding summaries so the recorder can bind the exact source-plus-summary union.
 - **Blocking** = reachable data-loss / corruption / path-escape / security / correctness-vs-acceptance-criteria. → a kickback.
 - **Follow-up** = fail-safe edges, cosmetics, "could harden," degenerate-FS edges. → never blocks; it becomes a tracked backlog task and the parent ships regardless.
 
 Be strict: a plausible exploit path is blocking `needs-work`, not a note.
 
+Every return carries nonempty evidence. A `needs-work` return also carries at least one finding; an empty judgment is not recordable.
+
 ## Return
 
-End your final message with exactly this fenced block, filled in, followed by nothing. Verdict `na` means the change touches nothing security-relevant after all, on inspection.
+End your final message with exactly one strict JSON object, filled in, followed by nothing. Verdict `na` means the change touches nothing security-relevant after all, on inspection. Preserve the documented field names and enums in the JSON form.
 
-```yaml
-stage: audit
-verdict: pass | needs-work | na
-scan:
-  command: <the review-security.sh invocation Jeff supplied>
-  recommendation: PASS | REVIEW | BLOCK
-  reportPath: <path from Jeff's supplied scan output>
-coverage:                      # every category from the scan report's coverage[cat].status, no omissions
-  - category: <category>
-    status: covered_with_hits | covered_no_hits | not_covered  # not_covered = inapplicable to scope, not a blocker
-findings:                      # empty list when verdict is pass or na
-  - file: <path>
-    line: <n>
-    severity: critical | high | medium | low
-    class: blocking | follow-up
-    cwe: <CWE-id or null>
-    kickTo: plan | implement | refactor
-    what: <one sentence: the exploit path>
-    why: <one sentence: the impact>
-evidence:
-  - command: <what Jeff supplied or what you inspected>
-    output: <the decisive lines>
+```json
+{"agent_id":"<dispatch id>","stage":"audit","cycle":0,"verdict":"pass","scan":{"command":"<command>","recommendation":"PASS","reportPath":"<path>"},"coverage":[{"category":"<category>","status":"covered_no_hits"}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
 ```

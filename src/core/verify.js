@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, appendFileSync, lstatSync } from '
 import { join, dirname, resolve } from 'node:path';
 import { readMode, readConfig } from './store.js';
 import { git, treeDirty, testRunsLogPath } from './git.js';
+import { updateTask } from './record.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -117,9 +118,10 @@ function logTestRun(root, cmd, result) {
  * so the verdict arrays carry only cook's own line.
  *
  * @param {string} root
+ * @param {string} [taskId]
  * @returns {Promise<Verdict>}
  */
-export async function runVerify(root) {
+export async function runVerify(root, taskId) {
   const mode = await readMode(root);
   const cmd = await resolveCommand(root, mode);
 
@@ -152,6 +154,27 @@ export async function runVerify(root) {
 
   // Lite mode appends NOTHING (its .jeff/ is git-excluded).
   if (mode !== 'lite') logTestRun(root, cmd, rc === 0 ? 'green' : 'red');
+
+  if (taskId !== undefined) {
+    const head = git(root, ['rev-parse', 'HEAD']);
+    const hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
+    const clean = !treeDirty(root);
+    const output = verdict.stdout[0] ?? verdict.stderr[0];
+    try {
+      await updateTask(root, taskId, (task) => ({
+        ...task,
+        updatedAt: utcSecond(),
+        tests: {
+          ...task.tests,
+          green: rc === 0,
+          evidence: [...task.tests.evidence, { command: cmd, output }],
+          gate: { hash, clean, green: rc === 0, command: cmd, at: utcSecond() },
+        },
+      }));
+    } catch (error) {
+      return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
+    }
+  }
 
   return verdict;
 }

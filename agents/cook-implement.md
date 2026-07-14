@@ -22,15 +22,14 @@ Hard rule: you may **not** edit, delete, or weaken the tests to make them pass. 
 
 ## Return
 
-End your final message with exactly this fenced block, filled in, followed by nothing:
+End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
-```yaml
-stage: implement
-result: green | kickback
-files:
-  - <production file changed>
-greenRun:
-  command: <exact targeted-test command>
-  output: <the decisive passing lines>
-kickback: null                 # or: {to: plan, reason: <why a test is wrong, stated without editing it>}
+```json
+{"agent_id":"<dispatch id>","stage":"implement","result":"green","files":["<production file>"],"greenRun":{"command":"<command>","output":"<output>"},"kickback":null}
+```
+
+If the plan contract itself must change, return this strict object instead:
+
+```json
+{"agent_id":"<dispatch id>","stage":"implement","result":"kickback","files":[],"greenRun":{"command":null,"output":"<reason no green run is valid>"},"kickback":{"to":"plan","reason":"<reason>"}}
 ```

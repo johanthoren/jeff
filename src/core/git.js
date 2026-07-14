@@ -26,6 +26,9 @@ export function git(root, args) {
  */
 export function treeDirty(root) {
   const res = git(root, ['status', '--porcelain', '--', ':(exclude).jeff']);
+  if (res.status !== 0) {
+    throw new Error('[git-status] working tree cleanliness probe failed');
+  }
   return (res.stdout ?? '').length > 0;
 }
 

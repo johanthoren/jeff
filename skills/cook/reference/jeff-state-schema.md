@@ -88,7 +88,7 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 ## `convergence` (optional: review/audit loop termination)
 
 Records how the review/audit loop converged for this task: the per-stage
-blocking-kickback counters, and (if the cap was hit) the decorrelated council's
+blocking-kickback counters, and (if a cap was hit) the one task-wide council's
 membership, per-finding votes, verdict, and outcome. See task 0002 and
 `AGENTS.md` for the mechanism (severity gate from cycle 1, per-stage cap, K=3
 council with per-finding ≥2 majority, scoped-fix-or-escalate termination).
@@ -106,12 +106,13 @@ never touched.
     "audit":  { "blockingKickbacks": 0 }     // int 0..cap (independent counter)
   },
   "council": {
-    "convened": false,                       // bool: true once a stage hits the cap
-    "stage": null,                           // null | "review" | "audit" (the stage that hit the cap)
+    "convened": false,                       // bool: true once the complete task-wide council returns
+    "stage": null,                           // null | "review" | "audit" (cap trigger/recovery compatibility)
     "members": [],                           // when convened: EXACTLY 3
     //   member = { "agent_id": str, "lens": "integrity"|"security"|"pragmatist", "temperature": number|null }
-    "findings": [],                          // when convened: the enumerated contested findings
-    //   finding = { "id": str, "summary": str, "blockingVotes": int 0..3,
+    "findings": [],                          // when convened: exact active source+summary blocker union
+    //   finding = { "id": str, "summary": str, "source": "review"|"review2"|"audit",
+    //               "blockingVotes": int 0..3,
     //               "survived": bool, "followupTaskId": int|null }
     "verdict": null,                         // null | "ship" | "block"
     "outcome": null                          // null | "shipped" | "scoped-fix-shipped" | "blocked-to-operator"
@@ -124,13 +125,21 @@ never touched.
 - `cap`: integer ≥ 1. Per-stage blocking-kickback cap (default 2 in the protocol).
 - `stages.review` / `stages.audit`: independent `{ blockingKickbacks }` counters.
   Only **blocking**-severity kickbacks increment a counter; follow-ups never do.
-- `council.convened`: `true` once a stage reaches the cap and the council is
-  convened *for that stage*; else `false`.
-- `council.stage`: which stage hit the cap: `review` or `audit` (when convened).
+- `council.convened`: `true` once a stage reaches the cap, every required active
+  judgment and source-bound surviving refute is present, and the one task-wide
+  council returns; else `false`.
+- `council.stage`: which stage triggered the council: `review` or `audit` (when
+  convened). It remains for recovery and historical compatibility, not scope.
 - `council.members`: the K=3 lenses. `lens` ∈ `integrity | security | pragmatist`
   (each used exactly once). `temperature` records the intended decorrelation
-  temperature (or `null` where the dispatch can't set one).
-- `council.findings`: the enumerated contested findings handed to the council.
+  temperature (or `null` where the dispatch can't set one). Member separation
+  is scoped to the active judgment cycle; historical identities may serve again.
+- `council.findings`: exactly the active blocking union across `review`,
+  `review2`, and `audit`, matched by originating `source` plus finding summary.
+  New initial council returns require `source`; persisted historical findings
+  and their recovery replay may omit it. Omission, invention, duplication, a missing source-bound surviving
+  refute, or a wrong source rejects before persistence. Scoped recovery archives
+  and clears every judgment slot.
   `blockingVotes` ∈ 0..3 (one per lens). `survived` is a pure function of the
   votes (see INV-9). `followupTaskId` references a spawned backlog task for
   demoted findings; `null` for survivors.
@@ -138,6 +147,8 @@ never touched.
 - `council.outcome`: `shipped` (verdict ship), `scoped-fix-shipped` (verdict
   block, the one scoped fix passed verification → reached done), or
   `blocked-to-operator` (scoped fix failed → handed off, `status=blocked`).
+  After a scoped fix, all reviews and the audit run fresh. Their identities must
+  differ from the scoped implementer, but may reuse identities from prior cycles.
 
 ### Validator invariants (INV-7..INV-11)
 
@@ -148,7 +159,7 @@ consistent with the existing invariants. **Absent `convergence` ⇒ all skipped.
   `stages.{review,audit}.blockingKickbacks` is an integer in `0..cap`.
 - **INV-8 (council distinctness):** when `convened`, `members` has exactly 3
   entries; their `agent_id`s are mutually distinct and none equals
-  `agents.reviewer_agent_id` or `agents.implementer_agent_id`; the three `lens`
+  the active `agents.reviewer_agent_id` or `agents.implementer_agent_id`; the three `lens`
   values are exactly `integrity`, `security`, `pragmatist`; `council.stage` ∈
   `{review, audit}`.
 - **INV-9 (per-finding determinism):** for each finding,

@@ -18,9 +18,8 @@ and validation rules remain shared.
 
 The checked-JS Node core under `src/core/`, exposed through `src/cli/cook.js`,
 is authoritative for validation. `skills/cook/scripts/cook.sh` remains only a
-temporary transition oracle for parity and verbs not yet ported. Mechanical
-recording work in `#18` is next; the post-`#18` one-core cutover is tracked as
-`#61`.
+temporary transition oracle for parity and verbs not yet ported. `#61` is the
+remaining one-core cutover. `.jeff/BACKLOG.md` owns the live roadmap.
 
 ## 2. Constraints retained in the shipped design
 
@@ -95,7 +94,7 @@ bundler, and no committed `dist/`. Every host runs the checked-in source.
 The original proposal expected Bash and `jq` to disappear as part of the same
 initiative. The delivered boundary is narrower and safer: checked-JS Node is
 already authoritative for validation, while the Bash wrapper remains a frozen
-oracle until `#18` and `#61` complete the remaining cutover. That temporary
+oracle until `#61` completes the remaining cutover. That temporary
 duplication is transition evidence, not a second source of truth.
 
 ## 6. Historical influences and cuts
@@ -112,9 +111,7 @@ the slower validation foundation.
 
 ## 7. Follow-on work
 
-- `#18`: next on the critical path, recording structured specialist returns and
-  verification evidence against the authoritative schema.
-- `#61`: after `#18`, finish the one-core Node cutover and retire the Bash
+- `#61`: finish the one-core Node cutover and retire the Bash
   transition oracle only after parity and host smoke tests.
 - `#56`: retain the Codex-native UX follow-up without changing model routing or
   the shared method.

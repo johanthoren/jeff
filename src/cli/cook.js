@@ -22,6 +22,7 @@ import { planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../
 import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
 import { git } from '../core/git.js';
+import { recordSpecialistFile } from '../core/record.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -68,7 +69,6 @@ const VERBS = {
   validate: validateStore,
   ls: lsReport,
   status: statusReport,
-  verify: runVerify,
   doctor: doctorReport,
   init: initProject,
   flavor: flavorReport,
@@ -86,6 +86,33 @@ async function main() {
   if (sub !== undefined && Object.hasOwn(VERBS, sub)) {
     if (rejectUnknownArgs(sub, rest)) return process.exit(1);
     return emit(await VERBS[sub](root));
+  }
+
+  if (sub === 'verify') {
+    if (rest.length === 0) return emit(await runVerify(root));
+    if (rest[0] === '--task' && rest[1] && rest.length === 2) return emit(await runVerify(root, rest[1]));
+    if (rest[0]?.startsWith('-')) process.stderr.write(`cook: verify: unknown option '${rest[0]}'\n`);
+    else process.stderr.write(`cook: verify: unexpected argument '${rest[0]}'\n`);
+    return process.exit(1);
+  }
+
+  if (sub === 'record') {
+    const councilRecord = rest[0] === 'council';
+    const expectedArguments = councilRecord ? 3 : 4;
+    if (rest.length !== expectedArguments) {
+      process.stderr.write('cook: usage: cook record <stage> <id> <observed-agent-id> <file>\n');
+      process.stderr.write('       or: cook record council <id> <file>\n');
+      return process.exit(1);
+    }
+    try {
+      const observedAgentId = councilRecord ? undefined : rest[2];
+      const file = councilRecord ? rest[2] : rest[3];
+      await recordSpecialistFile(root, rest[0], rest[1], file, observedAgentId);
+      return emit({ code: 0, stdout: [`cook: recorded ${rest[0]} for task ${rest[1]}`], stderr: [] });
+    } catch (error) {
+      process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
+      return process.exit(1);
+    }
   }
 
   if (sub === 'show') {

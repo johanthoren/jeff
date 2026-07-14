@@ -14,18 +14,8 @@ Your job:
 
 ## Return
 
-End your final message with exactly this fenced block, filled in, followed by nothing:
+End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
-```yaml
-stage: refactor
-result: refactored | clean     # clean = inspected, nothing worth changing
-files:
-  - <file touched>
-outsideDiff:                   # files touched beyond the task's own diff; empty when none
-  - <file>
-greenRun:
-  command: <exact targeted-test command>
-  output: <the decisive passing lines>
-summary:
-  - <one line per simplification: what and why>
+```json
+{"agent_id":"<dispatch id>","stage":"refactor","result":"clean","files":[],"outsideDiff":[],"greenRun":{"command":"<command>","output":"<output>"},"summary":["<summary>"]}
 ```

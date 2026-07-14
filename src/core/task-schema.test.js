@@ -527,7 +527,7 @@ test('INV-4 defaults omitted complexity to complex without legacy identity bypas
   });
 });
 
-test('single-review done path remains null-tolerant and historical gate omission remains accepted', async () => {
+test('issue 70 existing terminal ledger remains readable without a live Git repository', async () => {
   const task = canonicalTask({
     status: 'done',
     stage: 'done',
@@ -599,6 +599,168 @@ function convergence(overrides = {}) {
     ...overrides,
   };
 }
+
+test('issue 70 INV-4 rejects scoped recovery with a stale needs-work review', async () => {
+  const result = await verdictFor(
+    canonicalTask({
+      status: 'done',
+      stage: 'done',
+      tests: {
+        authored_by_agent_id: 'plan',
+        green: true,
+        evidence: ['make test'],
+      },
+      agents: {
+        ...canonicalTask().agents,
+        reviewer_agent_id: 'reviewer-one',
+        reviewer2_agent_id: 'reviewer-two',
+      },
+      review: {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer-one',
+        evidence: ['review one'],
+      },
+      review2: {
+        verdict: 'needs-work',
+        reviewer_agent_id: 'reviewer-two',
+        evidence: ['review two blocker'],
+      },
+      convergence: convergence({
+        stages: {
+          review: { blockingKickbacks: 2 },
+          audit: { blockingKickbacks: 0 },
+        },
+        council: {
+          convened: true,
+          stage: 'review',
+          members: [
+            { agent_id: 'c1', lens: 'integrity', temperature: null },
+            { agent_id: 'c2', lens: 'security', temperature: null },
+            { agent_id: 'c3', lens: 'pragmatist', temperature: null },
+          ],
+          findings: [{
+            id: 'F1',
+            summary: 'The review2 blocker survived.',
+            blockingVotes: 2,
+            survived: true,
+            followupTaskId: null,
+          }],
+          verdict: 'block',
+          outcome: 'scoped-fix-shipped',
+        },
+      }),
+    }),
+  );
+
+  assertNamedFailure(result, '[inv4]');
+  assert.ok(result.stderr.some((line) => line.includes('review2.verdict')));
+});
+
+test('issue 65 cycle 2 INV-4 rejects a non-convened scoped recovery marker', async () => {
+  const result = await verdictFor(
+    canonicalTask({
+      status: 'done',
+      stage: 'done',
+      tests: {
+        authored_by_agent_id: 'plan',
+        green: true,
+        evidence: ['make test'],
+      },
+      agents: {
+        ...canonicalTask().agents,
+        reviewer_agent_id: 'reviewer-one',
+        reviewer2_agent_id: 'reviewer-two',
+        audit_agent_id: 'auditor',
+      },
+      review: {
+        verdict: 'needs-work',
+        reviewer_agent_id: 'reviewer-one',
+        evidence: ['review blocker'],
+      },
+      review2: {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer-two',
+        evidence: ['review two'],
+      },
+      audit: {
+        required: true,
+        verdict: 'pass',
+        audit_agent_id: 'auditor',
+        evidence: ['audit'],
+      },
+      convergence: convergence({
+        stages: {
+          review: { blockingKickbacks: 2 },
+          audit: { blockingKickbacks: 0 },
+        },
+        council: {
+          convened: false,
+          stage: 'review',
+          members: [],
+          findings: [],
+          verdict: null,
+          outcome: 'scoped-fix-shipped',
+        },
+      }),
+    }),
+  );
+
+  assertNamedFailure(result, '[inv4]');
+  assert.ok(result.stderr.some((line) => line.includes('review.verdict')));
+});
+
+test('issue 65 council fix INV-4 rejects a non-convened audit recovery marker', async () => {
+  const result = await verdictFor(
+    canonicalTask({
+      status: 'done',
+      stage: 'done',
+      tests: {
+        authored_by_agent_id: 'plan',
+        green: true,
+        evidence: ['make test'],
+      },
+      agents: {
+        ...canonicalTask().agents,
+        reviewer_agent_id: 'reviewer-one',
+        reviewer2_agent_id: 'reviewer-two',
+        audit_agent_id: 'auditor',
+      },
+      review: {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer-one',
+        evidence: ['review one'],
+      },
+      review2: {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer-two',
+        evidence: ['review two'],
+      },
+      audit: {
+        required: true,
+        verdict: 'needs-work',
+        audit_agent_id: 'auditor',
+        evidence: ['audit blocker'],
+      },
+      convergence: convergence({
+        stages: {
+          review: { blockingKickbacks: 0 },
+          audit: { blockingKickbacks: 2 },
+        },
+        council: {
+          convened: false,
+          stage: 'audit',
+          members: [],
+          findings: [],
+          verdict: null,
+          outcome: 'scoped-fix-shipped',
+        },
+      }),
+    }),
+  );
+
+  assertNamedFailure(result, '[inv4]');
+  assert.ok(result.stderr.some((line) => line.includes('audit.verdict')));
+});
 
 test('convergence INV-7 through INV-11 are enforced by the authoritative core', async (t) => {
   /** @type {Array<[string, Record<string, any>]>} */
