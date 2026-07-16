@@ -11,6 +11,17 @@ export const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refu
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
 const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const OMP_SETTINGS = {
+  'advisor.enabled': false,
+  'advisor.subagents': false,
+  'astEdit.enabled': false,
+  'astGrep.enabled': false,
+  'autolearn.enabled': false,
+  'magicKeywords.enabled': false,
+  'memory.backend': 'off',
+  'plan.enabled': false,
+  'retry.fallbackChains': {},
+};
 
 /**
  * @param {string} stage
@@ -132,7 +143,7 @@ export async function dispatchRoleSession(opts) {
   const role = parseRoleFile(rawRole);
   const agentId = (opts.generateAgentId ?? generateAgentId)();
   const current = modelParts(opts.currentModel);
-  if (!current.id) throw new Error('cook_dispatch: orchestrator model is unavailable');
+  if (!current.provider || !current.id) throw new Error('cook_dispatch: orchestrator model is unavailable');
   const sdk = await loadSdk(opts.sdk);
   const prompt = buildRolePrompt({
     stage: opts.stage,
@@ -145,16 +156,40 @@ export async function dispatchRoleSession(opts) {
   let streamed = '';
   let final = '';
   const sessionManager = sdk.SessionManager?.inMemory?.(opts.cwd);
-  const { session } = await sdk.createAgentSession({
+  const tools = toolsForStage(opts.stage);
+  const isOmp = typeof sdk.Settings?.isolated === 'function';
+  const sessionOptions = {
     cwd: opts.cwd,
     model: opts.currentModel,
     thinkingLevel: role.frontmatter.effort,
-    tools: toolsForStage(opts.stage),
+    tools,
     sessionManager,
     modelRegistry: opts.modelRegistry,
-  });
+  };
+  if (isOmp) {
+    Object.assign(sessionOptions, {
+      toolNames: tools.filter((name) => name !== 'find' && name !== 'ls'),
+      customTools: sdk.createReadOnlyTools(opts.cwd).filter((/** @type {{ name: string }} */ tool) => tool.name === 'find' || tool.name === 'ls'),
+      settings: sdk.Settings.isolated(OMP_SETTINGS),
+      disableExtensionDiscovery: true,
+      preloadedCustomToolPaths: [],
+      enableMCP: false,
+      spawns: '',
+      taskDepth: 1,
+      agentId,
+    });
+  }
+  const { session } = await sdk.createAgentSession(sessionOptions);
 
+  /** @type {{ provider?: string, id?: string }} */
+  let actual = {};
   try {
+    if (isOmp) {
+      const active = session.getActiveToolNames?.();
+      if (!Array.isArray(active) || JSON.stringify([...active].sort()) !== JSON.stringify([...tools].sort())) {
+        throw new Error(`cook_dispatch: OMP tool isolation failed (expected ${tools.join(', ')}, got ${active?.join(', ') ?? 'unavailable'})`);
+      }
+    }
     session.subscribe((/** @type {any} */ event) => {
       if (event.type === 'message_update' && event.assistantMessageEvent?.type === 'text_delta') {
         streamed += event.assistantMessageEvent.delta;
@@ -167,11 +202,13 @@ export async function dispatchRoleSession(opts) {
       }
     });
     await session.prompt(prompt);
+    actual = modelParts(session.model ?? opts.currentModel);
+    if (actual.provider !== current.provider || actual.id !== current.id) {
+      throw new Error(`cook_dispatch: child model drifted from ${current.provider}/${current.id} to ${actual.provider ?? 'unknown'}/${actual.id ?? 'unknown'}`);
+    }
   } finally {
-    session.dispose();
+    await session.dispose();
   }
-
-  const actual = modelParts(session.model ?? opts.currentModel);
 
   return {
     agent_id: agentId,

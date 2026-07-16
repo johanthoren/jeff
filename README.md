@@ -84,6 +84,18 @@ pi install git:github.com/johanthoren/jeff
 Use the git path only when you intentionally want latest commit behavior instead
 of a stable release.
 
+### Oh My Pi
+
+Install the same npm package through OMP's plugin command:
+
+```
+omp plugin install @johanthoren/jeff
+```
+
+Jeff specialists inherit the exact active model and only their stage tools. They
+do not inherit OMP orchestration, extensions, custom or MCP tools, advisor,
+memory/autolearn, or model fallback behavior.
+
 ### Claude Code — recommended path
 
 Use Claude Code's plugin CLI flow:
