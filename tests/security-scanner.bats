@@ -658,6 +658,44 @@ EOF
   echo "$output" | jq -e '[.tools[]] | any(.[]; .status=="absent" and .installed==false)'
 }
 
+# ---------------------------------------------------------------------------
+# task #82: run repository-locked bundler-audit under Bundler 4.
+# ---------------------------------------------------------------------------
+
+@test "task 82: Ruby audit uses bundle exec and preserves advisory parsing and REVIEW exit" {
+  cat >"$TMP/Gemfile" <<'EOF'
+source "https://rubygems.org"
+gem "bundler-audit"
+EOF
+
+  bin="$TMP/bin"
+  mkdir -p "$bin"
+  cat >"$bin/bundle" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >"$BUNDLE_ARGS"
+printf '%s\n' '{"advisories":[{"id":"CVE-2026-0001"}]}'
+exit 1
+EOF
+  chmod +x "$bin/bundle"
+
+  run env PATH="$bin:$PATH" BUNDLE_ARGS="$TMP/bundle.args" JEFF_SECURITY_ENGINE_FIXTURES="$JEFF_SECURITY_ENGINE_FIXTURES" /bin/bash -c "cd '$TMP' && '$SCANNER' --force --json --report-dir reports"
+  [ "$status" -eq 1 ]
+  [ "$(cat "$TMP/bundle.args")" = "exec bundle-audit check --format json" ]
+  echo "$output" | jq -e '
+    .recommendation == "REVIEW" and
+    .counts.total == 1 and
+    ([.findings[] | select(
+      .rule_id == "dependency-audit" and
+      .category == "dependency_audit" and
+      .severity == "high" and
+      .title == "bundle-audit reported 1 high dependency vulnerabilities"
+    )] | length) == 1
+  '
+
+  report_path="$(echo "$output" | jq -r '.report_path')"
+  grep -qF 'bundle exec bundle-audit check --format json' "$report_path"
+}
+
 @test "AC3: shell-eval fires on parenless shell eval of a variable (the paren-bound-regex fix)" {
   cat >"$TMP/x.sh" <<'EOF'
 CMD="ls"

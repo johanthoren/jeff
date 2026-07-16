@@ -887,7 +887,7 @@ def detect_dependency_audits(repo_root: Path) -> list[tuple[str, list[str], str]
         checks.append(("cargo-audit", ["cargo", "audit", "--json"], "Rust dependency audit"))
 
     if (repo_root / "Gemfile").exists():
-        checks.append(("bundle-audit", ["bundle", "audit", "--format", "json"], "Ruby dependency audit"))
+        checks.append(("bundle-audit", ["bundle", "exec", "bundle-audit", "check", "--format", "json"], "Ruby dependency audit"))
 
     if (repo_root / "go.mod").exists():
         checks.append(("govulncheck", ["govulncheck", "./..."], "Go vulnerability audit"))
