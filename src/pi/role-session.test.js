@@ -28,17 +28,138 @@ async function withRepo(fn) {
   }
 }
 
-/** @param {(options: any) => Promise<any>} createAgentSession */
-function ompSdk(createAgentSession) {
+const OMP_DEFAULT_SETTINGS = {
+  disabledProviders: [],
+  'providers.webSearch': 'auto',
+  'providers.webSearchExclude': [],
+  'providers.image': 'auto',
+  'ttsr.enabled': true,
+  'ttsr.builtinRules': true,
+};
+const OMP_PARENT_SETTINGS = {
+  disabledProviders: ['parent-disabled-provider'],
+  'providers.webSearch': 'exa',
+  'providers.webSearchExclude': ['brave'],
+  'providers.image': 'openai',
+};
+const OMP_DISCOVERED_SKILLS = [
+  { name: 'code-standards', _source: { provider: 'native' } },
+  { name: 'testing', _source: { provider: 'agents' } },
+  { name: 'learned-shortcut', _source: { provider: 'omp-managed' } },
+];
+
+/** @param {Record<string, unknown>} [overrides] */
+function ompSettings(overrides = {}) {
+  const values = /** @type {Record<string, unknown>} */ ({ ...OMP_DEFAULT_SETTINGS, ...overrides });
+  return {
+    /** @param {string} key */
+    get: (key) => values[key],
+    /** @param {string} prefix */
+    getGroup: (prefix) => Object.fromEntries(
+      Object.entries(values)
+        .filter(([key]) => key.startsWith(`${prefix}.`))
+        .map(([key, value]) => [key.slice(prefix.length + 1), value]),
+    ),
+    /**
+     * @param {string} key
+     * @param {unknown} value
+     */
+    override(key, value) { values[key] = value; },
+    async cloneForCwd() { return ompSettings(values); },
+  };
+}
+
+/** @param {any} options */
+function activeOmpTools(options) {
+  return [
+    ...(options.toolNames ?? []),
+    ...(options.customTools ?? []).map((/** @type {{ name: string }} */ tool) => tool.name),
+  ];
+}
+
+/**
+ * @param {(options: any) => Promise<any>} createAgentSession
+ * @param {{ hostState?: Record<string, any> }} [testOptions]
+ */
+function ompSdk(createAgentSession, testOptions = {}) {
+  class AgentRegistry {
+    constructor() { this.refs = new Map(); }
+    /** @param {any} ref */
+    register(ref) { this.refs.set(ref.id, { ...ref }); }
+    /** @param {string} id */
+    get(id) { return this.refs.get(id); }
+    list() { return [...this.refs.values()]; }
+    /** @param {string} id @param {any} session */
+    attachSession(id, session) {
+      const ref = this.refs.get(id);
+      if (ref) ref.session = session;
+    }
+    /** @param {string} id */
+    unregister(id) { this.refs.delete(id); }
+    onChange() { return () => {}; }
+    static global() { return globalRegistry; }
+  }
+  const globalRegistry = new AgentRegistry();
+  const parentSettings = ompSettings(OMP_PARENT_SETTINGS);
+  const initializeWithSettings = (/** @type {any} */ activeSettings) => {
+    if (!testOptions.hostState) return;
+    testOptions.hostState.settingsOwner = activeSettings === parentSettings ? 'parent' : 'child';
+    testOptions.hostState.disabledProviders = [...(activeSettings.get('disabledProviders') ?? [])];
+  };
+  const applyProviderGlobalsFromSettings = (/** @type {any} */ activeSettings) => {
+    if (!testOptions.hostState) return;
+    testOptions.hostState.webSearch = activeSettings.get('providers.webSearch');
+    testOptions.hostState.webSearchExclude = [...(activeSettings.get('providers.webSearchExclude') ?? [])];
+    testOptions.hostState.image = activeSettings.get('providers.image');
+  };
+
   return {
     SessionManager: { inMemory: () => ({}) },
-    Settings: {
-      isolated: (/** @type {Record<string, unknown>} */ overrides) => ({
-        get: (/** @type {string} */ key) => overrides[key],
-      }),
-    },
+    Settings: { isolated: ompSettings },
+    settings: parentSettings,
+    AgentRegistry,
+    createSubagentSettings: (/** @type {any} */ base, /** @type {Record<string, unknown>} */ overrides) => ompSettings({
+      ...Object.fromEntries(
+        Object.keys({ ...OMP_DEFAULT_SETTINGS, ...OMP_PARENT_SETTINGS }).map((key) => [key, base.get(key)]),
+      ),
+      ...overrides,
+    }),
+    discoverSkills: async () => ({ skills: OMP_DISCOVERED_SKILLS.map((skill) => ({ ...skill })), warnings: [] }),
+    initializeWithSettings,
+    applyProviderGlobalsFromSettings,
     createReadOnlyTools: () => ['read', 'grep', 'find', 'ls'].map((name) => ({ name })),
-    createAgentSession,
+    createAgentSession: async (/** @type {any} */ options) => {
+      const registry = options.agentRegistry ?? globalRegistry;
+      const agentId = options.agentId ?? options.parentTaskPrefix ?? 'Main';
+      registry.register({ id: agentId, session: null, status: 'running' });
+
+      initializeWithSettings(options.settings);
+      applyProviderGlobalsFromSettings(options.settings);
+      if (testOptions.hostState && !options.parentTaskPrefix) {
+        testOptions.hostState.skills = (options.skills ?? OMP_DISCOVERED_SKILLS)
+          .map((/** @type {any} */ skill) => skill.name);
+        testOptions.hostState.rules = (options.rules ?? [{ name: 'ambient-rule' }])
+          .map((/** @type {any} */ rule) => rule.name);
+      }
+
+      let created;
+      try {
+        created = await createAgentSession(options);
+      } catch (error) {
+        registry.unregister(agentId);
+        throw error;
+      }
+      const originalDispose = created.session.dispose?.bind(created.session) ?? (() => {});
+      created.session.dispose = async () => {
+        try {
+          await originalDispose();
+        } finally {
+          registry.unregister(agentId);
+        }
+      };
+      registry.attachSession(agentId, created.session);
+      return created;
+    },
   };
 }
 
@@ -215,12 +336,12 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
     };
     /** @type {Record<string, string[]>} */
     const expectedOmpToolNames = {
-      plan: ['read', 'grep', 'bash', 'edit', 'write'],
-      implement: ['read', 'grep', 'bash', 'edit', 'write'],
-      refactor: ['read', 'grep', 'bash', 'edit', 'write'],
-      review: ['read', 'grep'],
-      audit: ['read', 'grep'],
-      refute: ['read', 'grep'],
+      plan: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
+      implement: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
+      refactor: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
+      review: ['read', 'grep', 'glob'],
+      audit: ['read', 'grep', 'glob'],
+      refute: ['read', 'grep', 'glob'],
     };
 
     for (const stage of Object.keys(efforts)) {
@@ -236,7 +357,7 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
             session: {
               model: currentModel,
               thinkingLevel: efforts[stage],
-              getActiveToolNames: () => expectedTools[stage],
+              getActiveToolNames: () => activeOmpTools(options),
               subscribe() {},
               async prompt() {},
               dispose() {},
@@ -250,17 +371,20 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
     for (const [stage, options] of Object.entries(optionsByStage)) {
       assert.deepEqual(options.tools, expectedTools[stage]);
       assert.deepEqual(options.toolNames, expectedOmpToolNames[stage]);
-      assert.deepEqual(options.customTools.map((/** @type {any} */ tool) => tool.name), ['find', 'ls']);
+      assert.equal('customTools' in options, false);
       assert.equal(options.model, currentModel);
       assert.equal(options.thinkingLevel, efforts[stage]);
       assert.equal(options.disableExtensionDiscovery, true);
       assert.deepEqual(options.preloadedCustomToolPaths, []);
       assert.equal(options.enableMCP, false);
-      assert.equal('skills' in options, false);
+      assert.deepEqual(options.skills.map((/** @type {any} */ skill) => skill.name), ['code-standards', 'testing']);
+      assert.deepEqual(options.rules, []);
       assert.equal('contextFiles' in options, false);
       assert.equal(options.spawns, '');
       assert.equal(options.taskDepth, 1);
+      assert.equal(options.parentTaskPrefix, `omp-${stage}`);
       assert.equal(options.agentId, `omp-${stage}`);
+      assert.deepEqual(options.settings.get('disabledProviders'), ['parent-disabled-provider']);
       assert.equal(options.settings.get('advisor.enabled'), false);
       assert.equal(options.settings.get('advisor.subagents'), false);
       assert.equal(options.settings.get('astEdit.enabled'), false);
@@ -270,7 +394,141 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
       assert.equal(options.settings.get('memory.backend'), 'off');
       assert.equal(options.settings.get('plan.enabled'), false);
       assert.deepEqual(options.settings.get('retry.fallbackChains'), {});
+      assert.equal(options.settings.get('ttsr.enabled'), false);
+      assert.equal(options.settings.get('ttsr.builtinRules'), false);
     }
+  });
+});
+
+test('dispatchRoleSession keeps an OMP child out of the host-global agent registry while prompting', async () => {
+  await withRepo(async (repoRoot) => {
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    let visibleFromGlobalRegistry;
+    /** @type {any} */
+    let sdk;
+    sdk = ompSdk(async (options) => ({
+      session: {
+        model: currentModel,
+        thinkingLevel: 'xhigh',
+        getActiveToolNames: () => activeOmpTools(options),
+        subscribe() {},
+        async prompt() { visibleFromGlobalRegistry = sdk.AgentRegistry.global().get('omp-review'); },
+        dispose() {},
+      },
+    }));
+
+    await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Review without IRC.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      sdk,
+      generateAgentId: () => 'omp-review',
+    });
+
+    assert.equal(visibleFromGlobalRegistry, undefined);
+  });
+});
+
+test('dispatchRoleSession excludes OMP-managed skills, rules, and TTSR instructions', async () => {
+  await withRepo(async (repoRoot) => {
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    /** @type {string[]} */
+    let childInstructions = [];
+    const sdk = ompSdk(async (options) => ({
+      session: {
+        model: currentModel,
+        thinkingLevel: 'xhigh',
+        getActiveToolNames: () => activeOmpTools(options),
+        subscribe() {},
+        async prompt() {
+          const skills = options.skills ?? OMP_DISCOVERED_SKILLS;
+          const rules = options.rules ?? [{ name: 'ambient-rule' }];
+          childInstructions = [
+            ...skills.map((/** @type {any} */ skill) => skill.name),
+            ...rules.map((/** @type {any} */ rule) => `rule:${rule.name}`),
+            ...(options.settings.get('ttsr.enabled') ? ['ttsr'] : []),
+            ...(options.settings.get('ttsr.builtinRules') ? ['ttsr:builtin'] : []),
+          ];
+        },
+        dispose() {},
+      },
+    }));
+
+    await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Use only authored standards.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      sdk,
+    });
+
+    assert.deepEqual(childInstructions, ['code-standards', 'testing']);
+  });
+});
+
+function ompParentState() {
+  return {
+    settingsOwner: 'parent',
+    disabledProviders: ['parent-disabled-provider'],
+    webSearch: 'exa',
+    webSearchExclude: ['brave'],
+    image: 'openai',
+    skills: ['parent-skill'],
+    rules: ['parent-rule'],
+  };
+}
+
+test('dispatchRoleSession leaves OMP parent discovery and resource state unchanged after success', async () => {
+  await withRepo(async (repoRoot) => {
+    const hostState = ompParentState();
+    const before = structuredClone(hostState);
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    const sdk = ompSdk(async (options) => ({
+      session: {
+        model: currentModel,
+        thinkingLevel: 'xhigh',
+        getActiveToolNames: () => activeOmpTools(options),
+        subscribe() {},
+        async prompt() { assert.deepEqual(hostState, before); },
+        dispose() {},
+      },
+    }), { hostState });
+
+    await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Preserve parent state.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      sdk,
+    });
+
+    assert.deepEqual(hostState, before);
+  });
+});
+
+test('dispatchRoleSession leaves OMP parent discovery and resource state unchanged when startup fails', async () => {
+  await withRepo(async (repoRoot) => {
+    const hostState = ompParentState();
+    const before = structuredClone(hostState);
+    const sdk = ompSdk(async () => { throw new Error('host startup failed'); }, { hostState });
+
+    await assert.rejects(
+      dispatchRoleSession({
+        stage: 'review',
+        brief: 'Fail without changing parent state.',
+        cwd: repoRoot,
+        repoRoot,
+        currentModel: { provider: 'openai', id: 'gpt-5.6' },
+        sdk,
+      }),
+      /host startup failed/,
+    );
+
+    assert.deepEqual(hostState, before);
   });
 });
 
