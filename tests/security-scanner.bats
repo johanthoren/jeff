@@ -696,6 +696,85 @@ EOF
   grep -qF 'bundle exec bundle-audit check --format json' "$report_path"
 }
 
+# ---------------------------------------------------------------------------
+# task #84: parse bundler-audit 0.9.3 results and their criticalities.
+# ---------------------------------------------------------------------------
+
+@test "task 84: current bundle-audit results preserve vulnerability severity counts" {
+  cat >"$TMP/Gemfile" <<'EOF'
+source "https://rubygems.org"
+gem "bundler-audit"
+EOF
+
+  bin="$TMP/bin"
+  mkdir -p "$bin"
+  cat >"$bin/bundle" <<'EOF'
+#!/bin/sh
+cat <<'JSON'
+{"version":"0.9.3","results":[
+  {"type":"unpatched_gem","gem":{"name":"addressable"},"advisory":{"id":"CVE-1","criticality":"high"}},
+  {"type":"unpatched_gem","gem":{"name":"excon"},"advisory":{"id":"CVE-2","criticality":"medium"}},
+  {"type":"unpatched_gem","gem":{"name":"faraday"},"advisory":{"id":"CVE-3","criticality":"high"}},
+  {"type":"unpatched_gem","gem":{"name":"faraday"},"advisory":{"id":"CVE-4","criticality":"medium"}},
+  {"type":"unpatched_gem","gem":{"name":"json"},"advisory":{"id":"CVE-5","criticality":"high"}},
+  {"type":"unpatched_gem","gem":{"name":"json"},"advisory":{"id":"CVE-6","criticality":null}},
+  {"type":"unpatched_gem","gem":{"name":"jwt"},"advisory":{"id":"CVE-7","criticality":"low"}}
+]}
+JSON
+exit 1
+EOF
+  chmod +x "$bin/bundle"
+
+  run env PATH="$bin:$PATH" JEFF_SECURITY_ENGINE_FIXTURES="$JEFF_SECURITY_ENGINE_FIXTURES" /bin/bash -c "cd '$TMP' && '$SCANNER' --force --json --report-dir reports"
+  [ "$status" -eq 1 ]
+  echo "$output" | jq -e '
+    .recommendation == "REVIEW" and
+    .counts == {
+      "total": 3,
+      "by_severity": {"critical": 0, "high": 1, "medium": 1, "low": 1}
+    } and
+    ([.findings[] | select(.title == "bundle-audit reported 4 high dependency vulnerabilities")] | length) == 1 and
+    ([.findings[] | select(.title == "bundle-audit reported 2 medium dependency vulnerabilities")] | length) == 1 and
+    ([.findings[] | select(.title == "bundle-audit reported 1 low dependency vulnerabilities")] | length) == 1
+  '
+
+  report_path="$(echo "$output" | jq -r '.report_path')"
+  grep -qF 'high:4, low:1, medium:2' "$report_path"
+}
+
+@test "task 84: unknown bundle-audit criticality fails closed to high" {
+  cat >"$TMP/Gemfile" <<'EOF'
+source "https://rubygems.org"
+gem "bundler-audit"
+EOF
+
+  bin="$TMP/bin"
+  mkdir -p "$bin"
+  cat >"$bin/bundle" <<'EOF'
+#!/bin/sh
+cat <<'JSON'
+{"version":"0.9.3","results":[
+  {"type":"unpatched_gem","gem":{"name":"critical-gem"},"advisory":{"id":"CVE-1","criticality":"critical"}},
+  {"type":"unpatched_gem","gem":{"name":"future-gem"},"advisory":{"id":"CVE-2","criticality":"unexpected"}}
+]}
+JSON
+exit 1
+EOF
+  chmod +x "$bin/bundle"
+
+  run env PATH="$bin:$PATH" JEFF_SECURITY_ENGINE_FIXTURES="$JEFF_SECURITY_ENGINE_FIXTURES" /bin/bash -c "cd '$TMP' && '$SCANNER' --force --json --report-dir reports"
+  [ "$status" -eq 2 ]
+  echo "$output" | jq -e '
+    .recommendation == "BLOCK" and
+    .counts == {
+      "total": 2,
+      "by_severity": {"critical": 1, "high": 1, "medium": 0, "low": 0}
+    } and
+    ([.findings[] | select(.title == "bundle-audit reported 1 critical dependency vulnerabilities")] | length) == 1 and
+    ([.findings[] | select(.title == "bundle-audit reported 1 high dependency vulnerabilities")] | length) == 1
+  '
+}
+
 @test "AC3: shell-eval fires on parenless shell eval of a variable (the paren-bound-regex fix)" {
   cat >"$TMP/x.sh" <<'EOF'
 CMD="ls"

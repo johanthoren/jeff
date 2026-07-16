@@ -857,6 +857,21 @@ def parse_bundle_audit(stdout: str) -> dict[str, int]:
     except Exception:
         return {}
 
+    severities = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if isinstance(results, list):
+        for result in results:
+            advisory = result.get("advisory") if isinstance(result, dict) else None
+            if not isinstance(advisory, dict):
+                continue
+            criticality = advisory.get("criticality")
+            severity = criticality if criticality in severities else "high"
+            severities[severity] += 1
+
+        current_results = {severity: count for severity, count in severities.items() if count > 0}
+        if current_results:
+            return current_results
+
     advisories = payload.get("advisories") if isinstance(payload, dict) else None
     if isinstance(advisories, list) and len(advisories) > 0:
         return {"high": len(advisories)}
