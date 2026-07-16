@@ -28,6 +28,20 @@ async function withRepo(fn) {
   }
 }
 
+/** @param {(options: any) => Promise<any>} createAgentSession */
+function ompSdk(createAgentSession) {
+  return {
+    SessionManager: { inMemory: () => ({}) },
+    Settings: {
+      isolated: (/** @type {Record<string, unknown>} */ overrides) => ({
+        get: (/** @type {string} */ key) => overrides[key],
+      }),
+    },
+    createReadOnlyTools: () => ['read', 'grep', 'find', 'ls'].map((name) => ({ name })),
+    createAgentSession,
+  };
+}
+
 test('prompt construction includes role body, task directory, brief, and agent id', () => {
   const prompt = buildRolePrompt({
     stage: 'review',
@@ -53,7 +67,7 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
     /** @type {(event: any) => void} */
     let listener = () => {};
     const fakeSession = {
-      model: { provider: 'child-provider', id: 'child-model' },
+      model: { provider: 'local', id: 'qwen-dev' },
       thinkingLevel: 'xhigh',
       /** @param {(event: any) => void} fn */
       subscribe(fn) {
@@ -95,8 +109,10 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
 
     assert.equal(result.agent_id, '0123456789abcdef');
     assert.equal(result.stage, 'review');
-    assert.deepEqual(result.brain, { provider: 'child-provider', model: 'child-model', effort: 'xhigh' });
+    assert.deepEqual(result.brain, { provider: 'local', model: 'qwen-dev', effort: 'xhigh' });
     assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls']);
+    assert.equal('toolNames' in capturedOptions, false);
+    assert.equal('settings' in capturedOptions, false);
     assert.equal(capturedOptions.thinkingLevel, 'xhigh');
     assert.equal(capturedOptions.model, currentModel);
     assert.match(capturedPrompt, /Review body\./);
@@ -110,6 +126,8 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
     /** @type {Record<string, string>} */
     const agents = {
       plan: '---\nname: cook-plan\neffort: xhigh\n---\nPlan body.',
+      implement: '---\nname: cook-implement\neffort: high\n---\nImplement body.',
+      refactor: '---\nname: cook-refactor\neffort: xhigh\n---\nRefactor body.',
       audit: '---\nname: cook-audit\neffort: xhigh\n---\nAudit body.',
       refute: '---\nname: cook-refute\neffort: xhigh\n---\nRefute body.',
     };
@@ -129,7 +147,7 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
       },
     };
 
-    for (const stage of ['plan', 'review', 'audit', 'refute']) {
+    for (const stage of ['plan', 'implement', 'refactor', 'review', 'audit', 'refute']) {
       await dispatchRoleSession({
         stage,
         brief: 'Check the diff.',
@@ -149,11 +167,204 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
 
     assert.deepEqual(toolsByStage, {
       plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      implement: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      refactor: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       review: ['read', 'grep', 'find', 'ls'],
       audit: ['read', 'grep', 'find', 'ls'],
       refute: ['read', 'grep', 'find', 'ls'],
     });
-    assert.equal(effortByStage.plan, 'xhigh');
+    assert.deepEqual(effortByStage, {
+      plan: 'xhigh',
+      implement: 'high',
+      refactor: 'xhigh',
+      review: 'xhigh',
+      audit: 'xhigh',
+      refute: 'xhigh',
+    });
+  });
+});
+
+test('dispatchRoleSession translates every stage to an isolated OMP child session', async () => {
+  await withRepo(async (repoRoot) => {
+    /** @type {Record<string, string>} */
+    const efforts = {
+      plan: 'xhigh',
+      implement: 'high',
+      refactor: 'xhigh',
+      review: 'xhigh',
+      audit: 'xhigh',
+      refute: 'xhigh',
+    };
+    for (const [stage, effort] of Object.entries(efforts)) {
+      if (stage !== 'review') {
+        await writeFile(join(repoRoot, 'agents', `cook-${stage}.md`), `---\nname: cook-${stage}\neffort: ${effort}\n---\n${stage} body.`);
+      }
+    }
+
+    /** @type {Record<string, any>} */
+    const optionsByStage = {};
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    /** @type {Record<string, string[]>} */
+    const expectedTools = {
+      plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      implement: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      refactor: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      review: ['read', 'grep', 'find', 'ls'],
+      audit: ['read', 'grep', 'find', 'ls'],
+      refute: ['read', 'grep', 'find', 'ls'],
+    };
+    /** @type {Record<string, string[]>} */
+    const expectedOmpToolNames = {
+      plan: ['read', 'grep', 'bash', 'edit', 'write'],
+      implement: ['read', 'grep', 'bash', 'edit', 'write'],
+      refactor: ['read', 'grep', 'bash', 'edit', 'write'],
+      review: ['read', 'grep'],
+      audit: ['read', 'grep'],
+      refute: ['read', 'grep'],
+    };
+
+    for (const stage of Object.keys(efforts)) {
+      await dispatchRoleSession({
+        stage,
+        brief: 'Do only this stage.',
+        cwd: repoRoot,
+        repoRoot,
+        currentModel,
+        sdk: ompSdk(async (options) => {
+          optionsByStage[stage] = options;
+          return {
+            session: {
+              model: currentModel,
+              thinkingLevel: efforts[stage],
+              getActiveToolNames: () => expectedTools[stage],
+              subscribe() {},
+              async prompt() {},
+              dispose() {},
+            },
+          };
+        }),
+        generateAgentId: () => `omp-${stage}`,
+      });
+    }
+
+    for (const [stage, options] of Object.entries(optionsByStage)) {
+      assert.deepEqual(options.tools, expectedTools[stage]);
+      assert.deepEqual(options.toolNames, expectedOmpToolNames[stage]);
+      assert.deepEqual(options.customTools.map((/** @type {any} */ tool) => tool.name), ['find', 'ls']);
+      assert.equal(options.model, currentModel);
+      assert.equal(options.thinkingLevel, efforts[stage]);
+      assert.equal(options.disableExtensionDiscovery, true);
+      assert.deepEqual(options.preloadedCustomToolPaths, []);
+      assert.equal(options.enableMCP, false);
+      assert.equal('skills' in options, false);
+      assert.equal('contextFiles' in options, false);
+      assert.equal(options.spawns, '');
+      assert.equal(options.taskDepth, 1);
+      assert.equal(options.agentId, `omp-${stage}`);
+      assert.equal(options.settings.get('advisor.enabled'), false);
+      assert.equal(options.settings.get('advisor.subagents'), false);
+      assert.equal(options.settings.get('astEdit.enabled'), false);
+      assert.equal(options.settings.get('astGrep.enabled'), false);
+      assert.equal(options.settings.get('autolearn.enabled'), false);
+      assert.equal(options.settings.get('magicKeywords.enabled'), false);
+      assert.equal(options.settings.get('memory.backend'), 'off');
+      assert.equal(options.settings.get('plan.enabled'), false);
+      assert.deepEqual(options.settings.get('retry.fallbackChains'), {});
+    }
+  });
+});
+
+test('dispatchRoleSession fails before prompting when OMP widens the active tool set', async () => {
+  await withRepo(async (repoRoot) => {
+    let prompted = false;
+    let disposed = false;
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+
+    await assert.rejects(
+      dispatchRoleSession({
+        stage: 'review',
+        brief: 'Review without orchestration.',
+        cwd: repoRoot,
+        repoRoot,
+        currentModel,
+        sdk: ompSdk(async () => ({
+          session: {
+            model: currentModel,
+            thinkingLevel: 'xhigh',
+            getActiveToolNames: () => ['read', 'grep', 'find', 'ls', 'task'],
+            subscribe() {},
+            async prompt() { prompted = true; },
+            dispose() { disposed = true; },
+          },
+        })),
+      }),
+      /tool|isolation/i,
+    );
+
+    assert.equal(prompted, false);
+    assert.equal(disposed, true);
+  });
+});
+
+test('dispatchRoleSession fails closed when the child switches models', async () => {
+  await withRepo(async (repoRoot) => {
+    let disposed = false;
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    const session = {
+      model: currentModel,
+      thinkingLevel: 'xhigh',
+      subscribe() {},
+      async prompt() { this.model = { provider: 'anthropic', id: 'fallback-model' }; },
+      dispose() { disposed = true; },
+    };
+
+    await assert.rejects(
+      dispatchRoleSession({
+        stage: 'review',
+        brief: 'Stay on the orchestrator model.',
+        cwd: repoRoot,
+        repoRoot,
+        currentModel,
+        sdk: { SessionManager: { inMemory: () => ({}) }, createAgentSession: async () => ({ session }) },
+      }),
+      /model|fallback/i,
+    );
+
+    assert.equal(disposed, true);
+  });
+});
+
+test('dispatchRoleSession awaits host session disposal', async () => {
+  await withRepo(async (repoRoot) => {
+    let disposeAwaited = false;
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+
+    await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Dispose the isolated child.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      sdk: {
+        SessionManager: { inMemory: () => ({}) },
+        createAgentSession: async () => ({
+          session: {
+            model: currentModel,
+            thinkingLevel: 'xhigh',
+            subscribe() {},
+            async prompt() {},
+            dispose: () => ({
+              then(/** @type {() => void} */ resolve) {
+                disposeAwaited = true;
+                resolve();
+              },
+            }),
+          },
+        }),
+      },
+    });
+
+    assert.equal(disposeAwaited, true);
   });
 });
 

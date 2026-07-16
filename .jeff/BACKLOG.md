@@ -6,6 +6,7 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
+- **`#85`:** support OMP through the npm plugin path without regressing vanilla Pi, then publish the compatible release.
 - **Release candidate:** 3.3.0 is fully gated. It contains the host-neutral specialist recorder, archived-cycle reset fix, trusted scanner-floor persistence, and one task-wide council.
 - **Release blockers:** none. `#72`, `#73`, and `#74` are done; `#71` remains conditional and deferred.
 - **Parallel/non-blocking: `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
