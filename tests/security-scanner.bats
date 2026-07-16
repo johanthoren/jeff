@@ -655,6 +655,7 @@ EOF
 
   report_path="$(echo "$output" | jq -r '.report_path')"
   grep -q 'tool-missing' "$report_path"
+  grep -qF '| npm | tool-missing | not-executed | npm audit --json |' "$report_path"
   echo "$output" | jq -e '[.tools[]] | any(.[]; .status=="absent" and .installed==false)'
 }
 
@@ -693,6 +694,8 @@ EOF
   '
 
   report_path="$(echo "$output" | jq -r '.report_path')"
+  grep -qF '| Ecosystem | Status | Exit status | Command | Details | Vulnerabilities |' "$report_path"
+  grep -qF '| bundle-audit | ok | 1 | bundle exec bundle-audit check --format json | Ruby dependency audit | high:1 |' "$report_path"
   grep -qF 'bundle exec bundle-audit check --format json' "$report_path"
 }
 

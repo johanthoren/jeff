@@ -108,6 +108,7 @@ class Suppression:
 class DependencyAuditResult:
     ecosystem: str
     status: str
+    exit_status: int | None
     command: str
     details: str
     vulnerabilities: dict[str, int]
@@ -929,6 +930,7 @@ def run_dependency_audits(repo_root: Path, skip: bool) -> tuple[list[DependencyA
                 DependencyAuditResult(
                     ecosystem=ecosystem,
                     status="tool-missing",
+                    exit_status=None,
                     command=command_str,
                     details=stderr,
                     vulnerabilities={},
@@ -942,6 +944,7 @@ def run_dependency_audits(repo_root: Path, skip: bool) -> tuple[list[DependencyA
                 DependencyAuditResult(
                     ecosystem=ecosystem,
                     status="timeout",
+                    exit_status=None,
                     command=command_str,
                     details="dependency audit command timed out",
                     vulnerabilities={},
@@ -967,6 +970,7 @@ def run_dependency_audits(repo_root: Path, skip: bool) -> tuple[list[DependencyA
                 DependencyAuditResult(
                     ecosystem=ecosystem,
                     status="failed",
+                    exit_status=code,
                     command=command_str,
                     details=(stderr or stdout or f"command exited with {code}")[:3000],
                     vulnerabilities=vulns,
@@ -977,6 +981,7 @@ def run_dependency_audits(repo_root: Path, skip: bool) -> tuple[list[DependencyA
                 DependencyAuditResult(
                     ecosystem=ecosystem,
                     status="ok",
+                    exit_status=code,
                     command=command_str,
                     details=desc,
                     vulnerabilities=vulns,
@@ -1550,8 +1555,8 @@ def write_report(
 
     lines.append("## Dependency Audit")
     if dep_results:
-        lines.append("| Ecosystem | Status | Command | Details | Vulnerabilities |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| Ecosystem | Status | Exit status | Command | Details | Vulnerabilities |")
+        lines.append("|---|---|---|---|---|---|")
         for result in dep_results:
             vuln_text = (
                 ", ".join(f"{k}:{v}" for k, v in sorted(result.vulnerabilities.items()))
@@ -1564,6 +1569,7 @@ def write_report(
                     [
                         sanitize_md(result.ecosystem),
                         sanitize_md(result.status),
+                        str(result.exit_status) if result.exit_status is not None else "not-executed",
                         sanitize_md(result.command),
                         sanitize_md(result.details[:200]),
                         sanitize_md(vuln_text),
