@@ -718,7 +718,8 @@ cat <<'JSON'
   {"type":"unpatched_gem","gem":{"name":"faraday"},"advisory":{"id":"CVE-4","criticality":"medium"}},
   {"type":"unpatched_gem","gem":{"name":"json"},"advisory":{"id":"CVE-5","criticality":"high"}},
   {"type":"unpatched_gem","gem":{"name":"json"},"advisory":{"id":"CVE-6","criticality":null}},
-  {"type":"unpatched_gem","gem":{"name":"jwt"},"advisory":{"id":"CVE-7","criticality":"low"}}
+  {"type":"unpatched_gem","gem":{"name":"jwt"},"advisory":{"id":"CVE-7","criticality":"low"}},
+  {"type":"unpatched_gem","gem":{"name":"missing-criticality"},"advisory":{"id":"CVE-8"}}
 ]}
 JSON
 exit 1
@@ -733,13 +734,13 @@ EOF
       "total": 3,
       "by_severity": {"critical": 0, "high": 1, "medium": 1, "low": 1}
     } and
-    ([.findings[] | select(.title == "bundle-audit reported 4 high dependency vulnerabilities")] | length) == 1 and
+    ([.findings[] | select(.title == "bundle-audit reported 5 high dependency vulnerabilities")] | length) == 1 and
     ([.findings[] | select(.title == "bundle-audit reported 2 medium dependency vulnerabilities")] | length) == 1 and
     ([.findings[] | select(.title == "bundle-audit reported 1 low dependency vulnerabilities")] | length) == 1
   '
 
   report_path="$(echo "$output" | jq -r '.report_path')"
-  grep -qF 'high:4, low:1, medium:2' "$report_path"
+  grep -qF 'high:5, low:1, medium:2' "$report_path"
 }
 
 @test "task 84: unknown bundle-audit criticality fails closed to high" {
