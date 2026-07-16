@@ -10,7 +10,6 @@ export const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refu
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
 const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
-const OMP_LEGACY_TOOLS = ['find', 'ls'];
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OMP_SETTINGS = {
   'advisor.enabled': false,
@@ -22,6 +21,8 @@ const OMP_SETTINGS = {
   'memory.backend': 'off',
   'plan.enabled': false,
   'retry.fallbackChains': {},
+  'ttsr.enabled': false,
+  'ttsr.builtinRules': false,
 };
 
 /**
@@ -122,6 +123,25 @@ export async function loadSdk(injected, entry = process.argv[1], importModule = 
   return importModule('@earendil-works/pi-coding-agent');
 }
 
+/** @param {any} sdk */
+async function loadOmpIsolation(sdk) {
+  const [registry, discovery, providers] = await Promise.all([
+    sdk.AgentRegistry
+      ? { AgentRegistry: sdk.AgentRegistry }
+      // @ts-expect-error OMP rewrites this optional-peer subpath to its in-process class.
+      : import('@earendil-works/pi-coding-agent/registry/agent-registry'),
+    sdk.initializeWithSettings
+      ? { initializeWithSettings: sdk.initializeWithSettings }
+      // @ts-expect-error OMP rewrites this optional-peer subpath to its in-process discovery owner.
+      : import('@earendil-works/pi-coding-agent/discovery'),
+    sdk.applyProviderGlobalsFromSettings
+      ? { applyProviderGlobalsFromSettings: sdk.applyProviderGlobalsFromSettings }
+      // @ts-expect-error OMP rewrites this optional-peer subpath to its in-process provider owner.
+      : import('@earendil-works/pi-coding-agent/config/provider-globals'),
+  ]);
+  return { ...registry, ...discovery, ...providers };
+}
+
 /**
  * @param {{
  *   stage: string,
@@ -158,7 +178,42 @@ export async function dispatchRoleSession(opts) {
   let final = '';
   const sessionManager = sdk.SessionManager?.inMemory?.(opts.cwd);
   const tools = toolsForStage(opts.stage);
-  const isOmp = typeof sdk.Settings?.isolated === 'function';
+  const isOmp = typeof sdk.createSubagentSettings === 'function';
+  const ompToolNames = tools
+    .filter((name) => name !== 'ls')
+    .map((name) => name === 'find' ? 'glob' : name);
+  /** @type {Record<string, unknown>} */
+  let ompOptions = {};
+  /** @type {(() => void) | undefined} */
+  let restoreOmpGlobals;
+
+  if (isOmp) {
+    const isolation = await loadOmpIsolation(sdk);
+    const settings = sdk.createSubagentSettings(sdk.settings, OMP_SETTINGS);
+    const discovered = await sdk.discoverSkills(opts.cwd, undefined, {
+      ...settings.getGroup('skills'),
+      disabledExtensions: settings.get('disabledExtensions') ?? [],
+    });
+    ompOptions = {
+      toolNames: ompToolNames,
+      settings,
+      disableExtensionDiscovery: true,
+      preloadedCustomToolPaths: [],
+      enableMCP: false,
+      skills: discovered.skills.filter((/** @type {any} */ skill) => skill?._source?.provider !== 'omp-managed'),
+      rules: [],
+      spawns: '',
+      taskDepth: 1,
+      parentTaskPrefix: agentId,
+      agentId,
+      agentRegistry: new isolation.AgentRegistry(),
+    };
+    restoreOmpGlobals = () => {
+      isolation.initializeWithSettings(sdk.settings);
+      isolation.applyProviderGlobalsFromSettings(sdk.settings);
+    };
+  }
+
   const sessionOptions = {
     cwd: opts.cwd,
     model: opts.currentModel,
@@ -166,30 +221,24 @@ export async function dispatchRoleSession(opts) {
     tools,
     sessionManager,
     modelRegistry: opts.modelRegistry,
-    ...(isOmp ? {
-      toolNames: tools.filter((name) => !OMP_LEGACY_TOOLS.includes(name)),
-      customTools: sdk.createReadOnlyTools(opts.cwd).filter(
-        (/** @type {{ name: string }} */ tool) => OMP_LEGACY_TOOLS.includes(tool.name),
-      ),
-      settings: sdk.Settings.isolated(OMP_SETTINGS),
-      disableExtensionDiscovery: true,
-      preloadedCustomToolPaths: [],
-      enableMCP: false,
-      spawns: '',
-      taskDepth: 1,
-      agentId,
-    } : {}),
+    ...ompOptions,
   };
-  const { session } = await sdk.createAgentSession(sessionOptions);
+  let created;
+  try {
+    created = await sdk.createAgentSession(sessionOptions);
+  } finally {
+    restoreOmpGlobals?.();
+  }
+  const { session } = created;
 
   /** @type {{ provider?: string, id?: string }} */
   let actual = {};
   try {
     if (isOmp) {
       const active = session.getActiveToolNames?.();
-      if (!Array.isArray(active) || active.length !== tools.length || tools.some((tool) => !active.includes(tool))) {
+      if (!Array.isArray(active) || active.length !== ompToolNames.length || ompToolNames.some((tool) => !active.includes(tool))) {
         const received = Array.isArray(active) ? active.join(', ') : 'unavailable';
-        throw new Error(`cook_dispatch: OMP tool isolation failed (expected ${tools.join(', ')}, got ${received})`);
+        throw new Error(`cook_dispatch: OMP tool isolation failed (expected ${ompToolNames.join(', ')}, got ${received})`);
       }
     }
     session.subscribe((/** @type {any} */ event) => {
