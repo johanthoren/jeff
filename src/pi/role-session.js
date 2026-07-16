@@ -10,6 +10,7 @@ export const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refu
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
 const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
+const OMP_LEGACY_TOOLS = ['find', 'ls'];
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OMP_SETTINGS = {
   'advisor.enabled': false,
@@ -165,11 +166,11 @@ export async function dispatchRoleSession(opts) {
     tools,
     sessionManager,
     modelRegistry: opts.modelRegistry,
-  };
-  if (isOmp) {
-    Object.assign(sessionOptions, {
-      toolNames: tools.filter((name) => name !== 'find' && name !== 'ls'),
-      customTools: sdk.createReadOnlyTools(opts.cwd).filter((/** @type {{ name: string }} */ tool) => tool.name === 'find' || tool.name === 'ls'),
+    ...(isOmp ? {
+      toolNames: tools.filter((name) => !OMP_LEGACY_TOOLS.includes(name)),
+      customTools: sdk.createReadOnlyTools(opts.cwd).filter(
+        (/** @type {{ name: string }} */ tool) => OMP_LEGACY_TOOLS.includes(tool.name),
+      ),
       settings: sdk.Settings.isolated(OMP_SETTINGS),
       disableExtensionDiscovery: true,
       preloadedCustomToolPaths: [],
@@ -177,8 +178,8 @@ export async function dispatchRoleSession(opts) {
       spawns: '',
       taskDepth: 1,
       agentId,
-    });
-  }
+    } : {}),
+  };
   const { session } = await sdk.createAgentSession(sessionOptions);
 
   /** @type {{ provider?: string, id?: string }} */
@@ -186,8 +187,9 @@ export async function dispatchRoleSession(opts) {
   try {
     if (isOmp) {
       const active = session.getActiveToolNames?.();
-      if (!Array.isArray(active) || JSON.stringify([...active].sort()) !== JSON.stringify([...tools].sort())) {
-        throw new Error(`cook_dispatch: OMP tool isolation failed (expected ${tools.join(', ')}, got ${active?.join(', ') ?? 'unavailable'})`);
+      if (!Array.isArray(active) || active.length !== tools.length || tools.some((tool) => !active.includes(tool))) {
+        const received = Array.isArray(active) ? active.join(', ') : 'unavailable';
+        throw new Error(`cook_dispatch: OMP tool isolation failed (expected ${tools.join(', ')}, got ${received})`);
       }
     }
     session.subscribe((/** @type {any} */ event) => {
