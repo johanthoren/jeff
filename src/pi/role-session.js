@@ -18,7 +18,9 @@ const OMP_SETTINGS = {
   'astGrep.enabled': false,
   'autolearn.enabled': false,
   'codexResets.autoRedeem': 'no',
+  'compaction.remoteEnabled': false,
   'contextPromotion.enabled': false,
+  'features.unexpectedStopDetection': false,
   'magicKeywords.enabled': false,
   'memory.backend': 'off',
   'modelRoles': {},
@@ -154,54 +156,57 @@ function hasExactProviderOptions(provider, options, currentModel) {
     && options.forceRefresh !== true;
 }
 
-/** @param {any} parentAuthStorage @param {any} currentModel */
-function createParentAuthView(parentAuthStorage, currentModel) {
-  const safeOperations = /** @type {Record<string, (...args: any[]) => any>} */ ({
+/** @param {any} parentModelRegistry @param {any} currentModel */
+async function createChildAuthStorage(parentModelRegistry, currentModel) {
+  const exactModel = Object.freeze({
+    provider: currentModel.provider,
+    id: currentModel.id,
+    baseUrl: currentModel.baseUrl,
+  });
+  const provider = exactModel.provider;
+  const apiKey = await parentModelRegistry.getApiKey(currentModel);
+  const parentAuth = parentModelRegistry.authStorage;
+  const hasOAuth = parentAuth.hasOAuth?.(provider) === true;
+  const oauthAccountId = hasOAuth ? parentAuth.getOAuthAccountId?.(provider) : undefined;
+  const oauthIdentity = hasOAuth ? parentAuth.getOAuthAccountIdentity?.(provider) : undefined;
+  const identity = oauthIdentity && typeof oauthIdentity === 'object'
+    ? Object.freeze(structuredClone(oauthIdentity))
+    : oauthIdentity;
+  const getApiKey = async (/** @type {string} */ requestedProvider, /** @type {any} */ options = {}) => (
+    hasExactProviderOptions(requestedProvider, options, exactModel) ? apiKey : undefined
+  );
+
+  return Object.freeze({
+    close() {},
+    describeCredentialSource() {},
     fetchUsageReports: async () => null,
+    getApiKey: (/** @type {string} */ requestedProvider, /** @type {string | undefined} */ _sessionId, /** @type {any} */ options) => (
+      getApiKey(requestedProvider, options)
+    ),
+    getCredentialOrigin() {},
+    getOAuthAccountId: (/** @type {string} */ requestedProvider) => requestedProvider === provider ? oauthAccountId : undefined,
+    getOAuthAccountIdentity: (/** @type {string} */ requestedProvider) => requestedProvider === provider ? identity : undefined,
+    hasAuth: (/** @type {string} */ requestedProvider) => requestedProvider === provider && apiKey !== undefined,
+    hasNonEnvCredential: () => false,
+    hasOAuth: (/** @type {string} */ requestedProvider) => requestedProvider === provider && hasOAuth,
     ingestUsageHeaders: () => false,
     invalidateCredentialMatching: async () => false,
+    invalidateUsageCache: async () => {},
     listResetCredits: async () => [],
     markUsageLimitReached: async () => ({ switched: false }),
     onCredentialDisabled: () => () => {},
     recordUsageCost: () => false,
     redeemResetCredit: async () => ({ ok: false, code: 'no_credit' }),
+    reload: async () => {},
+    remove: async () => {},
+    removeConfigApiKey() {},
+    removeCredential: async () => undefined,
+    resolver: (/** @type {string} */ requestedProvider, /** @type {any} */ options = {}) => async (/** @type {any} */ args = {}) => (
+      args.error === undefined ? getApiKey(requestedProvider, options) : undefined
+    ),
     rotateSessionCredential: async () => false,
+    setFallbackResolver() {},
   });
-  const parentPredicates = new Set(['hasAuth', 'hasNonEnvCredential', 'hasOAuth']);
-  const parentReads = new Set(['describeCredentialSource', 'getCredentialOrigin', 'getOAuthAccountId']);
-  /** @type {any} */
-  let view;
-  view = new Proxy(parentAuthStorage, {
-    get(target, property) {
-      if (typeof property !== 'string') return undefined;
-      if (property === 'getApiKey') {
-        return (/** @type {string} */ provider, /** @type {string | undefined} */ sessionId, /** @type {any} */ options = {}) => (
-          hasExactProviderOptions(provider, options, currentModel)
-            ? target.getApiKey(provider, sessionId, { ...options, baseUrl: currentModel.baseUrl, modelId: currentModel.id })
-            : undefined
-        );
-      }
-      if (property === 'resolver') {
-        return (/** @type {string} */ provider, /** @type {any} */ options = {}) => async (/** @type {any} */ args = {}) => (
-          args.error === undefined && hasExactProviderOptions(provider, options, currentModel)
-            ? view.getApiKey(provider, options.sessionId, { ...options, signal: args.signal })
-            : undefined
-        );
-      }
-      if (Object.hasOwn(safeOperations, property)) return safeOperations[property];
-      const value = Reflect.get(target, property, target);
-      if (parentPredicates.has(property)) {
-        return (/** @type {string} */ provider) => provider === currentModel.provider && value.call(target, provider);
-      }
-      if (parentReads.has(property)) {
-        return (/** @type {string} */ provider, /** @type {any} */ option) => provider === currentModel.provider
-          ? value.call(target, provider, option)
-          : undefined;
-      }
-      return typeof value === 'function' ? () => {} : undefined;
-    },
-  });
-  return view;
 }
 
 /** @param {any} registry @param {any} currentModel */
@@ -308,7 +313,7 @@ async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, 
     throw new Error('cook_dispatch: OMP model registry is unavailable');
   }
   const modelRegistry = createExactModelRegistry(
-    new sdk.ModelRegistry(createParentAuthView(parentModelRegistry.authStorage, currentModel)),
+    new sdk.ModelRegistry(await createChildAuthStorage(parentModelRegistry, currentModel)),
     currentModel,
   );
   const { skills } = await sdk.discoverSkills(cwd, undefined, {
