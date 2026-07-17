@@ -156,18 +156,20 @@ function hasExactProviderOptions(provider, options, currentModel) {
     && options.forceRefresh !== true;
 }
 
-/** @param {any} parentModelRegistry @param {any} currentModel */
-async function createChildAuthStorage(parentModelRegistry, currentModel) {
+/** @param {any} parentModelRegistry @param {any} currentModel @param {string} snapshotSessionId */
+async function createChildAuthStorage(parentModelRegistry, currentModel, snapshotSessionId) {
   const exactModel = Object.freeze({
     provider: currentModel.provider,
     id: currentModel.id,
     baseUrl: currentModel.baseUrl,
   });
   const provider = exactModel.provider;
-  const apiKey = await parentModelRegistry.getApiKey(currentModel);
+  const apiKey = await parentModelRegistry.getApiKey(currentModel, snapshotSessionId);
   const parentAuth = parentModelRegistry.authStorage;
   const hasOAuth = parentAuth.hasOAuth?.(provider) === true;
-  const oauthIdentity = hasOAuth ? parentAuth.getOAuthAccountIdentity?.(provider) : undefined;
+  const oauthIdentity = hasOAuth
+    ? parentAuth.getOAuthAccountIdentity?.(provider, snapshotSessionId)
+    : undefined;
   const identity = oauthIdentity && typeof oauthIdentity === 'object'
     ? Object.freeze(structuredClone(oauthIdentity))
     : oauthIdentity;
@@ -306,7 +308,7 @@ async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, 
     throw new Error('cook_dispatch: OMP model registry is unavailable');
   }
   const modelRegistry = createExactModelRegistry(
-    await createChildAuthStorage(parentModelRegistry, currentModel),
+    await createChildAuthStorage(parentModelRegistry, currentModel, agentId),
     currentModel,
   );
   const { skills } = await sdk.discoverSkills(cwd, undefined, {
