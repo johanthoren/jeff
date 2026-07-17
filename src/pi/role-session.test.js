@@ -41,11 +41,20 @@ const OMP_DEFAULT_SETTINGS = {
 };
 const OMP_PARENT_SETTINGS = {
   disabledProviders: ['parent-disabled-provider'],
+  'codexResets.autoRedeem': 'yes',
+  'contextPromotion.enabled': true,
+  modelRoles: { compaction: 'openai/compaction-model' },
   'providers.webSearch': 'exa',
   'providers.webSearchExclude': ['brave'],
   'providers.image': 'openai',
   'providers.anthropic.serverSideFallback': true,
+  'retry.modelFallback': true,
 };
+const OMP_CATALOG_MODELS = [
+  { provider: 'fireworks', id: 'accounts/fireworks/models/deepseek-v3p2', baseUrl: 'https://api.fireworks.ai' },
+  { provider: 'fireworks', id: 'accounts/fireworks/models/deepseek-v3p2-fast', baseUrl: 'https://api.fireworks.ai' },
+  { provider: 'openai', id: 'compaction-model', baseUrl: 'https://api.openai.com' },
+];
 const OMP_DISCOVERED_SKILLS = [
   { name: 'code-standards', _source: { provider: 'native' } },
   { name: 'testing', _source: { provider: 'agents' } },
@@ -76,6 +85,38 @@ function ompAuthStorage(apiKeys = {}) {
   };
 }
 
+class PrivateAuthStorage {
+  #apiKey;
+  #mutationCount = 0;
+
+  /** @param {string} apiKey */
+  constructor(apiKey) { this.#apiKey = apiKey; }
+  snapshot() { return { mutationCount: this.#mutationCount }; }
+  mutate() { this.#mutationCount += 1; }
+  setFallbackResolver() { this.mutate(); }
+  hasAuth() { return true; }
+  getOAuthAccountId() { return 'parent-account'; }
+  /** @param {string} _provider @param {string | undefined} _sessionId @param {{ forceRefresh?: boolean }} [options] */
+  async getApiKey(_provider, _sessionId, options) {
+    if (options?.forceRefresh) this.mutate();
+    return this.#apiKey;
+  }
+  onCredentialDisabled() { this.mutate(); return () => this.mutate(); }
+  async remove() { this.mutate(); }
+  async removeCredential() { this.mutate(); return true; }
+  async rotateSessionCredential() { this.mutate(); return true; }
+  async markUsageLimitReached() { this.mutate(); return { switched: true }; }
+  recordUsageCost() { this.mutate(); return true; }
+  ingestUsageHeaders() { this.mutate(); return true; }
+  async fetchUsageReports() { this.mutate(); return [{ provider: 'parent' }]; }
+  async invalidateCredentialMatching() { this.mutate(); return true; }
+  async invalidateUsageCache() { this.mutate(); }
+  async listResetCredits() { this.mutate(); return [{ id: 'parent-credit' }]; }
+  async redeemResetCredit() { this.mutate(); return { ok: true, code: 'redeemed' }; }
+  async reload() { this.mutate(); }
+  close() { this.mutate(); }
+}
+
 class OmpModelRegistry {
   /**
    * @param {any} authStorage
@@ -83,7 +124,7 @@ class OmpModelRegistry {
    */
   constructor(authStorage, state = {}) {
     this.authStorage = authStorage;
-    this.models = [...(state.models ?? [])];
+    this.models = [...(state.models ?? OMP_CATALOG_MODELS)];
     this.providers = new Set(state.providers ?? []);
     this.providersBySource = new Map(
       (state.sources ?? []).map(([source, providers]) => [source, new Set(providers)]),
@@ -116,12 +157,40 @@ class OmpModelRegistry {
   async refreshSelectedModelMetadata(model) { return model; }
   /** @param {any} model */
   hasConfiguredAuth(model) { return this.authStorage.hasAuth(model.provider); }
-  /** @param {any} model */
-  async getApiKey(model) { return this.authStorage.getApiKey(model.provider); }
-  /** @param {any} model */
-  resolver(model) { return () => this.getApiKey(model); }
+  /** @param {any} model @param {string | undefined} sessionId */
+  async getApiKey(model, sessionId) {
+    return this.authStorage.getApiKey(model.provider, sessionId, { baseUrl: model.baseUrl, modelId: model.id });
+  }
+  /** @param {string} provider @param {string | undefined} sessionId @param {any} [options] */
+  async getApiKeyForProvider(provider, sessionId, options) {
+    return this.authStorage.getApiKey(provider, sessionId, options);
+  }
+  /** @param {any} target @param {any} optionsOrSessionId */
+  resolver(target, optionsOrSessionId) {
+    const provider = typeof target === 'string' ? target : target.provider;
+    const options = typeof target === 'string'
+      ? (optionsOrSessionId ?? {})
+      : { sessionId: optionsOrSessionId, baseUrl: target.baseUrl, modelId: target.id };
+    return async (/** @type {any} */ args = {}) => {
+      if (args.error === undefined) return this.getApiKeyForProvider(provider, options.sessionId, options);
+      if (args.lastChance) {
+        await this.authStorage.rotateSessionCredential?.(provider, options.sessionId, {
+          error: args.error,
+          modelId: options.modelId,
+          signal: args.signal,
+          apiKey: args.previousKey,
+        });
+        return this.getApiKeyForProvider(provider, options.sessionId, options);
+      }
+      return this.getApiKeyForProvider(provider, options.sessionId, { ...options, forceRefresh: true, signal: args.signal });
+    };
+  }
   /** @param {string} provider @param {string} id */
   find(provider, id) { return this.models.find((model) => model.provider === provider && model.id === id); }
+  /** @param {string} provider */
+  getProviderBaseUrl(provider) { return this.models.find((model) => model.provider === provider)?.baseUrl; }
+  /** @param {string} provider */
+  getProviderHeaders(provider) { return this.models.find((model) => model.provider === provider)?.headers; }
   getAll() { return [...this.models]; }
   getAvailable() { return this.models.filter((model) => this.hasConfiguredAuth(model)); }
 }
@@ -509,10 +578,14 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
       assert.equal(options.settings.get('astEdit.enabled'), false);
       assert.equal(options.settings.get('astGrep.enabled'), false);
       assert.equal(options.settings.get('autolearn.enabled'), false);
+      assert.equal(options.settings.get('codexResets.autoRedeem'), 'no');
+      assert.equal(options.settings.get('contextPromotion.enabled'), false);
       assert.equal(options.settings.get('magicKeywords.enabled'), false);
       assert.equal(options.settings.get('memory.backend'), 'off');
+      assert.deepEqual(options.settings.get('modelRoles'), {});
       assert.equal(options.settings.get('plan.enabled'), false);
       assert.deepEqual(options.settings.get('retry.fallbackChains'), {});
+      assert.equal(options.settings.get('retry.modelFallback'), false);
       assert.equal(options.settings.get('ttsr.enabled'), false);
       assert.equal(options.settings.get('ttsr.builtinRules'), false);
     }
@@ -768,6 +841,156 @@ test('dispatchRoleSession keeps parent extension model and auth state after succ
   });
 });
 
+test('dispatchRoleSession exposes only the exact custom OMP model, key, and transport', async () => {
+  await withRepo(async (repoRoot) => {
+    const currentModel = {
+      provider: 'extension-provider',
+      id: 'extension-model',
+      api: 'extension-api',
+      baseUrl: 'https://extension.example/v1',
+      headers: { 'x-extension': 'enabled' },
+    };
+    const parentModelRegistry = ompParentModelRegistry(currentModel);
+    let registryChecked = false;
+    const sdk = ompSdk(async (options) => {
+      const registry = options.modelRegistry;
+      const sameIdWrongTransport = { ...currentModel, baseUrl: 'https://attacker.example' };
+      const alternates = [
+        OMP_CATALOG_MODELS[0],
+        OMP_CATALOG_MODELS[1],
+        OMP_CATALOG_MODELS[2],
+        sameIdWrongTransport,
+      ];
+
+      assert.deepEqual(registry.getAll(), [currentModel]);
+      assert.deepEqual(registry.getAvailable(), [currentModel]);
+      assert.equal(registry.find(currentModel.provider, currentModel.id), currentModel);
+      assert.equal(registry.hasConfiguredAuth(currentModel), true);
+      assert.equal(await registry.getApiKey(currentModel, 'child-session'), 'extension-key');
+      assert.equal(await registry.resolver(currentModel, 'child-session')({}), 'extension-key');
+      assert.equal(await registry.resolver(currentModel.provider, {
+        sessionId: 'child-session',
+        baseUrl: currentModel.baseUrl,
+        modelId: currentModel.id,
+      })({}), 'extension-key');
+      assert.equal(await registry.getApiKeyForProvider(currentModel.provider, 'child-session', {
+        baseUrl: currentModel.baseUrl,
+        modelId: currentModel.id,
+      }), 'extension-key');
+      assert.equal(registry.getProviderBaseUrl(currentModel.provider), currentModel.baseUrl);
+      assert.deepEqual(registry.getProviderHeaders(currentModel.provider), currentModel.headers);
+
+      for (const alternate of alternates) {
+        assert.equal(registry.hasConfiguredAuth(alternate), false);
+        assert.equal(await registry.getApiKey(alternate, 'child-session'), undefined);
+        assert.equal(await registry.resolver(alternate, 'child-session')({}), undefined);
+      }
+      assert.equal(registry.find('fireworks', OMP_CATALOG_MODELS[0].id), undefined);
+      assert.equal(registry.find('openai', 'compaction-model'), undefined);
+      assert.equal(await registry.resolver('fireworks', {
+        sessionId: 'child-session',
+        modelId: OMP_CATALOG_MODELS[0].id,
+      })({}), undefined);
+      assert.equal(registry.authStorage.hasAuth('fireworks'), false);
+      assert.equal(await registry.authStorage.getApiKey('fireworks', 'child-session', {
+        baseUrl: OMP_CATALOG_MODELS[0].baseUrl,
+        modelId: OMP_CATALOG_MODELS[0].id,
+      }), undefined);
+      assert.equal(await registry.getApiKeyForProvider(currentModel.provider, 'child-session', {
+        baseUrl: 'https://attacker.example',
+        modelId: currentModel.id,
+      }), undefined);
+      assert.equal(await registry.getApiKeyForProvider(currentModel.provider, 'child-session', {
+        baseUrl: currentModel.baseUrl,
+        modelId: currentModel.id,
+        forceRefresh: true,
+      }), undefined);
+      assert.equal(registry.getProviderBaseUrl('fireworks'), undefined);
+      await registry.refreshRuntimeProviders('offline');
+      await registry.refreshRuntimeProviders().catch(assert.fail);
+      registryChecked = true;
+
+      return {
+        session: {
+          model: currentModel,
+          thinkingLevel: 'xhigh',
+          getActiveToolNames: () => activeOmpTools(options),
+          subscribe() {},
+          async prompt() {},
+          dispose() {},
+        },
+      };
+    });
+
+    await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Use only the exact extension model.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      modelRegistry: parentModelRegistry,
+      sdk,
+    });
+
+    assert.equal(registryChecked, true);
+  });
+});
+
+test('dispatchRoleSession makes OMP auth failures and maintenance no-ops on parent storage', async () => {
+  await withRepo(async (repoRoot) => {
+    const currentModel = { provider: 'private-provider', id: 'private-model', baseUrl: 'https://private.example' };
+    const parentAuthStorage = new PrivateAuthStorage('parent-private-key');
+    const parentModelRegistry = new OmpModelRegistry(parentAuthStorage, { models: [currentModel] });
+    const before = parentAuthStorage.snapshot();
+    const sdk = ompSdk(async (options) => {
+      const registry = options.modelRegistry;
+      const authStorage = registry.authStorage;
+      const resolver = registry.resolver(currentModel, 'child-session');
+
+      assert.equal(await resolver({}), 'parent-private-key');
+      assert.equal(await resolver({ error: Object.assign(new Error('unauthorized'), { status: 401 }), lastChance: false }), undefined);
+      assert.equal(await resolver({ error: Object.assign(new Error('rate limited'), { status: 429 }), lastChance: true }), undefined);
+      assert.deepEqual(await authStorage.markUsageLimitReached(), { switched: false });
+      assert.equal(authStorage.recordUsageCost(), false);
+      assert.equal(authStorage.ingestUsageHeaders(), false);
+      assert.equal(await authStorage.fetchUsageReports(), null);
+      assert.equal(await authStorage.invalidateCredentialMatching(), false);
+      await authStorage.invalidateUsageCache();
+      assert.deepEqual(await authStorage.listResetCredits(), []);
+      assert.deepEqual(await authStorage.redeemResetCredit(), { ok: false, code: 'no_credit' });
+      await authStorage.remove();
+      assert.equal(await authStorage.removeCredential(), undefined);
+      assert.equal(await authStorage.rotateSessionCredential(), false);
+      await authStorage.reload();
+      authStorage.onCredentialDisabled()();
+      authStorage.close();
+
+      return {
+        session: {
+          model: currentModel,
+          thinkingLevel: 'xhigh',
+          getActiveToolNames: () => activeOmpTools(options),
+          subscribe() {},
+          async prompt() {},
+          dispose() {},
+        },
+      };
+    });
+
+    await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Resolve the parent key without mutating parent auth.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      modelRegistry: parentModelRegistry,
+      sdk,
+    });
+
+    assert.deepEqual(parentAuthStorage.snapshot(), before);
+  });
+});
+
 test('dispatchRoleSession keeps parent extension model and auth state when OMP creation fails', async () => {
   await withRepo(async (repoRoot) => {
     const currentModel = { provider: 'extension-provider', id: 'extension-model', api: 'extension-api' };
@@ -873,6 +1096,39 @@ test('dispatchRoleSession fails before prompting when OMP widens the active tool
         })),
       }),
       /tool|isolation/i,
+    );
+
+    assert.equal(prompted, false);
+    assert.equal(disposed, true);
+  });
+});
+
+test('dispatchRoleSession rejects OMP model drift before prompting and still disposes', async () => {
+  await withRepo(async (repoRoot) => {
+    let prompted = false;
+    let disposed = false;
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+
+    await assert.rejects(
+      dispatchRoleSession({
+        stage: 'review',
+        brief: 'Reject drift before any model work.',
+        cwd: repoRoot,
+        repoRoot,
+        currentModel,
+        modelRegistry: ompParentModelRegistry(currentModel),
+        sdk: ompSdk(async (options) => ({
+          session: {
+            model: { provider: 'anthropic', id: 'fallback-model' },
+            thinkingLevel: 'xhigh',
+            getActiveToolNames: () => activeOmpTools(options),
+            subscribe() {},
+            async prompt() { prompted = true; },
+            dispose() { disposed = true; },
+          },
+        })),
+      }),
+      /model|drift/i,
     );
 
     assert.equal(prompted, false);

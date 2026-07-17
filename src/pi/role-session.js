@@ -17,11 +17,15 @@ const OMP_SETTINGS = {
   'astEdit.enabled': false,
   'astGrep.enabled': false,
   'autolearn.enabled': false,
+  'codexResets.autoRedeem': 'no',
+  'contextPromotion.enabled': false,
   'magicKeywords.enabled': false,
   'memory.backend': 'off',
+  'modelRoles': {},
   'plan.enabled': false,
   'providers.anthropic.serverSideFallback': false,
   'retry.fallbackChains': {},
+  'retry.modelFallback': false,
   'ttsr.enabled': false,
   'ttsr.builtinRules': false,
 };
@@ -142,21 +146,123 @@ function createDispatchAgentRegistry() {
   };
 }
 
-/** @param {any} parentAuthStorage */
-function createParentAuthView(parentAuthStorage) {
-  const blockedWrites = new Set([
-    'clearConfigApiKeys',
-    'removeConfigApiKey',
-    'setConfigApiKey',
-    'setFallbackResolver',
-  ]);
-  return new Proxy(parentAuthStorage, {
+/** @param {string} provider @param {any} options @param {any} currentModel */
+function hasExactProviderOptions(provider, options, currentModel) {
+  return provider === currentModel.provider
+    && options?.modelId === currentModel.id
+    && (options.baseUrl === undefined || options.baseUrl === currentModel.baseUrl)
+    && options.forceRefresh !== true;
+}
+
+/** @param {any} parentAuthStorage @param {any} currentModel */
+function createParentAuthView(parentAuthStorage, currentModel) {
+  const safeOperations = /** @type {Record<string, (...args: any[]) => any>} */ ({
+    fetchUsageReports: async () => null,
+    ingestUsageHeaders: () => false,
+    invalidateCredentialMatching: async () => false,
+    listResetCredits: async () => [],
+    markUsageLimitReached: async () => ({ switched: false }),
+    onCredentialDisabled: () => () => {},
+    recordUsageCost: () => false,
+    redeemResetCredit: async () => ({ ok: false, code: 'no_credit' }),
+    rotateSessionCredential: async () => false,
+  });
+  const parentPredicates = new Set(['hasAuth', 'hasNonEnvCredential', 'hasOAuth']);
+  const parentReads = new Set(['describeCredentialSource', 'getCredentialOrigin', 'getOAuthAccountId']);
+  /** @type {any} */
+  let view;
+  view = new Proxy(parentAuthStorage, {
     get(target, property) {
-      if (typeof property === 'string' && blockedWrites.has(property)) return () => {};
+      if (typeof property !== 'string') return undefined;
+      if (property === 'getApiKey') {
+        return (/** @type {string} */ provider, /** @type {string | undefined} */ sessionId, /** @type {any} */ options = {}) => (
+          hasExactProviderOptions(provider, options, currentModel)
+            ? target.getApiKey(provider, sessionId, { ...options, baseUrl: currentModel.baseUrl, modelId: currentModel.id })
+            : undefined
+        );
+      }
+      if (property === 'resolver') {
+        return (/** @type {string} */ provider, /** @type {any} */ options = {}) => async (/** @type {any} */ args = {}) => (
+          args.error === undefined && hasExactProviderOptions(provider, options, currentModel)
+            ? view.getApiKey(provider, options.sessionId, { ...options, signal: args.signal })
+            : undefined
+        );
+      }
+      if (Object.hasOwn(safeOperations, property)) return safeOperations[property];
       const value = Reflect.get(target, property, target);
-      return typeof value === 'function' ? value.bind(target) : value;
+      if (parentPredicates.has(property)) {
+        return (/** @type {string} */ provider) => provider === currentModel.provider && value.call(target, provider);
+      }
+      if (parentReads.has(property)) {
+        return (/** @type {string} */ provider, /** @type {any} */ option) => provider === currentModel.provider
+          ? value.call(target, provider, option)
+          : undefined;
+      }
+      return typeof value === 'function' ? () => {} : undefined;
     },
   });
+  return view;
+}
+
+/** @param {any} registry @param {any} currentModel */
+function createExactModelRegistry(registry, currentModel) {
+  const noKey = async () => undefined;
+  const isExactModel = (/** @type {any} */ model) => model === currentModel;
+  const resolver = (/** @type {string | undefined} */ sessionId) => registry.authStorage.resolver(currentModel.provider, {
+    sessionId,
+    baseUrl: currentModel.baseUrl,
+    modelId: currentModel.id,
+  });
+
+  return {
+    authStorage: registry.authStorage,
+    clearSourceRegistrations() {},
+    clearSuppressedSelector() {},
+    find: (/** @type {string} */ provider, /** @type {string} */ id) => (
+      provider === currentModel.provider && id === currentModel.id ? currentModel : undefined
+    ),
+    getAll: () => [currentModel],
+    getApiKey: (/** @type {any} */ model, /** @type {string | undefined} */ sessionId) => (
+      isExactModel(model) ? registry.getApiKey(currentModel, sessionId) : undefined
+    ),
+    getApiKeyForProvider: (/** @type {string} */ provider, /** @type {string | undefined} */ sessionId, /** @type {any} */ options = {}) => (
+      hasExactProviderOptions(provider, options, currentModel)
+        ? registry.getApiKeyForProvider(provider, sessionId, {
+            ...options,
+            baseUrl: currentModel.baseUrl,
+            modelId: currentModel.id,
+          })
+        : undefined
+    ),
+    getAvailable: () => registry.hasConfiguredAuth(currentModel) ? [currentModel] : [],
+    getProviderBaseUrl: (/** @type {string} */ provider) => provider === currentModel.provider
+      ? currentModel.baseUrl
+      : undefined,
+    getProviderHeaders: (/** @type {string} */ provider) => provider === currentModel.provider
+      ? currentModel.headers
+      : undefined,
+    hasConfiguredAuth: (/** @type {any} */ model) => isExactModel(model) && registry.hasConfiguredAuth(currentModel),
+    isSelectorSuppressed: () => false,
+    refresh: async () => {},
+    refreshInBackground() {},
+    refreshProvider: async () => {},
+    refreshRuntimeProviders: async () => {},
+    refreshSelectedModelMetadata: async (/** @type {any} */ model) => {
+      if (!isExactModel(model)) throw new Error('cook_dispatch: OMP requested alternate model metadata');
+      return currentModel;
+    },
+    registerProvider() {},
+    resolver(/** @type {any} */ model, /** @type {any} */ optionsOrSessionId) {
+      if (typeof model === 'string') {
+        return hasExactProviderOptions(model, optionsOrSessionId, currentModel)
+          ? resolver(optionsOrSessionId.sessionId)
+          : noKey;
+      }
+      return isExactModel(model) ? resolver(optionsOrSessionId) : noKey;
+    },
+    suppressSelector() {},
+    syncExtensionSources() {},
+  };
 }
 
 /** @param {any} skill */
@@ -193,14 +299,18 @@ async function loadOmpIsolation(sdk) {
  * @param {string[]} tools
  * @param {string} agentId
  * @param {any} parentModelRegistry
+ * @param {any} currentModel
  */
-async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry) {
+async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, currentModel) {
   const isolation = await loadOmpIsolation(sdk);
   const settings = sdk.createSubagentSettings(sdk.settings, OMP_SETTINGS);
   if (typeof sdk.ModelRegistry !== 'function' || !parentModelRegistry?.authStorage) {
     throw new Error('cook_dispatch: OMP model registry is unavailable');
   }
-  const modelRegistry = new sdk.ModelRegistry(createParentAuthView(parentModelRegistry.authStorage));
+  const modelRegistry = createExactModelRegistry(
+    new sdk.ModelRegistry(createParentAuthView(parentModelRegistry.authStorage, currentModel)),
+    currentModel,
+  );
   const { skills } = await sdk.discoverSkills(cwd, undefined, {
     ...settings.getGroup('skills'),
     disabledExtensions: settings.get('disabledExtensions') ?? [],
@@ -270,7 +380,7 @@ export async function dispatchRoleSession(opts) {
   const sessionManager = sdk.SessionManager?.inMemory?.(opts.cwd);
   const tools = toolsForStage(opts.stage);
   const omp = typeof sdk.createSubagentSettings === 'function'
-    ? await prepareOmpSession(sdk, opts.cwd, tools, agentId, opts.modelRegistry)
+    ? await prepareOmpSession(sdk, opts.cwd, tools, agentId, opts.modelRegistry, opts.currentModel)
     : undefined;
   const sessionOptions = {
     cwd: opts.cwd,
@@ -292,6 +402,10 @@ export async function dispatchRoleSession(opts) {
   /** @type {{ provider?: string, id?: string }} */
   let actual = {};
   try {
+    actual = modelParts(session.model ?? opts.currentModel);
+    if (actual.provider !== current.provider || actual.id !== current.id) {
+      throw new Error(`cook_dispatch: child model drifted from ${current.provider}/${current.id} to ${actual.provider ?? 'unknown'}/${actual.id ?? 'unknown'}`);
+    }
     if (omp) {
       const active = session.getActiveToolNames?.();
       if (!Array.isArray(active) || active.length !== omp.toolNames.length || omp.toolNames.some((tool) => !active.includes(tool))) {
