@@ -230,6 +230,7 @@ export default function jeffExtension(pi, dependencies = {}) {
         cwd: ctx.cwd,
         currentModel: ctx.model,
         modelRegistry: ctx.modelRegistry,
+        sdk: pi.pi,
       });
 
       if (params.taskId) {

@@ -8,10 +8,14 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import jeffExtension, { formatDispatchResult } from './extension.js';
 
-/** @param {Record<string, unknown>} [dependencies] */
-function registeredDispatchTool(dependencies) {
+/**
+ * @param {Record<string, unknown>} [dependencies]
+ * @param {unknown} [hostSdk]
+ */
+function registeredDispatchTool(dependencies, hostSdk) {
   const tools = new Map();
   /** @type {any} */ (jeffExtension)({
+    pi: hostSdk,
     registerCommand() {},
     /** @param {any} definition */
     registerTool(definition) { tools.set(definition.name, definition); },
@@ -243,6 +247,39 @@ test('empty transcript renders useful compact output instead of an empty box', (
 
   assert.match(output, /review/);
   assert.doesNotMatch(output, /RAW TRANSCRIPT BLOB|^\s*$/);
+});
+
+test('cook_dispatch forwards the host-injected SDK through its default role-session boundary', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-host-sdk-'));
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    const hostSdk = { createAgentSession() {} };
+    let receivedSdk;
+    const tool = registeredDispatchTool({
+      dispatchRoleSession: async (/** @type {any} */ options) => {
+        receivedSdk = options.sdk;
+        return {
+          stage: 'review',
+          agent_id: 'host-sdk-reviewer',
+          brain: { provider: 'openai', model: 'gpt-5.6', effort: 'xhigh' },
+          transcript: 'review complete',
+        };
+      },
+    }, hostSdk);
+
+    await tool.execute(
+      'call-1',
+      { stage: 'review', brief: 'Use the host SDK.' },
+      undefined,
+      undefined,
+      { cwd, model: { provider: 'openai', id: 'gpt-5.6' }, modelRegistry: {} },
+    );
+
+    assert.equal(receivedSdk, hostSdk);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test('cook_dispatch refuses inactive projects before starting a role session', async () => {

@@ -199,6 +199,7 @@ select_dist_tag() {
   local commands=(
     'pi install npm:@johanthoren/jeff'
     'pi update npm:@johanthoren/jeff'
+    'omp plugin install @johanthoren/jeff'
     'claude plugin marketplace add johanthoren/jeff'
     'claude plugin install jeff@jeff'
     'claude plugin update jeff@jeff'
