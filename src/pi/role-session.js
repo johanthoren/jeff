@@ -167,27 +167,24 @@ async function createChildAuthStorage(parentModelRegistry, currentModel) {
   const apiKey = await parentModelRegistry.getApiKey(currentModel);
   const parentAuth = parentModelRegistry.authStorage;
   const hasOAuth = parentAuth.hasOAuth?.(provider) === true;
-  const oauthAccountId = hasOAuth ? parentAuth.getOAuthAccountId?.(provider) : undefined;
   const oauthIdentity = hasOAuth ? parentAuth.getOAuthAccountIdentity?.(provider) : undefined;
   const identity = oauthIdentity && typeof oauthIdentity === 'object'
     ? Object.freeze(structuredClone(oauthIdentity))
     : oauthIdentity;
+  const oauthAccountId = typeof identity?.accountId === 'string' ? identity.accountId : undefined;
   const getApiKey = async (/** @type {string} */ requestedProvider, /** @type {any} */ options = {}) => (
     hasExactProviderOptions(requestedProvider, options, exactModel) ? apiKey : undefined
   );
 
   return Object.freeze({
     close() {},
-    describeCredentialSource() {},
     fetchUsageReports: async () => null,
     getApiKey: (/** @type {string} */ requestedProvider, /** @type {string | undefined} */ _sessionId, /** @type {any} */ options) => (
       getApiKey(requestedProvider, options)
     ),
-    getCredentialOrigin() {},
     getOAuthAccountId: (/** @type {string} */ requestedProvider) => requestedProvider === provider ? oauthAccountId : undefined,
     getOAuthAccountIdentity: (/** @type {string} */ requestedProvider) => requestedProvider === provider ? identity : undefined,
     hasAuth: (/** @type {string} */ requestedProvider) => requestedProvider === provider && apiKey !== undefined,
-    hasNonEnvCredential: () => false,
     hasOAuth: (/** @type {string} */ requestedProvider) => requestedProvider === provider && hasOAuth,
     ingestUsageHeaders: () => false,
     invalidateCredentialMatching: async () => false,
@@ -199,73 +196,69 @@ async function createChildAuthStorage(parentModelRegistry, currentModel) {
     redeemResetCredit: async () => ({ ok: false, code: 'no_credit' }),
     reload: async () => {},
     remove: async () => {},
-    removeConfigApiKey() {},
     removeCredential: async () => undefined,
-    resolver: (/** @type {string} */ requestedProvider, /** @type {any} */ options = {}) => async (/** @type {any} */ args = {}) => (
-      args.error === undefined ? getApiKey(requestedProvider, options) : undefined
-    ),
     rotateSessionCredential: async () => false,
-    setFallbackResolver() {},
   });
 }
 
-/** @param {any} registry @param {any} currentModel */
-function createExactModelRegistry(registry, currentModel) {
+/** @param {any} authStorage @param {any} currentModel */
+function createExactModelRegistry(authStorage, currentModel) {
+  const exactModel = Object.freeze({
+    provider: currentModel.provider,
+    id: currentModel.id,
+    baseUrl: currentModel.baseUrl,
+  });
   const noKey = async () => undefined;
   const isExactModel = (/** @type {any} */ model) => model === currentModel;
-  const resolver = (/** @type {string | undefined} */ sessionId) => registry.authStorage.resolver(currentModel.provider, {
-    sessionId,
-    baseUrl: currentModel.baseUrl,
-    modelId: currentModel.id,
-  });
+  const getApiKey = (/** @type {string} */ provider, /** @type {string | undefined} */ sessionId, /** @type {any} */ options = {}) => (
+    hasExactProviderOptions(provider, options, exactModel)
+      ? authStorage.getApiKey(provider, sessionId, {
+          ...options,
+          baseUrl: exactModel.baseUrl,
+          modelId: exactModel.id,
+        })
+      : undefined
+  );
+  const resolver = (/** @type {string | undefined} */ sessionId) => async (/** @type {any} */ args = {}) => (
+    args.error === undefined
+      ? getApiKey(exactModel.provider, sessionId, { baseUrl: exactModel.baseUrl, modelId: exactModel.id })
+      : undefined
+  );
 
   return {
-    authStorage: registry.authStorage,
+    authStorage,
     clearSourceRegistrations() {},
-    clearSuppressedSelector() {},
     find: (/** @type {string} */ provider, /** @type {string} */ id) => (
-      provider === currentModel.provider && id === currentModel.id ? currentModel : undefined
+      provider === exactModel.provider && id === exactModel.id ? currentModel : undefined
     ),
     getAll: () => [currentModel],
     getApiKey: (/** @type {any} */ model, /** @type {string | undefined} */ sessionId) => (
-      isExactModel(model) ? registry.getApiKey(currentModel, sessionId) : undefined
-    ),
-    getApiKeyForProvider: (/** @type {string} */ provider, /** @type {string | undefined} */ sessionId, /** @type {any} */ options = {}) => (
-      hasExactProviderOptions(provider, options, currentModel)
-        ? registry.getApiKeyForProvider(provider, sessionId, {
-            ...options,
-            baseUrl: currentModel.baseUrl,
-            modelId: currentModel.id,
-          })
+      isExactModel(model)
+        ? getApiKey(exactModel.provider, sessionId, { baseUrl: exactModel.baseUrl, modelId: exactModel.id })
         : undefined
     ),
-    getAvailable: () => registry.hasConfiguredAuth(currentModel) ? [currentModel] : [],
-    getProviderBaseUrl: (/** @type {string} */ provider) => provider === currentModel.provider
-      ? currentModel.baseUrl
+    getApiKeyForProvider: getApiKey,
+    getAvailable: () => authStorage.hasAuth(exactModel.provider) ? [currentModel] : [],
+    getProviderBaseUrl: (/** @type {string} */ provider) => provider === exactModel.provider
+      ? exactModel.baseUrl
       : undefined,
-    getProviderHeaders: (/** @type {string} */ provider) => provider === currentModel.provider
+    getProviderHeaders: (/** @type {string} */ provider) => provider === exactModel.provider
       ? currentModel.headers
       : undefined,
-    hasConfiguredAuth: (/** @type {any} */ model) => isExactModel(model) && registry.hasConfiguredAuth(currentModel),
-    isSelectorSuppressed: () => false,
-    refresh: async () => {},
-    refreshInBackground() {},
-    refreshProvider: async () => {},
+    hasConfiguredAuth: (/** @type {any} */ model) => isExactModel(model) && authStorage.hasAuth(exactModel.provider),
     refreshRuntimeProviders: async () => {},
     refreshSelectedModelMetadata: async (/** @type {any} */ model) => {
       if (!isExactModel(model)) throw new Error('cook_dispatch: OMP requested alternate model metadata');
       return currentModel;
     },
-    registerProvider() {},
     resolver(/** @type {any} */ model, /** @type {any} */ optionsOrSessionId) {
       if (typeof model === 'string') {
-        return hasExactProviderOptions(model, optionsOrSessionId, currentModel)
+        return hasExactProviderOptions(model, optionsOrSessionId, exactModel)
           ? resolver(optionsOrSessionId.sessionId)
           : noKey;
       }
       return isExactModel(model) ? resolver(optionsOrSessionId) : noKey;
     },
-    suppressSelector() {},
     syncExtensionSources() {},
   };
 }
@@ -309,11 +302,11 @@ async function loadOmpIsolation(sdk) {
 async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, currentModel) {
   const isolation = await loadOmpIsolation(sdk);
   const settings = sdk.createSubagentSettings(sdk.settings, OMP_SETTINGS);
-  if (typeof sdk.ModelRegistry !== 'function' || !parentModelRegistry?.authStorage) {
+  if (typeof parentModelRegistry?.getApiKey !== 'function' || !parentModelRegistry.authStorage) {
     throw new Error('cook_dispatch: OMP model registry is unavailable');
   }
   const modelRegistry = createExactModelRegistry(
-    new sdk.ModelRegistry(await createChildAuthStorage(parentModelRegistry, currentModel)),
+    await createChildAuthStorage(parentModelRegistry, currentModel),
     currentModel,
   );
   const { skills } = await sdk.discoverSkills(cwd, undefined, {
