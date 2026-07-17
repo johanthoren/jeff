@@ -167,9 +167,7 @@ async function createChildAuthStorage(parentModelRegistry, currentModel, snapsho
   const apiKey = await parentModelRegistry.getApiKey(currentModel, snapshotSessionId);
   const parentAuth = parentModelRegistry.authStorage;
   const hasOAuth = parentAuth.hasOAuth?.(provider) === true;
-  const oauthIdentity = hasOAuth
-    ? parentAuth.getOAuthAccountIdentity?.(provider, snapshotSessionId)
-    : undefined;
+  const oauthIdentity = hasOAuth ? parentAuth.getOAuthAccountIdentity?.(provider, snapshotSessionId) : undefined;
   const identity = oauthIdentity && typeof oauthIdentity === 'object'
     ? Object.freeze(structuredClone(oauthIdentity))
     : oauthIdentity;
