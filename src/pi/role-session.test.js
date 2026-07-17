@@ -42,12 +42,16 @@ const OMP_DEFAULT_SETTINGS = {
 const OMP_PARENT_SETTINGS = {
   disabledProviders: ['parent-disabled-provider'],
   'codexResets.autoRedeem': 'yes',
+  'compaction.remoteEnabled': true,
+  'compaction.remoteEndpoint': 'https://parent.example/compact',
   'contextPromotion.enabled': true,
+  'features.unexpectedStopDetection': true,
   modelRoles: { compaction: 'openai/compaction-model' },
   'providers.webSearch': 'exa',
   'providers.webSearchExclude': ['brave'],
   'providers.image': 'openai',
   'providers.anthropic.serverSideFallback': true,
+  'providers.unexpectedStopModel': 'local-classifier',
   'retry.modelFallback': true,
 };
 const OMP_CATALOG_MODELS = [
@@ -87,18 +91,32 @@ function ompAuthStorage(apiKeys = {}) {
 
 class PrivateAuthStorage {
   #apiKey;
+  #credentialResolutions = 0;
+  #parentTouches = 0;
   #mutationCount = 0;
 
   /** @param {string} apiKey */
   constructor(apiKey) { this.#apiKey = apiKey; }
-  snapshot() { return { mutationCount: this.#mutationCount }; }
-  mutate() { this.#mutationCount += 1; }
+  snapshot() {
+    return {
+      credentialResolutions: this.#credentialResolutions,
+      parentTouches: this.#parentTouches,
+      mutationCount: this.#mutationCount,
+    };
+  }
+  touch() { this.#parentTouches += 1; }
+  mutate() { this.touch(); this.#mutationCount += 1; }
   setFallbackResolver() { this.mutate(); }
-  hasAuth() { return true; }
-  getOAuthAccountId() { return 'parent-account'; }
-  /** @param {string} _provider @param {string | undefined} _sessionId @param {{ forceRefresh?: boolean }} [options] */
-  async getApiKey(_provider, _sessionId, options) {
-    if (options?.forceRefresh) this.mutate();
+  hasAuth() { this.touch(); return true; }
+  hasOAuth() { this.touch(); return true; }
+  getOAuthAccountId() { this.touch(); return 'parent-account'; }
+  getOAuthAccountIdentity() {
+    this.touch();
+    return { accountId: 'parent-account', email: 'parent@example.com' };
+  }
+  async getApiKey() {
+    this.#credentialResolutions += 1;
+    this.mutate();
     return this.#apiKey;
   }
   onCredentialDisabled() { this.mutate(); return () => this.mutate(); }
@@ -510,7 +528,14 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
 
     /** @type {Record<string, any>} */
     const optionsByStage = {};
-    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    const currentModel = {
+      provider: 'openai',
+      id: 'gpt-5.6',
+      remoteCompaction: {
+        model: 'alternate-compaction-model',
+        endpoint: 'https://model.example/compact',
+      },
+    };
     const modelRegistry = ompParentModelRegistry(currentModel);
     /** @type {Record<string, string[]>} */
     const expectedTools = {
@@ -588,6 +613,26 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
       assert.equal(options.settings.get('retry.modelFallback'), false);
       assert.equal(options.settings.get('ttsr.enabled'), false);
       assert.equal(options.settings.get('ttsr.builtinRules'), false);
+      const remoteEnabled = options.settings.get('compaction.remoteEnabled');
+      const unexpectedStopDetection = options.settings.get('features.unexpectedStopDetection');
+      assert.deepEqual({
+        remoteEnabled,
+        remoteRoute: remoteEnabled ? {
+          model: options.model.remoteCompaction.model,
+          endpoint: options.settings.get('compaction.remoteEndpoint') ?? options.model.remoteCompaction.endpoint,
+        } : undefined,
+        localCompactionModel: remoteEnabled ? undefined : options.model.id,
+        unexpectedStopDetection,
+        classifierModel: unexpectedStopDetection
+          ? options.settings.get('providers.unexpectedStopModel')
+          : undefined,
+      }, {
+        remoteEnabled: false,
+        remoteRoute: undefined,
+        localCompactionModel: currentModel.id,
+        unexpectedStopDetection: false,
+        classifierModel: undefined,
+      });
     }
   });
 });
@@ -936,18 +981,29 @@ test('dispatchRoleSession exposes only the exact custom OMP model, key, and tran
   });
 });
 
-test('dispatchRoleSession makes OMP auth failures and maintenance no-ops on parent storage', async () => {
+test('dispatchRoleSession resolves OMP auth once before creation and isolates child auth paths', async () => {
   await withRepo(async (repoRoot) => {
     const currentModel = { provider: 'private-provider', id: 'private-model', baseUrl: 'https://private.example' };
     const parentAuthStorage = new PrivateAuthStorage('parent-private-key');
     const parentModelRegistry = new OmpModelRegistry(parentAuthStorage, { models: [currentModel] });
     const before = parentAuthStorage.snapshot();
+    /** @type {any} */
+    let atChildCreation;
+    /** @type {any} */
+    let childBehavior;
     const sdk = ompSdk(async (options) => {
       const registry = options.modelRegistry;
       const authStorage = registry.authStorage;
       const resolver = registry.resolver(currentModel, 'child-session');
 
-      assert.equal(await resolver({}), 'parent-private-key');
+      childBehavior = {
+        hasAuth: authStorage.hasAuth(currentModel.provider),
+        hasOAuth: authStorage.hasOAuth(currentModel.provider),
+        oauthAccountId: authStorage.getOAuthAccountId(currentModel.provider, 'child-session'),
+        oauthIdentity: authStorage.getOAuthAccountIdentity(currentModel.provider, 'child-session'),
+        firstKey: await resolver({}),
+        secondKey: await resolver({}),
+      };
       assert.equal(await resolver({ error: Object.assign(new Error('unauthorized'), { status: 401 }), lastChance: false }), undefined);
       assert.equal(await resolver({ error: Object.assign(new Error('rate limited'), { status: 429 }), lastChance: true }), undefined);
       assert.deepEqual(await authStorage.markUsageLimitReached(), { switched: false });
@@ -976,10 +1032,15 @@ test('dispatchRoleSession makes OMP auth failures and maintenance no-ops on pare
         },
       };
     });
+    const createAgentSession = sdk.createAgentSession;
+    sdk.createAgentSession = async (/** @type {any} */ options) => {
+      atChildCreation = parentAuthStorage.snapshot();
+      return createAgentSession(options);
+    };
 
     await dispatchRoleSession({
       stage: 'review',
-      brief: 'Resolve the parent key without mutating parent auth.',
+      brief: 'Capture the parent credential before isolating child auth.',
       cwd: repoRoot,
       repoRoot,
       currentModel,
@@ -987,7 +1048,25 @@ test('dispatchRoleSession makes OMP auth failures and maintenance no-ops on pare
       sdk,
     });
 
-    assert.deepEqual(parentAuthStorage.snapshot(), before);
+    const after = parentAuthStorage.snapshot();
+    assert.deepEqual({
+      credentialResolutionsBeforeCreate: atChildCreation.credentialResolutions - before.credentialResolutions,
+      parentTouchesAfterCreate: after.parentTouches - atChildCreation.parentTouches,
+      mutationsAfterCreate: after.mutationCount - atChildCreation.mutationCount,
+      childBehavior,
+    }, {
+      credentialResolutionsBeforeCreate: 1,
+      parentTouchesAfterCreate: 0,
+      mutationsAfterCreate: 0,
+      childBehavior: {
+        hasAuth: true,
+        hasOAuth: true,
+        oauthAccountId: 'parent-account',
+        oauthIdentity: { accountId: 'parent-account', email: 'parent@example.com' },
+        firstKey: 'parent-private-key',
+        secondKey: 'parent-private-key',
+      },
+    });
   });
 });
 
