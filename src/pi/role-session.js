@@ -3,14 +3,14 @@
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refute'];
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
 const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
-const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const PACKAGE_ROOT = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..'));
 const OMP_SETTINGS = {
   'advisor.enabled': false,
   'advisor.subagents': false,
@@ -20,6 +20,7 @@ const OMP_SETTINGS = {
   'magicKeywords.enabled': false,
   'memory.backend': 'off',
   'plan.enabled': false,
+  'providers.anthropic.serverSideFallback': false,
   'retry.fallbackChains': {},
   'ttsr.enabled': false,
   'ttsr.builtinRules': false,
@@ -123,17 +124,57 @@ export async function loadSdk(injected, entry = process.argv[1], importModule = 
   return importModule('@earendil-works/pi-coding-agent');
 }
 
+/** @returns {any} */
+function createLocalAgentRegistry() {
+  const refs = new Map();
+  return {
+    /** @param {any} ref */
+    register(ref) { refs.set(ref.id, ref); return ref; },
+    /** @param {string} id */
+    get(id) { return refs.get(id); },
+    /** @param {string} id */
+    unregister(id) { refs.delete(id); },
+    /** @param {string} id @param {any} session @param {string | null} sessionFile */
+    attachSession(id, session, sessionFile) {
+      const ref = refs.get(id);
+      if (ref) Object.assign(ref, { session, sessionFile });
+    },
+  };
+}
+
+/** @param {any} authStorage */
+function createParentAuthView(authStorage) {
+  const childOnlyWrites = new Set([
+    'clearConfigApiKeys',
+    'removeConfigApiKey',
+    'setConfigApiKey',
+    'setFallbackResolver',
+  ]);
+  return new Proxy(authStorage, {
+    get(target, property) {
+      if (typeof property === 'string' && childOnlyWrites.has(property)) return () => {};
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+/** @param {any} skill */
+function keepOmpSkill(skill) {
+  const provider = skill?._source?.provider;
+  if (provider === 'omp-managed' || provider === 'claude-plugins') return false;
+  if (provider !== 'omp-plugins') return true;
+  try {
+    const path = relative(PACKAGE_ROOT, realpathSync(skill.filePath));
+    return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+  } catch {
+    return false;
+  }
+}
+
 /** @param {any} sdk */
 async function loadOmpIsolation(sdk) {
-  const [
-    { AgentRegistry },
-    { initializeWithSettings },
-    { applyProviderGlobalsFromSettings },
-  ] = await Promise.all([
-    sdk.AgentRegistry
-      ? { AgentRegistry: sdk.AgentRegistry }
-      // @ts-expect-error OMP rewrites this optional-peer subpath to its in-process class.
-      : import('@earendil-works/pi-coding-agent/registry/agent-registry'),
+  const [{ initializeWithSettings }, { applyProviderGlobalsFromSettings }] = await Promise.all([
     sdk.initializeWithSettings
       ? { initializeWithSettings: sdk.initializeWithSettings }
       // @ts-expect-error OMP rewrites this optional-peer subpath to its in-process discovery owner.
@@ -143,7 +184,7 @@ async function loadOmpIsolation(sdk) {
       // @ts-expect-error OMP rewrites this optional-peer subpath to its in-process provider owner.
       : import('@earendil-works/pi-coding-agent/config/provider-globals'),
   ]);
-  return { AgentRegistry, initializeWithSettings, applyProviderGlobalsFromSettings };
+  return { initializeWithSettings, applyProviderGlobalsFromSettings };
 }
 
 /**
@@ -151,10 +192,15 @@ async function loadOmpIsolation(sdk) {
  * @param {string} cwd
  * @param {string[]} tools
  * @param {string} agentId
+ * @param {any} parentModelRegistry
  */
-async function prepareOmpSession(sdk, cwd, tools, agentId) {
+async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry) {
   const isolation = await loadOmpIsolation(sdk);
   const settings = sdk.createSubagentSettings(sdk.settings, OMP_SETTINGS);
+  if (typeof sdk.ModelRegistry !== 'function' || !parentModelRegistry?.authStorage) {
+    throw new Error('cook_dispatch: OMP model registry is unavailable');
+  }
+  const modelRegistry = new sdk.ModelRegistry(createParentAuthView(parentModelRegistry.authStorage));
   const { skills } = await sdk.discoverSkills(cwd, undefined, {
     ...settings.getGroup('skills'),
     disabledExtensions: settings.get('disabledExtensions') ?? [],
@@ -171,13 +217,14 @@ async function prepareOmpSession(sdk, cwd, tools, agentId) {
       disableExtensionDiscovery: true,
       preloadedCustomToolPaths: [],
       enableMCP: false,
-      skills: skills.filter((/** @type {any} */ skill) => skill?._source?.provider !== 'omp-managed'),
+      skills: skills.filter(keepOmpSkill),
       rules: [],
       spawns: '',
       taskDepth: 1,
       parentTaskPrefix: agentId,
       agentId,
-      agentRegistry: new isolation.AgentRegistry(),
+      agentRegistry: createLocalAgentRegistry(),
+      modelRegistry,
     },
     restoreGlobals() {
       isolation.initializeWithSettings(sdk.settings);
@@ -223,7 +270,7 @@ export async function dispatchRoleSession(opts) {
   const sessionManager = sdk.SessionManager?.inMemory?.(opts.cwd);
   const tools = toolsForStage(opts.stage);
   const omp = typeof sdk.createSubagentSettings === 'function'
-    ? await prepareOmpSession(sdk, opts.cwd, tools, agentId)
+    ? await prepareOmpSession(sdk, opts.cwd, tools, agentId, opts.modelRegistry)
     : undefined;
   const sessionOptions = {
     cwd: opts.cwd,
