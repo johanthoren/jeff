@@ -108,6 +108,7 @@ class Suppression:
 class DependencyAuditResult:
     ecosystem: str
     status: str
+    exit_status: int | None
     command: str
     details: str
     vulnerabilities: dict[str, int]
@@ -857,6 +858,21 @@ def parse_bundle_audit(stdout: str) -> dict[str, int]:
     except Exception:
         return {}
 
+    severities = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    results = payload.get("results") if isinstance(payload, dict) else None
+    if isinstance(results, list):
+        for result in results:
+            advisory = result.get("advisory") if isinstance(result, dict) else None
+            if not isinstance(advisory, dict):
+                continue
+            criticality = advisory.get("criticality")
+            severity = criticality if criticality in severities else "high"
+            severities[severity] += 1
+
+        current_results = {severity: count for severity, count in severities.items() if count > 0}
+        if current_results:
+            return current_results
+
     advisories = payload.get("advisories") if isinstance(payload, dict) else None
     if isinstance(advisories, list) and len(advisories) > 0:
         return {"high": len(advisories)}
@@ -887,7 +903,7 @@ def detect_dependency_audits(repo_root: Path) -> list[tuple[str, list[str], str]
         checks.append(("cargo-audit", ["cargo", "audit", "--json"], "Rust dependency audit"))
 
     if (repo_root / "Gemfile").exists():
-        checks.append(("bundle-audit", ["bundle", "audit", "--format", "json"], "Ruby dependency audit"))
+        checks.append(("bundle-audit", ["bundle", "exec", "bundle-audit", "check", "--format", "json"], "Ruby dependency audit"))
 
     if (repo_root / "go.mod").exists():
         checks.append(("govulncheck", ["govulncheck", "./..."], "Go vulnerability audit"))
@@ -914,6 +930,7 @@ def run_dependency_audits(repo_root: Path, skip: bool) -> tuple[list[DependencyA
                 DependencyAuditResult(
                     ecosystem=ecosystem,
                     status="tool-missing",
+                    exit_status=None,
                     command=command_str,
                     details=stderr,
                     vulnerabilities={},
@@ -927,6 +944,7 @@ def run_dependency_audits(repo_root: Path, skip: bool) -> tuple[list[DependencyA
                 DependencyAuditResult(
                     ecosystem=ecosystem,
                     status="timeout",
+                    exit_status=None,
                     command=command_str,
                     details="dependency audit command timed out",
                     vulnerabilities={},
@@ -952,6 +970,7 @@ def run_dependency_audits(repo_root: Path, skip: bool) -> tuple[list[DependencyA
                 DependencyAuditResult(
                     ecosystem=ecosystem,
                     status="failed",
+                    exit_status=code,
                     command=command_str,
                     details=(stderr or stdout or f"command exited with {code}")[:3000],
                     vulnerabilities=vulns,
@@ -962,6 +981,7 @@ def run_dependency_audits(repo_root: Path, skip: bool) -> tuple[list[DependencyA
                 DependencyAuditResult(
                     ecosystem=ecosystem,
                     status="ok",
+                    exit_status=code,
                     command=command_str,
                     details=desc,
                     vulnerabilities=vulns,
@@ -1535,8 +1555,8 @@ def write_report(
 
     lines.append("## Dependency Audit")
     if dep_results:
-        lines.append("| Ecosystem | Status | Command | Details | Vulnerabilities |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| Ecosystem | Status | Exit status | Command | Details | Vulnerabilities |")
+        lines.append("|---|---|---|---|---|---|")
         for result in dep_results:
             vuln_text = (
                 ", ".join(f"{k}:{v}" for k, v in sorted(result.vulnerabilities.items()))
@@ -1549,6 +1569,7 @@ def write_report(
                     [
                         sanitize_md(result.ecosystem),
                         sanitize_md(result.status),
+                        str(result.exit_status) if result.exit_status is not None else "not-executed",
                         sanitize_md(result.command),
                         sanitize_md(result.details[:200]),
                         sanitize_md(vuln_text),
