@@ -90,13 +90,18 @@ function ompAuthStorage(apiKeys = {}) {
 }
 
 class PrivateAuthStorage {
-  #apiKey;
+  #accounts;
+  #accountBySessionId = new Map();
   #credentialResolutions = 0;
   #parentTouches = 0;
   #mutationCount = 0;
 
-  /** @param {string} apiKey */
-  constructor(apiKey) { this.#apiKey = apiKey; }
+  /** @param {Array<{ apiKey: string, identity: { accountId: string, email: string } }>} accounts */
+  constructor(accounts) { this.#accounts = accounts; }
+  /** @param {string | undefined} sessionId */
+  #accountFor(sessionId) {
+    return (sessionId && this.#accountBySessionId.get(sessionId)) || this.#accounts[0];
+  }
   snapshot() {
     return {
       credentialResolutions: this.#credentialResolutions,
@@ -109,15 +114,23 @@ class PrivateAuthStorage {
   setFallbackResolver() { this.mutate(); }
   hasAuth() { this.touch(); return true; }
   hasOAuth() { this.touch(); return true; }
-  getOAuthAccountId() { this.touch(); return 'parent-account'; }
-  getOAuthAccountIdentity() {
+  /** @param {string} _provider @param {string | undefined} sessionId */
+  getOAuthAccountId(_provider, sessionId) {
     this.touch();
-    return { accountId: 'parent-account', email: 'parent@example.com' };
+    return this.#accountFor(sessionId).identity.accountId;
   }
-  async getApiKey() {
+  /** @param {string} _provider @param {string | undefined} sessionId */
+  getOAuthAccountIdentity(_provider, sessionId) {
+    this.touch();
+    return this.#accountFor(sessionId).identity;
+  }
+  /** @param {string} _provider @param {string | undefined} sessionId */
+  async getApiKey(_provider, sessionId) {
     this.#credentialResolutions += 1;
     this.mutate();
-    return this.#apiKey;
+    const account = this.#accounts[1];
+    if (sessionId) this.#accountBySessionId.set(sessionId, account);
+    return account.apiKey;
   }
   onCredentialDisabled() { this.mutate(); return () => this.mutate(); }
   async remove() { this.mutate(); }
@@ -984,7 +997,10 @@ test('dispatchRoleSession exposes only the exact custom OMP model, key, and tran
 test('dispatchRoleSession resolves OMP auth once before creation and isolates child auth paths', async () => {
   await withRepo(async (repoRoot) => {
     const currentModel = { provider: 'private-provider', id: 'private-model', baseUrl: 'https://private.example' };
-    const parentAuthStorage = new PrivateAuthStorage('parent-private-key');
+    const parentAuthStorage = new PrivateAuthStorage([
+      { apiKey: 'account-a-key', identity: { accountId: 'account-a', email: 'a@example.com' } },
+      { apiKey: 'account-b-key', identity: { accountId: 'account-b', email: 'b@example.com' } },
+    ]);
     const parentModelRegistry = new OmpModelRegistry(parentAuthStorage, { models: [currentModel] });
     const before = parentAuthStorage.snapshot();
     /** @type {any} */
@@ -996,11 +1012,13 @@ test('dispatchRoleSession resolves OMP auth once before creation and isolates ch
       const authStorage = registry.authStorage;
       const resolver = registry.resolver(currentModel, 'child-session');
 
+      const oauthIdentity = authStorage.getOAuthAccountIdentity(currentModel.provider, 'child-session');
+      assert.throws(() => { oauthIdentity.email = 'mutated@example.com'; }, TypeError);
       childBehavior = {
         hasAuth: authStorage.hasAuth(currentModel.provider),
         hasOAuth: authStorage.hasOAuth(currentModel.provider),
         oauthAccountId: authStorage.getOAuthAccountId(currentModel.provider, 'child-session'),
-        oauthIdentity: authStorage.getOAuthAccountIdentity(currentModel.provider, 'child-session'),
+        oauthIdentity,
         firstKey: await resolver({}),
         secondKey: await resolver({}),
       };
@@ -1046,6 +1064,7 @@ test('dispatchRoleSession resolves OMP auth once before creation and isolates ch
       currentModel,
       modelRegistry: parentModelRegistry,
       sdk,
+      generateAgentId: () => 'snapshot-agent',
     });
 
     const after = parentAuthStorage.snapshot();
@@ -1061,10 +1080,10 @@ test('dispatchRoleSession resolves OMP auth once before creation and isolates ch
       childBehavior: {
         hasAuth: true,
         hasOAuth: true,
-        oauthAccountId: 'parent-account',
-        oauthIdentity: { accountId: 'parent-account', email: 'parent@example.com' },
-        firstKey: 'parent-private-key',
-        secondKey: 'parent-private-key',
+        oauthAccountId: 'account-b',
+        oauthIdentity: { accountId: 'account-b', email: 'b@example.com' },
+        firstKey: 'account-b-key',
+        secondKey: 'account-b-key',
       },
     });
   });
