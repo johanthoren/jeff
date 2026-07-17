@@ -125,7 +125,7 @@ export async function loadSdk(injected, entry = process.argv[1], importModule = 
 }
 
 /** @returns {any} */
-function createLocalAgentRegistry() {
+function createDispatchAgentRegistry() {
   const refs = new Map();
   return {
     /** @param {any} ref */
@@ -142,17 +142,17 @@ function createLocalAgentRegistry() {
   };
 }
 
-/** @param {any} authStorage */
-function createParentAuthView(authStorage) {
-  const childOnlyWrites = new Set([
+/** @param {any} parentAuthStorage */
+function createParentAuthView(parentAuthStorage) {
+  const blockedWrites = new Set([
     'clearConfigApiKeys',
     'removeConfigApiKey',
     'setConfigApiKey',
     'setFallbackResolver',
   ]);
-  return new Proxy(authStorage, {
+  return new Proxy(parentAuthStorage, {
     get(target, property) {
-      if (typeof property === 'string' && childOnlyWrites.has(property)) return () => {};
+      if (typeof property === 'string' && blockedWrites.has(property)) return () => {};
       const value = Reflect.get(target, property, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -160,13 +160,13 @@ function createParentAuthView(authStorage) {
 }
 
 /** @param {any} skill */
-function keepOmpSkill(skill) {
+function isAllowedOmpSkill(skill) {
   const provider = skill?._source?.provider;
   if (provider === 'omp-managed' || provider === 'claude-plugins') return false;
   if (provider !== 'omp-plugins') return true;
   try {
-    const path = relative(PACKAGE_ROOT, realpathSync(skill.filePath));
-    return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+    const relativePath = relative(PACKAGE_ROOT, realpathSync(skill.filePath));
+    return relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath);
   } catch {
     return false;
   }
@@ -217,13 +217,13 @@ async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry) 
       disableExtensionDiscovery: true,
       preloadedCustomToolPaths: [],
       enableMCP: false,
-      skills: skills.filter(keepOmpSkill),
+      skills: skills.filter(isAllowedOmpSkill),
       rules: [],
       spawns: '',
       taskDepth: 1,
       parentTaskPrefix: agentId,
       agentId,
-      agentRegistry: createLocalAgentRegistry(),
+      agentRegistry: createDispatchAgentRegistry(),
       modelRegistry,
     },
     restoreGlobals() {
