@@ -60,8 +60,11 @@ export async function indiffReport(root, ...args) {
       stderr: ['cook: `cook indiff` is a lite-mode command; run `cook lite` first (the in-diff guard bounds refactor in shared repos).'],
     };
   }
-  if (args.length !== 2 || args.some((arg) => arg === '')) {
+  if (args.length < 2 || args.slice(0, 2).some((arg) => arg === '')) {
     return { code: 1, stdout: [], stderr: ['cook: usage: cook indiff <base-ref> <pre-ref>'] };
+  }
+  if (args.length > 2) {
+    return { code: 1, stdout: [], stderr: [`cook: indiff: unexpected argument '${args[2]}'`] };
   }
   const [baseRef, preRef] = args;
   if (git(root, ['rev-parse', '--show-toplevel']).status !== 0) {

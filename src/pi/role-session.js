@@ -5,6 +5,7 @@ import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { prepareInstalledSdkSession } from './pi-sdk-adapter.js';
 
 export const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refute'];
 
@@ -380,6 +381,15 @@ export async function dispatchRoleSession(opts) {
   const omp = typeof sdk.createSubagentSettings === 'function'
     ? await prepareOmpSession(sdk, opts.cwd, tools, agentId, opts.modelRegistry, opts.currentModel)
     : undefined;
+  const isolation = omp ?? await prepareInstalledSdkSession(sdk, {
+    cwd: opts.cwd,
+    packageRoot: PACKAGE_ROOT,
+    tools,
+    effort: role.frontmatter.effort,
+    agentId,
+    parentModelRegistry: opts.modelRegistry,
+    currentModel: opts.currentModel,
+  });
   const sessionOptions = {
     cwd: opts.cwd,
     model: opts.currentModel,
@@ -387,7 +397,7 @@ export async function dispatchRoleSession(opts) {
     tools,
     sessionManager,
     modelRegistry: opts.modelRegistry,
-    ...omp?.sessionOptions,
+    ...isolation?.sessionOptions,
   };
   let created;
   try {
@@ -404,11 +414,11 @@ export async function dispatchRoleSession(opts) {
     if (actual.provider !== current.provider || actual.id !== current.id) {
       throw new Error(`cook_dispatch: child model drifted from ${current.provider}/${current.id} to ${actual.provider ?? 'unknown'}/${actual.id ?? 'unknown'}`);
     }
-    if (omp) {
+    if (isolation) {
       const active = session.getActiveToolNames?.();
-      if (!Array.isArray(active) || active.length !== omp.toolNames.length || omp.toolNames.some((tool) => !active.includes(tool))) {
+      if (!Array.isArray(active) || active.length !== isolation.toolNames.length || isolation.toolNames.some((tool) => !active.includes(tool))) {
         const received = Array.isArray(active) ? active.join(', ') : 'unavailable';
-        throw new Error(`cook_dispatch: OMP tool isolation failed (expected ${omp.toolNames.join(', ')}, got ${received})`);
+        throw new Error(`cook_dispatch: child tool isolation failed (expected ${isolation.toolNames.join(', ')}, got ${received})`);
       }
     }
     session.subscribe((/** @type {any} */ event) => {

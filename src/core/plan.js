@@ -26,10 +26,9 @@ import { readFile, mkdir } from 'node:fs/promises';
 import { lstatSync, statSync, realpathSync, readlinkSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { writeFileAtomic } from './lifecycle.js';
-import { collectTasks, readMode, writeTask } from './store.js';
+import { assertStoreContained, collectTasks, readMode, writeTask } from './store.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -570,6 +569,25 @@ export async function planIssueOp(root, op, ref, ...rest) {
 }
 
 /**
+ * POSIX `cksum` for the historical, deterministic lite-ledger directory suffix.
+ *
+ * @param {string} value
+ */
+function cksum(value) {
+  const bytes = Buffer.from(value);
+  let crc = 0;
+  const update = (byte) => {
+    crc = (crc ^ (byte << 24)) >>> 0;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = ((crc & 0x80000000) !== 0 ? (crc << 1) ^ 0x04c11db7 : crc << 1) >>> 0;
+    }
+  };
+  for (const byte of bytes) update(byte);
+  for (let length = bytes.length; length > 0; length = Math.floor(length / 256)) update(length & 0xff);
+  return (~crc) >>> 0;
+}
+
+/**
  * Adopt a markdown file or GitHub issue as a lite task ledger.
  *
  * @param {string} root
@@ -577,10 +595,16 @@ export async function planIssueOp(root, op, ref, ...rest) {
  * @returns {Promise<Verdict>}
  */
 export async function adoptPlan(root, ...args) {
+  try {
+    await assertStoreContained(root);
+  } catch (error) {
+    return die(/** @type {Error} */ (error).message);
+  }
   if ((await readMode(root)) !== 'lite') {
     return die('`cook on` is a lite-mode command; run `cook lite` first (full mode tracks tasks in the registry).');
   }
-  if (args.length !== 1 || args[0] === '') return die('usage: cook on <ref>');
+  if (args.length === 0 || args[0] === '') return die('usage: cook on <ref>');
+  if (args.length > 1) return die(`on: unexpected argument '${args[1]}'`);
   const ref = args[0];
   const issueRef = isIssueRef(ref);
 
@@ -610,14 +634,19 @@ export async function adoptPlan(root, ...args) {
     };
   }
 
+  const base = ref.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 160) || 'task';
+  const hash = cksum(ref);
+  const taskDir = join(root, '.jeff', 'tasks', `lite-${base}-${hash}`);
+  try {
+    await assertStoreContained(root, [taskDir]);
+  } catch (error) {
+    return die(/** @type {Error} */ (error).message);
+  }
   if (issueRef) {
     const fetched = ghFetchBody(ref);
     if (typeof fetched !== 'string') return fetched;
   }
 
-  const base = ref.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 160) || 'task';
-  const hash = createHash('sha256').update(ref).digest('hex').slice(0, 12);
-  const taskDir = join(root, '.jeff', 'tasks', `lite-${base}-${hash}`);
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const task = {
     schemaVersion: 1,

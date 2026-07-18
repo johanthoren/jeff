@@ -4,7 +4,7 @@ import { appendFile, lstat, readFile, writeFile, mkdir, rename, unlink } from 'n
 import { realpathSync } from 'node:fs';
 import { join, dirname, basename, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { readMode, readConfig } from './store.js';
+import { assertStoreContained, readMode, readConfig } from './store.js';
 import { checkProfile } from './validate-store.js';
 import { git } from './git.js';
 import { isType } from './validate.js';
@@ -125,31 +125,22 @@ export async function initProject(root) {
   }
 
   const bk = join(root, '.jeff');
-  try {
-    if ((await lstat(bk)).isSymbolicLink()) {
-      return { code: 1, stdout: [], stderr: [`cook: refusing .jeff symlink: ${bk}`] };
-    }
-  } catch (e) {
-    if (/** @type {any} */ (e).code !== 'ENOENT') throw e;
-  }
-
   const tasksDir = join(bk, 'tasks');
+  const memoryDir = join(bk, 'memory');
+  const configPath = join(bk, 'config.json');
   try {
-    if ((await lstat(tasksDir)).isSymbolicLink()) {
-      return { code: 1, stdout: [], stderr: [`cook: refusing .jeff/tasks symlink: ${tasksDir}`] };
-    }
-  } catch (e) {
-    if (/** @type {any} */ (e).code !== 'ENOENT') throw e;
+    await assertStoreContained(root, [tasksDir, memoryDir, configPath]);
+  } catch (error) {
+    return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
   }
 
   await mkdir(tasksDir, { recursive: true });
-  await mkdir(join(bk, 'memory'), { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
 
   // `.gitkeep` if absent : never truncate an existing one (`[ -f … ] || :>`).
   await writeFile(join(tasksDir, '.gitkeep'), '', { flag: 'wx', encoding: 'utf8' })
     .catch((/** @type {any} */ e) => { if (e.code !== 'EEXIST') throw e; });
 
-  const configPath = join(bk, 'config.json');
   /** @type {string | null} */
   let raw = null;
   try {
@@ -205,12 +196,18 @@ export async function liteProject(root) {
 
   const bk = join(root, '.jeff');
   const tasksDir = join(bk, 'tasks');
+  const memoryDir = join(bk, 'memory');
+  const configPath = join(bk, 'config.json');
+  try {
+    await assertStoreContained(root, [tasksDir, memoryDir, configPath]);
+  } catch (error) {
+    return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
+  }
   await mkdir(tasksDir, { recursive: true });
-  await mkdir(join(bk, 'memory'), { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
   await writeFile(join(tasksDir, '.gitkeep'), '', { flag: 'wx', encoding: 'utf8' })
     .catch((/** @type {any} */ error) => { if (error.code !== 'EEXIST') throw error; });
 
-  const configPath = join(bk, 'config.json');
   let config;
   try {
     config = JSON.parse(await readFile(configPath, 'utf8'));
@@ -250,6 +247,11 @@ export async function liteProject(root) {
  */
 export async function deinitProject(root) {
   const configPath = join(root, '.jeff', 'config.json');
+  try {
+    await assertStoreContained(root, [configPath]);
+  } catch (error) {
+    return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
+  }
   const stdout = [];
   try {
     const config = JSON.parse(await readFile(configPath, 'utf8'));
@@ -274,6 +276,11 @@ export async function deinitProject(root) {
  */
 export async function profileReport(root) {
   const profilePath = join(root, '.jeff', 'profile.md');
+  try {
+    await assertStoreContained(root, [profilePath]);
+  } catch (error) {
+    return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
+  }
   let text;
   try {
     text = await readFile(profilePath, 'utf8');
@@ -299,6 +306,11 @@ export async function profileReport(root) {
 export async function profileInit(root) {
   const bk = join(root, '.jeff');
   const profilePath = join(bk, 'profile.md');
+  try {
+    await assertStoreContained(root, [profilePath]);
+  } catch (error) {
+    return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
+  }
   await mkdir(bk, { recursive: true });
   try {
     await writeFile(profilePath, PROFILE_TEMPLATE, { flag: 'wx', encoding: 'utf8' });

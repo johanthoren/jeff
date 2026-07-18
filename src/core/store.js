@@ -1,13 +1,57 @@
 // @ts-check
 
-import { readFile, writeFile, rename, unlink, readdir, lstat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, writeFile, rename, unlink, readdir, lstat, realpath } from 'node:fs/promises';
+import { join, relative, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { isType } from './validate.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 
 const TASK_FILE = 'task.json';
+
+/** @param {string} base @param {string} candidate */
+function escapes(base, candidate) {
+  const rel = relative(base, candidate);
+  return rel === '..' || rel.startsWith(`..${sep}`) || resolve(base, rel) !== candidate;
+}
+
+/**
+ * Reject any existing symbolic link or resolved path escape between the
+ * repository root and the requested `.jeff` paths. Missing suffixes are safe:
+ * callers may create them only after every existing ancestor has passed.
+ *
+ * @param {string} root
+ * @param {string[]} [paths]
+ */
+export async function assertStoreContained(root, paths = []) {
+  const rootPath = resolve(root);
+  const actualRoot = await realpath(rootPath);
+  const storePath = join(rootPath, '.jeff');
+  const targets = [storePath, join(storePath, 'tasks'), ...paths];
+
+  for (const target of targets) {
+    const rel = relative(rootPath, resolve(target));
+    if (rel === '..' || rel.startsWith(`..${sep}`) || !rel.startsWith('.jeff')) {
+      throw new Error(`refusing store path outside repository: ${target}`);
+    }
+
+    let current = rootPath;
+    for (const segment of rel.split(sep)) {
+      current = join(current, segment);
+      try {
+        if ((await lstat(current)).isSymbolicLink()) {
+          throw new Error(`refusing ${relative(rootPath, current)} symlink: ${current}`);
+        }
+        if (escapes(actualRoot, await realpath(current))) {
+          throw new Error(`refusing ${relative(rootPath, current)} path outside repository: ${current}`);
+        }
+      } catch (error) {
+        if (/** @type {any} */ (error).code === 'ENOENT') break;
+        throw error;
+      }
+    }
+  }
+}
 
 /**
  * Build the "unparseable task.json" error `collectTasks` throws for a corrupt
@@ -79,12 +123,10 @@ export async function writeTask(taskDir, task) {
  * @returns {Promise<any[]>}
  */
 export async function collectTasks(root) {
+  await assertStoreContained(root);
   const tasksDir = join(root, '.jeff', 'tasks');
   let entries;
   try {
-    if ((await lstat(tasksDir)).isSymbolicLink()) {
-      throw new Error(`refusing .jeff/tasks symlink: ${tasksDir}`);
-    }
     entries = await readdir(tasksDir, { withFileTypes: true });
   } catch (e) {
     if (/** @type {any} */ (e).code === 'ENOENT') return [];
@@ -165,6 +207,11 @@ export async function collectTasks(root) {
  * @returns {Promise<Record<string, unknown> | null>}
  */
 export async function readConfig(root) {
+  try {
+    await assertStoreContained(root, [join(root, '.jeff', 'config.json')]);
+  } catch {
+    return null;
+  }
   try {
     const raw = await readFile(join(root, '.jeff', 'config.json'), 'utf8');
     const v = JSON.parse(raw);

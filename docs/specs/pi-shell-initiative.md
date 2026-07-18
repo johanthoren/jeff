@@ -110,6 +110,8 @@ the slower validation foundation.
 
 ## 7. Follow-on work
 
-- `#61`: completed the one-core Node cutover after parity and host smoke tests.
+- `#61`: completed the one-core Node cutover after deterministic parity. Native
+  host smoke results are release evidence, recorded per host rather than assumed
+  from the in-repository test suite.
 - `#56`: retain the Codex-native UX follow-up without changing model routing or
   the shared method.

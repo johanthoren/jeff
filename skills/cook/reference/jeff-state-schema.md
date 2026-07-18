@@ -2,10 +2,9 @@
 
 `src/core/types.js` is the canonical checked-JS task vocabulary and
 `src/core/task-schema.js` plus `src/core/invariants.js` are the authoritative
-runtime validator. The Node CLI's `validate` route consumes that core through
-`src/cli/cook.js`.
-The Bash validator remains a transition oracle for intentionally unchanged
-behavior; it is not a second source of truth for destination schema changes.
+runtime validator. The sole operational entry is `src/cli/cook.js`; it consumes
+that checked-JS core directly. Historical Bash parity oracles, when retained as
+test-only fixtures, are not installed runtimes or alternate schema authorities.
 
 ## On-disk layout
 

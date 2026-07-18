@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cook-precommit-gate.sh: task 0035: PreToolUse/Bash validator backstop.
+# cook-precommit-gate.sh: task 0035: PreToolUse Node validator backstop.
 #
 # Pure stdin(JSON) to stdout(decision) hook. It runs the Node validator only for
 # git commits in an active Jeff project. Infrastructure failures allow the tool;
