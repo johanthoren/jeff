@@ -39,7 +39,7 @@
 REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
 setup_file() { cook_hermetic_git; }
-COOK="$REPO/skills/cook/scripts/cook.sh"
+COOK="$REPO/src/cli/cook.js"
 
 # Fixture issue number and URL used throughout.
 FIXTURE_ISSUE_NUM=42

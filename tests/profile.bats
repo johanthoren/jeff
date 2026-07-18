@@ -23,7 +23,7 @@
 REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
 setup_file() { cook_hermetic_git; }
-COOK="${COOK_OVERRIDE:-$REPO/skills/cook/scripts/cook.sh}"
+COOK="${COOK_OVERRIDE:-$REPO/src/cli/cook.js}"
 
 # ---------------------------------------------------------------------------
 # Setup / teardown
@@ -508,17 +508,5 @@ _setup_valid_store() {
   _setup_valid_store
   write_valid_profile "$BK/profile.md"
   run cook validate
-  [ "$status" -eq 0 ]
-}
-
-# ---------------------------------------------------------------------------
-# SHELLCHECK GUARD
-# ---------------------------------------------------------------------------
-
-@test "shellcheck: skills/cook/scripts/cook.sh passes shellcheck --severity=warning" {
-  if ! command -v shellcheck >/dev/null 2>&1; then
-    skip "shellcheck not installed"
-  fi
-  run shellcheck --severity=warning "$COOK"
   [ "$status" -eq 0 ]
 }

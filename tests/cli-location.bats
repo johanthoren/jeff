@@ -1,29 +1,13 @@
 #!/usr/bin/env bats
-# tests/cli-location.bats: task 0034: CLI relocation + hook removal assertions.
+# tests/cli-location.bats: direct Node CLI lifecycle behavior.
 #
-# Covers:
-#   AC1: skills/cook/scripts/cook.sh exists and is executable; bin/cook absent.
-#   AC2: The plugin-root bin/ directory is entirely absent (no auto-PATH entry).
-#   AC4: cook init no longer writes a git pre-commit hook.
-#   AC4: cook deinit no longer removes a git pre-commit hook (no-op; exits 0).
-#   AC4: cook init still scaffolds .jeff/ and marks active:true.
-#   AC4: cook deinit still marks inactive (active:false) and preserves history.
-#
-# Strategy:
-#   Structural assertions (AC1, AC2) are read-only checks on the repo tree.
-#   Behavioral assertions (AC4) use a fresh mktemp -d git repo per test,
-#   mirroring the setup/teardown pattern from tests/lite.bats.
-#
-# All tests in this file are RED against the current tree:
-#   - skills/cook/scripts/cook.sh does not exist yet (binary not moved).
-#   - bin/ directory currently exists (bin/cook + bin/release-check).
-#   - cook init currently writes a pre-commit hook.
-#   - cook deinit currently removes the hook (and reports "removed pre-commit hook").
+# Covers init and deinit filesystem behavior through src/cli/cook.js. The
+# repository-level cutover guards live in src/cli/cutover.test.js.
 
 REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
 setup_file() { cook_hermetic_git; }
-COOK="$REPO/skills/cook/scripts/cook.sh"
+COOK="$REPO/src/cli/cook.js"
 
 # ---------------------------------------------------------------------------
 # Setup / teardown: one fresh mktemp git repo per behavioral test
@@ -47,22 +31,6 @@ cook() {
   COOK_ROOT="$TMP" "$COOK" "$@"
 }
 
-# ---------------------------------------------------------------------------
-# AC1: Structural: CLI at new location, executable
-#
-# RED now: skills/cook/scripts/cook.sh does not exist (bin/cook has not been
-# moved yet by the implementer).
-# ---------------------------------------------------------------------------
-
-@test "structural: skills/cook/scripts/cook.sh exists" {
-  # RED now: the file does not exist until the implementer runs git mv.
-  [ -f "$REPO/skills/cook/scripts/cook.sh" ]
-}
-
-@test "structural: skills/cook/scripts/cook.sh is executable" {
-  # RED now: file absent, so -x is also false.
-  [ -x "$REPO/skills/cook/scripts/cook.sh" ]
-}
 
 # ---------------------------------------------------------------------------
 # AC2: Structural: plugin-root bin/ directory is entirely absent
