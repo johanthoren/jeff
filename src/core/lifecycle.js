@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { readMode, readConfig } from './store.js';
 import { checkProfile } from './validate-store.js';
 import { git } from './git.js';
+import { isType } from './validate.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -170,7 +171,7 @@ export async function initProject(root) {
   // re-serialize. Absent: the jq-form default. An unparseable existing config
   // throws (fails closed) rather than clobbering a user's real project state.
   const obj = raw === null ? { schemaVersion: 1, system: 'jeff', active: true } : JSON.parse(raw);
-  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+  if (!isType(obj, 'object')) {
     return { code: 1, stdout: [], stderr: [`cook: config.json must be an object: ${configPath}`] };
   }
   obj.active = true;
@@ -217,7 +218,7 @@ export async function liteProject(root) {
     if (/** @type {any} */ (error).code !== 'ENOENT') throw error;
     config = { schemaVersion: 1, system: 'jeff' };
   }
-  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+  if (!isType(config, 'object')) {
     return { code: 1, stdout: [], stderr: [`cook: config.json must be an object: ${configPath}`] };
   }
   config.schemaVersion ??= 1;
@@ -252,7 +253,7 @@ export async function deinitProject(root) {
   const stdout = [];
   try {
     const config = JSON.parse(await readFile(configPath, 'utf8'));
-    if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+    if (!isType(config, 'object')) {
       return { code: 1, stdout: [], stderr: [`cook: config.json must be an object: ${configPath}`] };
     }
     config.active = false;

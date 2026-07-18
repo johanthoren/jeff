@@ -582,8 +582,9 @@ export async function adoptPlan(root, ...args) {
   }
   if (args.length !== 1 || args[0] === '') return die('usage: cook on <ref>');
   const ref = args[0];
+  const issueRef = isIssueRef(ref);
 
-  if (isIssueRef(ref)) {
+  if (issueRef) {
     const invalid = issueRefValidate(ref);
     if (invalid !== null) return invalid;
   } else {
@@ -609,7 +610,7 @@ export async function adoptPlan(root, ...args) {
     };
   }
 
-  if (isIssueRef(ref)) {
+  if (issueRef) {
     const fetched = ghFetchBody(ref);
     if (typeof fetched !== 'string') return fetched;
   }
