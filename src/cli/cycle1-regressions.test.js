@@ -2,11 +2,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readlink, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readlink, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { collectTasks } from '../core/store.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -20,6 +21,25 @@ function runCook(root, args) {
     encoding: 'utf8',
   });
   return { code: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** @param {string} root @param {string[]} args @param {NodeJS.ProcessEnv} env */
+function runCookAsync(root, args, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [COOK, ...args], {
+      cwd: root,
+      env: { ...process.env, ...env, COOK_ROOT: root },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', (code) => resolve({ code, stdout, stderr }));
+  });
 }
 
 /** @param {string} root @param {string[]} args */
@@ -264,6 +284,134 @@ test('cook on refuses a derived-directory collision without replacing progressed
       kickbacks: progressed.kickbacks,
     });
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('cook on atomically rejects a colliding issue adoption after concurrent initial snapshots', async () => {
+  const root = await makeGitRoot();
+  const server = createServer();
+  /** @type {Map<string, import('node:net').Socket>} */
+  const arrivals = new Map();
+  /** @type {() => void} */
+  let releaseArrivals = () => {};
+  const bothArrived = new Promise((resolve) => { releaseArrivals = resolve; });
+  server.on('connection', (socket) => {
+    socket.setEncoding('utf8');
+    let ref = '';
+    socket.on('data', (chunk) => {
+      ref += chunk;
+      const newline = ref.indexOf('\n');
+      if (newline === -1) return;
+      arrivals.set(ref.slice(0, newline), socket);
+      if (arrivals.size === 2) releaseArrivals();
+    });
+  });
+
+  try {
+    const tasks = join(root, '.jeff', 'tasks');
+    const ghDir = join(root, 'gh-bin');
+    const fixtureBody = join(root, 'issue-body.md');
+    const barrier = join(root, 'adopt.sock');
+    await mkdir(tasks, { recursive: true });
+    await mkdir(ghDir);
+    await writeFile(join(root, '.jeff', 'config.json'), '{"mode":"lite","active":true}\n', 'utf8');
+    await writeFile(fixtureBody, '# Issue\n', 'utf8');
+    const gh = join(ghDir, 'gh');
+    await writeFile(gh, `#!${process.execPath}
+const fs = require('node:fs');
+const net = require('node:net');
+const client = net.createConnection(process.env.COOK_ADOPT_BARRIER);
+client.once('connect', () => client.write(\`\${process.argv[4]}\\n\`));
+client.once('data', () => {
+  process.stdout.write(fs.readFileSync(process.env.GH_STUB_BODY_FILE, 'utf8'));
+  client.end();
+});
+client.once('error', (error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+});
+`, 'utf8');
+    await chmod(gh, 0o755);
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(barrier, () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
+
+    const prefix = `https://github.com/${'a'.repeat(170)}`;
+    const firstRef = `${prefix}5OTY2TU3Gsbd/repo/issues/1`;
+    const secondRef = `${prefix}a25LmoRiAk1p/repo/issues/1`;
+    const env = {
+      COOK_ADOPT_BARRIER: barrier,
+      GH_STUB_BODY_FILE: fixtureBody,
+      PATH: `${ghDir}:${process.env.PATH ?? ''}`,
+    };
+    const firstRun = runCookAsync(root, ['on', firstRef], env);
+    const secondRun = runCookAsync(root, ['on', secondRef], env);
+
+    await bothArrived;
+    const firstSocket = arrivals.get(firstRef);
+    const secondSocket = arrivals.get(secondRef);
+    assert.ok(firstSocket);
+    assert.ok(secondSocket);
+    firstSocket.end('release\n');
+    const first = await firstRun;
+    assert.equal(first.code, 0, first.stderr);
+
+    const entries = await readdir(tasks);
+    assert.equal(entries.length, 1);
+    const ledger = join(tasks, entries[0], 'task.json');
+    const adopted = JSON.parse(await readFile(ledger, 'utf8'));
+    const progressed = {
+      ...adopted,
+      status: 'in_progress',
+      stage: 'implement',
+      updatedAt: '2026-01-02T00:00:00Z',
+      kickbacks: [{
+        from: 'review',
+        to: 'implement',
+        reason: 'The first concurrent owner history must survive.',
+        at: '2026-01-02T00:00:00Z',
+      }],
+    };
+    await writeFile(ledger, `${JSON.stringify(progressed, null, 2)}\n`, 'utf8');
+    const before = await readFile(ledger, 'utf8');
+
+    secondSocket.end('release\n');
+    const second = await secondRun;
+    const after = await readFile(ledger, 'utf8');
+    const finalTask = JSON.parse(after);
+
+    assert.deepEqual({
+      codes: [first.code, second.code],
+      successes: [first, second].filter((result) => result.code === 0).length,
+      secondSilent: second.stdout === '',
+      boundedCollision: /^cook: .*collision.*\n$/i.test(second.stderr)
+        && !/node:internal|\n\s+at /.test(second.stderr),
+      directoryCount: (await readdir(tasks)).length,
+      historyPreserved: after === before,
+      owner: finalTask.externalRef === firstRef
+        ? 'first'
+        : finalTask.externalRef === secondRef ? 'second' : 'other',
+      status: finalTask.status,
+      kickbacksPreserved: JSON.stringify(finalTask.kickbacks) === JSON.stringify(progressed.kickbacks),
+    }, {
+      codes: [0, 1],
+      successes: 1,
+      secondSilent: true,
+      boundedCollision: true,
+      directoryCount: 1,
+      historyPreserved: true,
+      owner: 'first',
+      status: 'in_progress',
+      kickbacksPreserved: true,
+    });
+  } finally {
+    for (const socket of arrivals.values()) socket.destroy();
+    await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });
   }
 });
