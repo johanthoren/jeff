@@ -587,6 +587,18 @@ function cksum(value) {
   return (~crc) >>> 0;
 }
 
+/** @param {string} ref @param {any} ledger @returns {Verdict} */
+function existingLedgerVerdict(ref, ledger) {
+  if (ledger.externalRef !== ref) {
+    return die(`cook on: ledger collision at ${ledger._dir}: already owned by ${ledger.externalRef ?? 'another ref'}`);
+  }
+  return {
+    code: 0,
+    stdout: [`cook: already adopted: resuming ledger for ${ref} (${ledger._dir}).`],
+    stderr: [],
+  };
+}
+
 /**
  * Adopt a markdown file or GitHub issue as a lite task ledger.
  *
@@ -626,13 +638,7 @@ export async function adoptPlan(root, ...args) {
     return die('cook on: could not read existing ledgers.');
   }
   const existing = tasks.find((task) => task.externalRef === ref);
-  if (existing) {
-    return {
-      code: 0,
-      stdout: [`cook: already adopted: resuming ledger for ${ref} (${existing._dir}).`],
-      stderr: [],
-    };
-  }
+  if (existing) return existingLedgerVerdict(ref, existing);
 
   const base = ref.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 160) || 'task';
   const hash = cksum(ref);
@@ -645,9 +651,7 @@ export async function adoptPlan(root, ...args) {
   }
   const taskFile = `.jeff/tasks/${basename(taskDir)}/task.json`;
   const collision = tasks.find((task) => task._dir === taskFile);
-  if (collision) {
-    return die(`cook on: ledger collision at ${taskFile}: already owned by ${collision.externalRef ?? 'another ref'}`);
-  }
+  if (collision) return existingLedgerVerdict(ref, collision);
   if (issueRef) {
     const fetched = ghFetchBody(ref);
     if (typeof fetched !== 'string') return fetched;
@@ -699,16 +703,7 @@ export async function adoptPlan(root, ...args) {
       return die('cook on: could not read existing ledgers.');
     }
     const owner = currentTasks.find((currentTask) => currentTask._dir === taskFile);
-    if (owner?.externalRef === ref) {
-      return {
-        code: 0,
-        stdout: [`cook: already adopted: resuming ledger for ${ref} (${owner._dir}).`],
-        stderr: [],
-      };
-    }
-    if (owner) {
-      return die(`cook on: ledger collision at ${taskFile}: already owned by ${owner.externalRef ?? 'another ref'}`);
-    }
+    if (owner) return existingLedgerVerdict(ref, owner);
     return die(`cook on: ledger initialization in progress at ${taskFile}.`);
   }
   try {
