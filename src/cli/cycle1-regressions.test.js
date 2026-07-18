@@ -134,6 +134,139 @@ test('init, lite, and deinit refuse a config leaf escaping the repository', asyn
   }
 });
 
+test('lite and deinit fail closed on malformed and non-object config without unintended writes', async (t) => {
+  const cases = [
+    ['malformed JSON', '{"active":\n'],
+    ['a top-level array', '[]\n'],
+    ['top-level null', 'null\n'],
+  ];
+  for (const verb of ['lite', 'deinit']) {
+    for (const [name, raw] of cases) {
+      await t.test(`${verb} rejects ${name}`, async () => {
+        const root = await makeGitRoot();
+        try {
+          const store = join(root, '.jeff');
+          const exclude = join(root, '.git', 'info', 'exclude');
+          await mkdir(store);
+          await writeFile(join(store, 'config.json'), raw, 'utf8');
+          const excludeBefore = await readFile(exclude, 'utf8');
+
+          const result = runCook(root, [verb]);
+
+          assert.equal(result.code, 1);
+          assert.equal(result.stdout, '');
+          assert.match(result.stderr, /^cook: .*config\.json.*\n$/);
+          assert.doesNotMatch(result.stderr, /SyntaxError|node:internal|\n\s+at /);
+          assert.equal(await readFile(join(store, 'config.json'), 'utf8'), raw);
+          assert.equal(await readFile(exclude, 'utf8'), excludeBefore);
+          if (verb === 'lite') {
+            assert.deepEqual((await readdir(store)).sort(), ['config.json', 'memory', 'tasks']);
+            assert.deepEqual(await readdir(join(store, 'tasks')), ['.gitkeep']);
+            assert.deepEqual(await readdir(join(store, 'memory')), []);
+          } else {
+            assert.deepEqual(await readdir(store), ['config.json']);
+          }
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+});
+
+test('cook lite refuses a symlinked Git info/exclude leaf without changing outside bytes', async () => {
+  const root = await makeGitRoot();
+  const outside = await mkdtemp(join(tmpdir(), 'jeff-cycle1-exclude-outside-'));
+  try {
+    const exclude = join(root, '.git', 'info', 'exclude');
+    const target = join(outside, 'exclude');
+    const outsideBytes = 'OUTSIDE-EXCLUDE-SENTINEL\n';
+    await writeFile(target, outsideBytes, 'utf8');
+    await rm(exclude);
+    await symlink(target, exclude);
+
+    const result = runCook(root, ['lite']);
+
+    assert.deepEqual({
+      code: result.code,
+      stdout: result.stdout,
+      boundedError: /^cook: .*info\/exclude.*\n$/.test(result.stderr)
+        && !/node:internal|\n\s+at /.test(result.stderr),
+      outside: await readFile(target, 'utf8'),
+      link: await readlink(exclude),
+    }, {
+      code: 1,
+      stdout: '',
+      boundedError: true,
+      outside: outsideBytes,
+      link: target,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('cook on refuses a derived-directory collision without replacing progressed ledger history', async () => {
+  const root = await makeGitRoot();
+  try {
+    const tasks = join(root, '.jeff', 'tasks');
+    await mkdir(tasks, { recursive: true });
+    await writeFile(join(root, '.jeff', 'config.json'), '{"mode":"lite","active":true}\n', 'utf8');
+    await writeFile(join(root, 'README.md'), '# Collision fixture\n', 'utf8');
+    const prefix = 'a'.repeat(170);
+    const firstRef = `README.md#${prefix}5OTY2TU3Gsbd`;
+    const secondRef = `README.md#${prefix}a25LmoRiAk1p`;
+
+    const first = runCook(root, ['on', firstRef]);
+    assert.equal(first.code, 0, first.stderr);
+    const entries = await readdir(tasks);
+    assert.equal(entries.length, 1);
+    const ledger = join(tasks, entries[0], 'task.json');
+    const adopted = JSON.parse(await readFile(ledger, 'utf8'));
+    const progressed = {
+      ...adopted,
+      status: 'in_progress',
+      stage: 'implement',
+      updatedAt: '2026-01-02T00:00:00Z',
+      kickbacks: [{
+        from: 'review',
+        to: 'implement',
+        reason: 'Progressed history must survive a colliding adoption.',
+        at: '2026-01-02T00:00:00Z',
+      }],
+    };
+    await writeFile(ledger, `${JSON.stringify(progressed, null, 2)}\n`, 'utf8');
+    const before = await readFile(ledger, 'utf8');
+
+    const second = runCook(root, ['on', secondRef]);
+
+    const after = await readFile(ledger, 'utf8');
+    assert.deepEqual({
+      code: second.code,
+      stdout: second.stdout,
+      boundedError: /^cook: .*collision.*\n$/i.test(second.stderr)
+        && !/node:internal|\n\s+at /.test(second.stderr),
+      entries: await readdir(tasks),
+      preserved: after === before,
+      owner: JSON.parse(after).externalRef,
+      status: JSON.parse(after).status,
+      kickbacks: JSON.parse(after).kickbacks,
+    }, {
+      code: 1,
+      stdout: '',
+      boundedError: true,
+      entries,
+      preserved: true,
+      owner: firstRef,
+      status: 'in_progress',
+      kickbacks: progressed.kickbacks,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('cook profile refuses a symlinked profile leaf without leaking target bytes', async () => {
   const root = await makeGitRoot();
   const outside = await mkdtemp(join(tmpdir(), 'jeff-cycle1-profile-outside-'));
