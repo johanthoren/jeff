@@ -636,7 +636,8 @@ export async function adoptPlan(root, ...args) {
 
   const base = ref.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 160) || 'task';
   const hash = cksum(ref);
-  const taskDir = join(root, '.jeff', 'tasks', `lite-${base}-${hash}`);
+  const tasksDir = join(root, '.jeff', 'tasks');
+  const taskDir = join(tasksDir, `lite-${base}-${hash}`);
   try {
     await assertStoreContained(root, [taskDir]);
   } catch (error) {
@@ -680,8 +681,41 @@ export async function adoptPlan(root, ...args) {
     blockedReason: null,
     abandonReason: null,
   };
-  await mkdir(taskDir, { recursive: true });
-  await writeTask(taskDir, /** @type {any} */ (task));
+  try {
+    await mkdir(tasksDir, { recursive: true });
+  } catch {
+    return die('cook on: could not initialize ledger.');
+  }
+  try {
+    await mkdir(taskDir);
+  } catch (error) {
+    if (/** @type {any} */ (error).code !== 'EEXIST') {
+      return die('cook on: could not initialize ledger.');
+    }
+    let currentTasks;
+    try {
+      currentTasks = await collectTasks(root);
+    } catch {
+      return die('cook on: could not read existing ledgers.');
+    }
+    const owner = currentTasks.find((currentTask) => currentTask._dir === taskFile);
+    if (owner?.externalRef === ref) {
+      return {
+        code: 0,
+        stdout: [`cook: already adopted: resuming ledger for ${ref} (${owner._dir}).`],
+        stderr: [],
+      };
+    }
+    if (owner) {
+      return die(`cook on: ledger collision at ${taskFile}: already owned by ${owner.externalRef ?? 'another ref'}`);
+    }
+    return die(`cook on: ledger initialization in progress at ${taskFile}.`);
+  }
+  try {
+    await writeTask(taskDir, /** @type {any} */ (task));
+  } catch {
+    return die('cook on: could not initialize ledger.');
+  }
   return {
     code: 0,
     stdout: [`cook: adopted ${ref} → ${taskDir.slice(root.length + 1)}/task.json (lite, stage:capture).`],
