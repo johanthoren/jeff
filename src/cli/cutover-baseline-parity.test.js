@@ -128,6 +128,8 @@ test('on preserves baseline argument, mode, ref, adoption, and resume behavior',
     const oracleTask = (await readdir(join(oracleRoot, '.jeff', 'tasks'))).find((name) => name !== '.gitkeep');
     const nodeTask = (await readdir(join(nodeRoot, '.jeff', 'tasks'))).find((name) => name !== '.gitkeep');
     assert.equal(nodeTask, oracleTask);
+    assert.ok(oracleTask);
+    assert.ok(nodeTask);
     const expected = JSON.parse(await readFile(join(oracleRoot, '.jeff', 'tasks', oracleTask, 'task.json'), 'utf8'));
     const actual = JSON.parse(await readFile(join(nodeRoot, '.jeff', 'tasks', nodeTask, 'task.json'), 'utf8'));
     delete expected.createdAt;

@@ -27,7 +27,7 @@ async function readRepo(path) {
   return readFile(join(REPO_ROOT, path), 'utf8');
 }
 
-/** @param {string} path */
+/** @param {string} path @returns {Promise<string[]>} */
 async function filesUnder(path) {
   const entries = await readdir(join(REPO_ROOT, path), { withFileTypes: true });
   const nested = await Promise.all(entries.map((entry) => {

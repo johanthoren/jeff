@@ -40,6 +40,7 @@ async function makeGitRoot() {
   return root;
 }
 
+/** @param {string} outside */
 async function assertOnlySentinel(outside) {
   assert.deepEqual(await readdir(outside), ['sentinel']);
   assert.equal(await readFile(join(outside, 'sentinel'), 'utf8'), 'outside\n');

@@ -16,6 +16,7 @@ const PROBE = process.env.JEFF_INSTALLED_FALLBACK_PROBE === '1';
 
 /** @param {string} root @param {string} [prefix] */
 async function snapshotTree(root, prefix = '') {
+  /** @type {Record<string, string>} */
   const snapshot = {};
   for (const entry of await readdir(join(root, prefix), { withFileTypes: true })) {
     const path = join(prefix, entry.name);
@@ -47,10 +48,12 @@ if (PROBE) {
     const parentModelBefore = JSON.stringify(model);
     const tools = ['read', 'grep', 'find', 'ls'];
     const toolsBefore = [...tools];
+    /** @type {Array<[string, string, string]>} */
     const authRequests = [];
     const parentModelRegistry = {
       marker: 'parent-state',
       authStorage: { hasOAuth: (/** @type {string} */ provider) => provider === model.provider },
+      /** @param {{ provider: string, id: string }} requestedModel @param {string} sessionId */
       async getApiKey(requestedModel, sessionId) {
         authRequests.push([requestedModel.provider, requestedModel.id, sessionId]);
         return 'parent-token';
@@ -68,7 +71,7 @@ if (PROBE) {
     });
     assert.ok(prepared);
     const runtime = prepared.sessionOptions.modelRuntime;
-    const availableModels = (await runtime.getAvailable()).map((candidate) => `${candidate.provider}/${candidate.id}`);
+    const availableModels = (await runtime.getAvailable()).map((/** @type {{ provider: string, id: string }} */ candidate) => `${candidate.provider}/${candidate.id}`);
     const childModel = runtime.getModel('openai-codex', 'gpt-5.6-sol');
     const unrelatedModel = runtime.getModel('ambient-provider', 'ambient-model');
     const anthropicAuth = await runtime.getAuth('anthropic');
@@ -83,6 +86,7 @@ if (PROBE) {
       throw new Error('network is forbidden in the installed fallback test');
     };
     const stream = runtime.streamSimple(model, { messages: [] }, {
+      /** @param {Record<string, string | null>} headers */
       transformHeaders(headers) {
         streamHeaders = headers;
         throw new Error('probe stopped before provider I/O');
@@ -115,6 +119,7 @@ if (PROBE) {
 
     const loader = prepared.sessionOptions.resourceLoader;
     assert.deepEqual(loader.getExtensions().extensions, []);
+    /** @type {Array<{ name: string, filePath: string }>} */
     const skills = loader.getSkills().skills;
     assert.deepEqual(skills.map((skill) => skill.name).sort(), ['code-standards', 'cook', 'security-auditor', 'testing']);
     assert.ok(skills.every((skill) => !relative(PACKAGE_ROOT, skill.filePath).startsWith('..')));
