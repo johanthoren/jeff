@@ -107,15 +107,16 @@ async function resolveGitExclude(root) {
     if (/** @type {any} */ (error).code !== 'ENOENT') throw error;
   }
 
+  let metadataDir;
+  let excludeDir;
   try {
-    const metadataDir = realpathSync(resolve(root, commonValue));
-    const excludeDir = realpathSync(dirname(exclude));
-    if (basename(exclude) !== 'exclude' || relative(metadataDir, excludeDir) !== 'info') {
-      throw new Error(`refusing Git info/exclude path outside Git metadata: ${exclude}`);
-    }
-  } catch (error) {
-    if (/^refusing Git info\/exclude/.test(/** @type {Error} */ (error).message)) throw error;
+    metadataDir = realpathSync(resolve(root, commonValue));
+    excludeDir = realpathSync(dirname(exclude));
+  } catch {
     throw new Error(`could not validate Git info/exclude: ${exclude}`);
+  }
+  if (basename(exclude) !== 'exclude' || relative(metadataDir, excludeDir) !== 'info') {
+    throw new Error(`refusing Git info/exclude path outside Git metadata: ${exclude}`);
   }
   return exclude;
 }
