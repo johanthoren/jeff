@@ -4,6 +4,9 @@
   "description": "Jeff is a model-native quality control plane with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates.",
   "type": "module",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/johanthoren/jeff.git"

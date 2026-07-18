@@ -123,6 +123,43 @@ select_dist_tag() {
   ' "$REPO/package.json"
 }
 
+@test "package Node floor and hosted Node 24 runtimes stay aligned" {
+  local minimum='>=22.19.0' node_version='24' actual workflow
+  local failed=0
+
+  actual="$(jq -r '.engines.node // "<missing>"' "$REPO/package.json")"
+  if [ "$actual" != "$minimum" ]; then
+    printf 'package.json engines.node: expected %s, found %s\n' "$minimum" "$actual"
+    failed=1
+  fi
+
+  actual="$(jq -r '.packages[""].engines.node // "<missing>"' "$REPO/package-lock.json")"
+  if [ "$actual" != "$minimum" ]; then
+    printf 'package-lock.json root engines.node: expected %s, found %s\n' "$minimum" "$actual"
+    failed=1
+  fi
+
+  for workflow in "$REPO/.github/workflows/ci.yml" "$REPO/.github/workflows/publish.yml"; do
+    if ! grep -Fq "node-version: '$node_version'" "$workflow"; then
+      actual="$(sed -n 's/^[[:space:]]*node-version:[[:space:]]*//p' "$workflow")"
+      printf '%s setup-node version: expected %s, found %s\n' \
+        "${workflow#"$REPO/"}" "$node_version" "${actual:-<missing>}"
+      failed=1
+    else
+      printf '%s setup-node version: already correct (%s)\n' \
+        "${workflow#"$REPO/"}" "$node_version"
+    fi
+  done
+
+  actual="$(awk '/^## Install$/ { publish = 1 } /^## Use$/ { publish = 0 } publish' "$REPO/README.md")"
+  if [[ "$actual" != *'Node.js `>=22.19.0`'* ]]; then
+    printf 'README install/setup guidance must state Node.js `%s`\n' "$minimum"
+    failed=1
+  fi
+
+  [ "$failed" -eq 0 ]
+}
+
 @test "npm pack dry-run exposes a publishable Pi package payload" {
   local npm_cache="$BATS_TEST_TMPDIR/npm-cache"
   mkdir -p "$npm_cache"
