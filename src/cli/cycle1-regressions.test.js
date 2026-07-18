@@ -80,6 +80,11 @@ function waitForCook({ child, result }, label) {
 /** @param {string} root @param {string[]} args */
 function git(root, args) {
   const result = spawnSync('git', ['-C', root, ...args], {
+    env: {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_SYSTEM: '/dev/null',
+    },
     encoding: 'utf8',
     timeout: WAIT_MS,
     killSignal: 'SIGKILL',

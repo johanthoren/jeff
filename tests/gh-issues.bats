@@ -183,7 +183,7 @@ cook() {
 bake_no_gh() {
   local no_gh_path
   no_gh_path="$(mktemp -d)"
-  PATH="$no_gh_path:/usr/bin:/bin" COOK_ROOT="$TMP" "$NODE_BIN" "$COOK" "$@"
+  PATH="$no_gh_path" COOK_ROOT="$TMP" "$NODE_BIN" "$COOK" "$@"
   local rc=$?
   rm -rf "$no_gh_path"
   return $rc
@@ -431,8 +431,7 @@ gh_log_not_contains() {
 
   run bake_no_gh on "#${FIXTURE_ISSUE_NUM}"
   [ "$status" -ne 0 ]
-  # The output must not be empty: a message is required.
-  [ -n "$output" ]
+  [ "$output" = 'cook: cook: `gh` is required to read issue #42 but was not found on PATH (install the GitHub CLI, then retry).' ]
 }
 
 # ---------------------------------------------------------------------------
