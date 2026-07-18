@@ -65,14 +65,17 @@ export function readProfile(root) {
 }
 
 /**
- * Build the "unparseable task.json" error `collectTasks` throws for a corrupt
- * or non-object task file, tagged with `.dir` = its root-relative path.
+ * Build the "unparseable task.json" error `collectTasks` throws for a corrupt,
+ * unreadable, or uncontained task file, tagged with `.dir` = its root-relative
+ * path.
  *
  * @param {string} rel - root-relative path (`.jeff/tasks/<dir>/task.json`)
+ * @param {unknown} [cause]
  * @returns {Error}
  */
-function unparseableTaskError(rel) {
+function unparseableTaskError(rel, cause) {
   const err = new Error(`unparseable task.json at ${rel}`);
+  if (cause !== undefined) err.cause = cause;
   /** @type {any} */ (err).dir = rel;
   return err;
 }
@@ -156,7 +159,11 @@ export async function collectTasks(root) {
     const full = join(tasksDir, ent.name, 'task.json');
     const rel = ['.jeff', 'tasks', ent.name, 'task.json'].join('/');
     let raw;
-    await assertStoreContained(root, [full]);
+    try {
+      await assertStoreContained(root, [full]);
+    } catch (cause) {
+      throw unparseableTaskError(rel, cause);
+    }
     try {
       await lstat(full);
     } catch (e) {
