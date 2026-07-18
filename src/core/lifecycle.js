@@ -2,7 +2,7 @@
 
 import { appendFile, lstat, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
-import { join, dirname, basename, isAbsolute } from 'node:path';
+import { join, dirname, basename, relative, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { assertStoreContained, readMode, readConfig } from './store.js';
 import { checkProfile } from './validate-store.js';
@@ -79,6 +79,45 @@ function isGitRoot(root) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolve Git's local exclude file within Git's actual common metadata
+ * directory. Linked worktrees legitimately keep that directory outside the
+ * worktree root, so the common-dir boundary, not `root`, owns containment.
+ *
+ * @param {string} root
+ * @returns {Promise<string>}
+ */
+async function resolveGitExclude(root) {
+  const excludeResult = git(root, ['rev-parse', '--git-path', 'info/exclude']);
+  const excludeValue = (excludeResult.stdout ?? '').trim();
+  const commonResult = git(root, ['rev-parse', '--git-common-dir']);
+  const commonValue = (commonResult.stdout ?? '').trim();
+  if (excludeResult.status !== 0 || excludeValue === '' || commonResult.status !== 0 || commonValue === '') {
+    throw new Error(`could not resolve Git info/exclude: ${root}`);
+  }
+
+  const exclude = resolve(root, excludeValue);
+  try {
+    if ((await lstat(exclude)).isSymbolicLink()) {
+      throw new Error(`refusing Git info/exclude symlink: ${exclude}`);
+    }
+  } catch (error) {
+    if (/** @type {any} */ (error).code !== 'ENOENT') throw error;
+  }
+
+  try {
+    const metadataDir = realpathSync(resolve(root, commonValue));
+    const excludeDir = realpathSync(dirname(exclude));
+    if (basename(exclude) !== 'exclude' || relative(metadataDir, excludeDir) !== 'info') {
+      throw new Error(`refusing Git info/exclude path outside Git metadata: ${exclude}`);
+    }
+  } catch (error) {
+    if (/^refusing Git info\/exclude/.test(/** @type {Error} */ (error).message)) throw error;
+    throw new Error(`could not validate Git info/exclude: ${exclude}`);
+  }
+  return exclude;
 }
 
 /**
@@ -187,12 +226,12 @@ export async function liteProject(root) {
     return { code: 1, stdout: [], stderr: [`cook: not a git repository: ${root} (cook lite needs git to exclude .jeff/ locally)`] };
   }
 
-  const excludeResult = git(root, ['rev-parse', '--git-path', 'info/exclude']);
-  const excludeValue = (excludeResult.stdout ?? '').trim();
-  if (excludeResult.status !== 0 || excludeValue === '') {
-    return { code: 1, stdout: [], stderr: [`cook: could not resolve Git info/exclude: ${root}`] };
+  let exclude;
+  try {
+    exclude = await resolveGitExclude(root);
+  } catch (error) {
+    return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
   }
-  const exclude = isAbsolute(excludeValue) ? excludeValue : join(root, excludeValue);
 
   const bk = join(root, '.jeff');
   const tasksDir = join(bk, 'tasks');
@@ -212,8 +251,11 @@ export async function liteProject(root) {
   try {
     config = JSON.parse(await readFile(configPath, 'utf8'));
   } catch (error) {
-    if (/** @type {any} */ (error).code !== 'ENOENT') throw error;
-    config = { schemaVersion: 1, system: 'jeff' };
+    if (/** @type {any} */ (error).code === 'ENOENT') {
+      config = { schemaVersion: 1, system: 'jeff' };
+    } else {
+      return { code: 1, stdout: [], stderr: [`cook: invalid config.json: ${configPath}`] };
+    }
   }
   if (!isType(config, 'object')) {
     return { code: 1, stdout: [], stderr: [`cook: config.json must be an object: ${configPath}`] };
@@ -262,7 +304,9 @@ export async function deinitProject(root) {
     await writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
     stdout.push('cook: marked inactive (active=false); .jeff/ task state preserved.');
   } catch (error) {
-    if (/** @type {any} */ (error).code !== 'ENOENT') throw error;
+    if (/** @type {any} */ (error).code !== 'ENOENT') {
+      return { code: 1, stdout: [], stderr: [`cook: invalid config.json: ${configPath}`] };
+    }
   }
   stdout.push('cook: jeff is inactive here. Run `cook init` to re-activate; remove .jeff/ manually to delete history.');
   return { code: 0, stdout, stderr: [] };

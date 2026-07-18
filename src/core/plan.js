@@ -642,6 +642,11 @@ export async function adoptPlan(root, ...args) {
   } catch (error) {
     return die(/** @type {Error} */ (error).message);
   }
+  const taskFile = `.jeff/tasks/${basename(taskDir)}/task.json`;
+  const collision = tasks.find((task) => task._dir === taskFile);
+  if (collision) {
+    return die(`cook on: ledger collision at ${taskFile}: already owned by ${collision.externalRef ?? 'another ref'}`);
+  }
   if (issueRef) {
     const fetched = ghFetchBody(ref);
     if (typeof fetched !== 'string') return fetched;
