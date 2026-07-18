@@ -7,30 +7,59 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { createServer } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import { collectTasks } from '../core/store.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const COOK = join(REPO_ROOT, 'src', 'cli', 'cook.js');
+const WAIT_MS = 5_000;
 
-/** @param {string} root @param {string[]} args */
-function runCook(root, args) {
+/**
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {string} label
+ * @param {() => void} [onTimeout]
+ * @returns {Promise<T>}
+ */
+function bounded(promise, label, onTimeout = () => {}) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      onTimeout();
+      reject(new Error(`timed out waiting for ${label}`));
+    }, WAIT_MS);
+    promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** @param {string} root @param {string[]} args @param {NodeJS.ProcessEnv} [env] */
+function runCook(root, args, env = {}) {
   const result = spawnSync(process.execPath, [COOK, ...args], {
     cwd: root,
-    env: { ...process.env, COOK_ROOT: root },
+    env: { ...process.env, ...env, COOK_ROOT: root },
     encoding: 'utf8',
+    timeout: WAIT_MS,
+    killSignal: 'SIGKILL',
   });
   return { code: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 /** @param {string} root @param {string[]} args @param {NodeJS.ProcessEnv} env */
 function runCookAsync(root, args, env) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [COOK, ...args], {
-      cwd: root,
-      env: { ...process.env, ...env, COOK_ROOT: root },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+  const child = spawn(process.execPath, [COOK, ...args], {
+    cwd: root,
+    env: { ...process.env, ...env, COOK_ROOT: root },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const result = new Promise((resolve, reject) => {
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8');
@@ -40,11 +69,21 @@ function runCookAsync(root, args, env) {
     child.once('error', reject);
     child.once('close', (code) => resolve({ code, stdout, stderr }));
   });
+  return { child, result };
+}
+
+/** @param {ReturnType<typeof runCookAsync>} run @param {string} label */
+function waitForCook({ child, result }, label) {
+  return bounded(result, label, () => child.kill('SIGKILL'));
 }
 
 /** @param {string} root @param {string[]} args */
 function git(root, args) {
-  const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  const result = spawnSync('git', ['-C', root, ...args], {
+    encoding: 'utf8',
+    timeout: WAIT_MS,
+    killSignal: 'SIGKILL',
+  });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout;
 }
@@ -58,6 +97,149 @@ async function makeGitRoot() {
   git(root, ['add', 'plan.md']);
   git(root, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'seed']);
   return root;
+}
+
+/**
+ * @param {string} root
+ * @param {number} expectedArrivals
+ */
+async function makeAdoptionBarrier(root, expectedArrivals) {
+  const tasks = join(root, '.jeff', 'tasks');
+  const ghDir = join(root, 'gh-bin');
+  const fixtureBody = join(root, 'issue-body.md');
+  const barrier = join(root, 'adopt.sock');
+  const server = createServer();
+  /** @type {Set<import('node:net').Socket>} */
+  const sockets = new Set();
+  /** @type {Array<{ actor: string, ref: string, socket: import('node:net').Socket }>} */
+  const arrivals = [];
+  /** @type {() => void} */
+  let resolveArrivals = () => {};
+  /** @type {Promise<void>} */
+  const allArrived = new Promise((resolve) => { resolveArrivals = resolve; });
+
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.setEncoding('utf8');
+    socket.setTimeout(WAIT_MS, () => socket.destroy());
+    socket.once('close', () => sockets.delete(socket));
+    let input = '';
+    let recorded = false;
+    socket.on('data', (chunk) => {
+      input += chunk;
+      const newline = input.indexOf('\n');
+      if (recorded || newline === -1) return;
+      recorded = true;
+      const [actor = '', ref = ''] = input.slice(0, newline).split('\t', 2);
+      arrivals.push({ actor, ref, socket });
+      if (arrivals.length === expectedArrivals) resolveArrivals();
+    });
+  });
+
+  await mkdir(tasks, { recursive: true });
+  await mkdir(ghDir);
+  await writeFile(join(root, '.jeff', 'config.json'), '{"mode":"lite","active":true}\n', 'utf8');
+  await writeFile(fixtureBody, '# Issue\n', 'utf8');
+  const gh = join(ghDir, 'gh');
+  await writeFile(gh, `#!${process.execPath}
+const fs = require('node:fs');
+const net = require('node:net');
+const barrier = process.env.COOK_ADOPT_BARRIER;
+if (!barrier) {
+  process.stdout.write(fs.readFileSync(process.env.GH_STUB_BODY_FILE, 'utf8'));
+} else {
+  const client = net.createConnection(barrier);
+  client.setTimeout(${WAIT_MS}, () => {
+    console.error('timed out waiting for adoption barrier');
+    client.destroy();
+    process.exitCode = 1;
+  });
+  client.once('connect', () => {
+    client.write(\`\${process.env.COOK_ADOPT_ACTOR}\\t\${process.argv[4]}\\n\`);
+  });
+  client.once('data', () => {
+    client.setTimeout(0);
+    process.stdout.write(fs.readFileSync(process.env.GH_STUB_BODY_FILE, 'utf8'));
+    client.end();
+  });
+  client.once('error', (error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}
+`, 'utf8');
+  await chmod(gh, 0o755);
+
+  /** @type {Promise<void>} */
+  const listening = new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(barrier, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  await bounded(listening, 'adoption barrier listen', () => {
+    if (server.listening) server.close();
+  });
+
+  const baseEnv = {
+    GH_STUB_BODY_FILE: fixtureBody,
+    PATH: `${ghDir}:${process.env.PATH ?? ''}`,
+  };
+
+  /**
+   * @param {Array<ReturnType<typeof runCookAsync>>} runs
+   * @param {string} label
+   */
+  function waitForArrivals(runs, label) {
+    const earlyExits = runs.map(({ result }, index) => result.then((outcome) => {
+      throw new Error(
+        `cook on child ${index + 1} exited before reaching ${label}: ${outcome.stderr.trim() || `code ${outcome.code}`}`,
+      );
+    }));
+    return bounded(Promise.race([allArrived, ...earlyExits]), label, () => {
+      for (const { child } of runs) {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }
+    });
+  }
+
+  /** @param {Array<ReturnType<typeof runCookAsync>>} runs */
+  async function close(runs) {
+    for (const { child } of runs) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+    for (const socket of sockets) socket.destroy();
+    await bounded(
+      Promise.allSettled(runs.map(({ result }) => result)).then(() => undefined),
+      'adoption child cleanup',
+      () => {
+        for (const { child } of runs) child.kill('SIGKILL');
+      },
+    );
+    if (!server.listening) return;
+    /** @type {Promise<void>} */
+    const closed = new Promise((resolve, reject) => {
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+    await bounded(closed, 'adoption barrier close', () => {
+      for (const socket of sockets) socket.destroy();
+    });
+  }
+
+  return {
+    arrivals,
+    barrier,
+    baseEnv,
+    close,
+    env: { ...baseEnv, COOK_ADOPT_BARRIER: barrier },
+    server,
+    tasks,
+    waitForArrivals,
+  };
 }
 
 /** @param {string} outside */
@@ -290,80 +472,37 @@ test('cook on refuses a derived-directory collision without replacing progressed
 
 test('cook on atomically rejects a colliding issue adoption after concurrent initial snapshots', async () => {
   const root = await makeGitRoot();
-  const server = createServer();
-  /** @type {Map<string, import('node:net').Socket>} */
-  const arrivals = new Map();
-  /** @type {() => void} */
-  let releaseArrivals = () => {};
-  const bothArrived = new Promise((resolve) => { releaseArrivals = resolve; });
-  server.on('connection', (socket) => {
-    socket.setEncoding('utf8');
-    let ref = '';
-    socket.on('data', (chunk) => {
-      ref += chunk;
-      const newline = ref.indexOf('\n');
-      if (newline === -1) return;
-      arrivals.set(ref.slice(0, newline), socket);
-      if (arrivals.size === 2) releaseArrivals();
-    });
-  });
-
+  /** @type {Awaited<ReturnType<typeof makeAdoptionBarrier>> | null} */
+  let fixture = null;
+  /** @type {Array<ReturnType<typeof runCookAsync>>} */
+  const runs = [];
   try {
-    const tasks = join(root, '.jeff', 'tasks');
-    const ghDir = join(root, 'gh-bin');
-    const fixtureBody = join(root, 'issue-body.md');
-    const barrier = join(root, 'adopt.sock');
-    await mkdir(tasks, { recursive: true });
-    await mkdir(ghDir);
-    await writeFile(join(root, '.jeff', 'config.json'), '{"mode":"lite","active":true}\n', 'utf8');
-    await writeFile(fixtureBody, '# Issue\n', 'utf8');
-    const gh = join(ghDir, 'gh');
-    await writeFile(gh, `#!${process.execPath}
-const fs = require('node:fs');
-const net = require('node:net');
-const client = net.createConnection(process.env.COOK_ADOPT_BARRIER);
-client.once('connect', () => client.write(\`\${process.argv[4]}\\n\`));
-client.once('data', () => {
-  process.stdout.write(fs.readFileSync(process.env.GH_STUB_BODY_FILE, 'utf8'));
-  client.end();
-});
-client.once('error', (error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
-`, 'utf8');
-    await chmod(gh, 0o755);
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(barrier, () => {
-        server.off('error', reject);
-        resolve();
-      });
-    });
-
+    fixture = await makeAdoptionBarrier(root, 2);
     const prefix = `https://github.com/${'a'.repeat(170)}`;
     const firstRef = `${prefix}5OTY2TU3Gsbd/repo/issues/1`;
     const secondRef = `${prefix}a25LmoRiAk1p/repo/issues/1`;
-    const env = {
-      COOK_ADOPT_BARRIER: barrier,
-      GH_STUB_BODY_FILE: fixtureBody,
-      PATH: `${ghDir}:${process.env.PATH ?? ''}`,
-    };
-    const firstRun = runCookAsync(root, ['on', firstRef], env);
-    const secondRun = runCookAsync(root, ['on', secondRef], env);
+    const firstRun = runCookAsync(root, ['on', firstRef], {
+      ...fixture.env,
+      COOK_ADOPT_ACTOR: 'first',
+    });
+    const secondRun = runCookAsync(root, ['on', secondRef], {
+      ...fixture.env,
+      COOK_ADOPT_ACTOR: 'second',
+    });
+    runs.push(firstRun, secondRun);
 
-    await bothArrived;
-    const firstSocket = arrivals.get(firstRef);
-    const secondSocket = arrivals.get(secondRef);
+    await fixture.waitForArrivals(runs, 'both concurrent initial snapshots');
+    const firstSocket = fixture.arrivals.find(({ actor }) => actor === 'first')?.socket;
+    const secondSocket = fixture.arrivals.find(({ actor }) => actor === 'second')?.socket;
     assert.ok(firstSocket);
     assert.ok(secondSocket);
     firstSocket.end('release\n');
-    const first = await firstRun;
+    const first = await waitForCook(firstRun, 'first adoption child');
     assert.equal(first.code, 0, first.stderr);
 
-    const entries = await readdir(tasks);
+    const entries = await readdir(fixture.tasks);
     assert.equal(entries.length, 1);
-    const ledger = join(tasks, entries[0], 'task.json');
+    const ledger = join(fixture.tasks, entries[0], 'task.json');
     const adopted = JSON.parse(await readFile(ledger, 'utf8'));
     const progressed = {
       ...adopted,
@@ -381,17 +520,18 @@ client.once('error', (error) => {
     const before = await readFile(ledger, 'utf8');
 
     secondSocket.end('release\n');
-    const second = await secondRun;
+    const second = await waitForCook(secondRun, 'second adoption child');
     const after = await readFile(ledger, 'utf8');
     const finalTask = JSON.parse(after);
 
     assert.deepEqual({
+      arrivals: fixture.arrivals.map(({ actor }) => actor).sort(),
       codes: [first.code, second.code],
       successes: [first, second].filter((result) => result.code === 0).length,
       secondSilent: second.stdout === '',
       boundedCollision: /^cook: .*collision.*\n$/i.test(second.stderr)
         && !/node:internal|\n\s+at /.test(second.stderr),
-      directoryCount: (await readdir(tasks)).length,
+      directoryCount: (await readdir(fixture.tasks)).length,
       historyPreserved: after === before,
       owner: finalTask.externalRef === firstRef
         ? 'first'
@@ -399,6 +539,7 @@ client.once('error', (error) => {
       status: finalTask.status,
       kickbacksPreserved: JSON.stringify(finalTask.kickbacks) === JSON.stringify(progressed.kickbacks),
     }, {
+      arrivals: ['first', 'second'],
       codes: [0, 1],
       successes: 1,
       secondSilent: true,
@@ -410,9 +551,164 @@ client.once('error', (error) => {
       kickbacksPreserved: true,
     });
   } finally {
-    for (const socket of arrivals.values()) socket.destroy();
-    await new Promise((resolve) => server.close(resolve));
-    await rm(root, { recursive: true, force: true });
+    try {
+      if (fixture) await fixture.close(runs);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('cook on resumes the same ref after both processes take empty initial snapshots', async () => {
+  const root = await makeGitRoot();
+  /** @type {Awaited<ReturnType<typeof makeAdoptionBarrier>> | null} */
+  let fixture = null;
+  /** @type {Array<ReturnType<typeof runCookAsync>>} */
+  const runs = [];
+  try {
+    fixture = await makeAdoptionBarrier(root, 2);
+    const ref = 'https://github.com/acme/project/issues/92';
+    const ownerRun = runCookAsync(root, ['on', ref], {
+      ...fixture.env,
+      COOK_ADOPT_ACTOR: 'owner',
+    });
+    const loserRun = runCookAsync(root, ['on', ref], {
+      ...fixture.env,
+      COOK_ADOPT_ACTOR: 'loser',
+    });
+    runs.push(ownerRun, loserRun);
+
+    await fixture.waitForArrivals(runs, 'both same-ref initial snapshots');
+    const ownerSocket = fixture.arrivals.find(({ actor }) => actor === 'owner')?.socket;
+    const loserSocket = fixture.arrivals.find(({ actor }) => actor === 'loser')?.socket;
+    assert.ok(ownerSocket);
+    assert.ok(loserSocket);
+    ownerSocket.end('release\n');
+    const owner = await waitForCook(ownerRun, 'same-ref owner child');
+    assert.equal(owner.code, 0, owner.stderr);
+    const entries = await readdir(fixture.tasks);
+    assert.equal(entries.length, 1);
+    const ledger = join(fixture.tasks, entries[0], 'task.json');
+    const before = await readFile(ledger, 'utf8');
+
+    loserSocket.end('release\n');
+    const loser = await waitForCook(loserRun, 'same-ref losing child');
+    const after = await readFile(ledger, 'utf8');
+
+    assert.deepEqual({
+      arrivals: fixture.arrivals.map(({ actor }) => actor).sort(),
+      codes: [owner.code, loser.code],
+      resumed: /^cook: already adopted: resuming ledger/.test(loser.stdout),
+      loserSilent: loser.stderr === '',
+      directoryCount: (await readdir(fixture.tasks)).length,
+      owner: JSON.parse(after).externalRef,
+      bytesPreserved: after === before,
+    }, {
+      arrivals: ['loser', 'owner'],
+      codes: [0, 0],
+      resumed: true,
+      loserSilent: true,
+      directoryCount: 1,
+      owner: ref,
+      bytesPreserved: true,
+    });
+  } finally {
+    try {
+      if (fixture) await fixture.close(runs);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('cook on reports initialization in progress when an empty claim appears after its initial snapshot', async () => {
+  const root = await makeGitRoot();
+  /** @type {Awaited<ReturnType<typeof makeAdoptionBarrier>> | null} */
+  let fixture = null;
+  /** @type {Array<ReturnType<typeof runCookAsync>>} */
+  const runs = [];
+  try {
+    fixture = await makeAdoptionBarrier(root, 1);
+    const ref = 'https://github.com/acme/project/issues/93';
+    const calibration = runCook(root, ['on', ref], fixture.baseEnv);
+    assert.equal(calibration.code, 0, calibration.stderr);
+    const calibratedEntries = await readdir(fixture.tasks);
+    assert.equal(calibratedEntries.length, 1);
+    const claimedDirectory = join(fixture.tasks, calibratedEntries[0]);
+    await rm(claimedDirectory, { recursive: true });
+
+    const run = runCookAsync(root, ['on', ref], {
+      ...fixture.env,
+      COOK_ADOPT_ACTOR: 'blocked',
+    });
+    runs.push(run);
+    await fixture.waitForArrivals(runs, 'initial snapshot before empty claim');
+    assert.deepEqual(await readdir(fixture.tasks), []);
+    await mkdir(claimedDirectory);
+    const socket = fixture.arrivals.find(({ actor }) => actor === 'blocked')?.socket;
+    assert.ok(socket);
+    socket.end('release\n');
+
+    const result = await waitForCook(run, 'initialization-in-progress child');
+    assert.deepEqual({
+      code: result.code,
+      stdout: result.stdout,
+      boundedError: /^cook: cook on: ledger initialization in progress at .*\/task\.json\.\n$/.test(result.stderr)
+        && !/node:internal|\n\s+at /.test(result.stderr),
+      entries: await readdir(fixture.tasks),
+      claimContents: await readdir(claimedDirectory),
+    }, {
+      code: 1,
+      stdout: '',
+      boundedError: true,
+      entries: calibratedEntries,
+      claimContents: [],
+    });
+  } finally {
+    try {
+      if (fixture) await fixture.close(runs);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('adoption barrier reports an early CLI exit and closes with a partial socket', async () => {
+  const root = await makeGitRoot();
+  /** @type {Awaited<ReturnType<typeof makeAdoptionBarrier>> | null} */
+  let fixture = null;
+  /** @type {Array<ReturnType<typeof runCookAsync>>} */
+  const runs = [];
+  /** @type {import('node:net').Socket | null} */
+  let partial = null;
+  try {
+    fixture = await makeAdoptionBarrier(root, 1);
+    partial = createConnection(fixture.barrier);
+    /** @type {Promise<void>} */
+    const connected = new Promise((resolve, reject) => {
+      partial?.once('connect', resolve);
+      partial?.once('error', reject);
+    });
+    await bounded(connected, 'partial socket connect', () => partial?.destroy());
+    partial.write('partial-without-newline');
+
+    const earlyRun = runCookAsync(root, ['on', ''], {
+      ...fixture.env,
+      COOK_ADOPT_ACTOR: 'early',
+    });
+    runs.push(earlyRun);
+
+    await assert.rejects(
+      fixture.waitForArrivals(runs, 'early-exit regression barrier'),
+      /cook on child 1 exited before reaching early-exit regression barrier: .*usage: cook on <ref>/,
+    );
+  } finally {
+    partial?.destroy();
+    try {
+      if (fixture) await fixture.close(runs);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   }
 });
 
