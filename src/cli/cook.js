@@ -2,26 +2,26 @@
 // @ts-check
 
 /**
- * `cook.js`: the JS CLI entry for the ported verbs. Resolves the store root like
- * cook.sh (skills/cook/scripts/cook.sh:44) : `COOK_ROOT`, else
- * `git rev-parse --show-toplevel`, else cwd : dispatches to the pure verdict
- * function for the verb, prints its streams, and exits with the verdict code.
- * Imports only node stdlib + `src/core/*` (no pi SDK): the §6 boundary.
- *
- * Implemented here: `validate`, `ls`, `status`, `show`, `verify`, `doctor`,
- * `init`, `flavor`, `baseline check`, and `plan section|check|append`. The Bash
- * wrapper remains the transition oracle for parity and verbs not yet ported, so
- * this entry rejects unknown subcommands instead of pretending to handle them.
+ * Host-neutral Node CLI. Resolves the store root from `COOK_ROOT`, the current
+ * Git top-level, or cwd, then dispatches to verdict-shaped core functions.
+ * Imports only Node stdlib and `src/core/*`; host launch adapters remain outside.
  */
 
 import { validateStore } from '../core/validate-store.js';
 import { lsReport, statusReport, showReport } from '../core/reporters.js';
 import { runVerify } from '../core/verify.js';
-import { doctorReport, initProject } from '../core/lifecycle.js';
-import { planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../core/plan.js';
+import {
+  deinitProject,
+  doctorReport,
+  initProject,
+  liteProject,
+  profileInit,
+  profileReport,
+} from '../core/lifecycle.js';
+import { adoptPlan, planSection, planCheck, planAppend, isIssueRef, planIssueOp } from '../core/plan.js';
 import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
-import { git } from '../core/git.js';
+import { git, indiffReport } from '../core/git.js';
 import { recordSpecialistFile } from '../core/record.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
@@ -59,6 +59,37 @@ function rejectUnknownArgs(label, rest) {
   return true;
 }
 
+/** @returns {{ code: number, stdout: string[], stderr: string[] }} */
+function usageReport() {
+  return {
+    code: 0,
+    stdout: [
+      'cook: Jeff CLI.',
+      '',
+      'Subcommands:',
+      '  validate     Check .jeff state against the schema and invariants.',
+      '  verify       Run the configured full-suite gate.',
+      '  record       Record a specialist or council result.',
+      '  baseline check [<hash>]  Check the green, clean baseline log.',
+      '  ls           List tasks.',
+      '  status       Report in-flight tasks and backlog health.',
+      '  show <id>    Print one task ledger.',
+      '  init         Activate Jeff and scaffold .jeff/.',
+      '  lite         Activate lite mode and locally Git-exclude .jeff/.',
+      '  on <ref>     Adopt a markdown plan or GitHub issue in lite mode.',
+      '  plan <sub>   Read or update a markdown plan or GitHub issue.',
+      '  indiff <base-ref> <pre-ref>  Bound refactor changes to the implement diff.',
+      '  deinit       Mark Jeff inactive while preserving task state.',
+      '  flavor       Print the effective voice.',
+      '  profile      Print and validate .jeff/profile.md.',
+      '  profile init Write the default profile without clobbering.',
+      '  doctor       Report the Node environment and activation state.',
+      '  help         Show this help.',
+    ],
+    stderr: [],
+  };
+}
+
 /**
  * The no-argument verbs: reject any leftover argument, then emit the verdict.
  * `show` takes its own branch in `main` (an id argument, not `reject_unknown_args`).
@@ -71,6 +102,8 @@ const VERBS = {
   status: statusReport,
   doctor: doctorReport,
   init: initProject,
+  lite: liteProject,
+  deinit: deinitProject,
   flavor: flavorReport,
 };
 
@@ -83,11 +116,30 @@ async function main() {
   const rest = argv.slice(1);
   const root = process.env.COOK_ROOT || gitTopLevel() || process.cwd();
 
+  if (sub === undefined || sub === 'help' || sub === '-h' || sub === '--help') {
+    return emit(usageReport());
+  }
+
   if (sub !== undefined && Object.hasOwn(VERBS, sub)) {
     if (rejectUnknownArgs(sub, rest)) return process.exit(1);
     return emit(await VERBS[sub](root));
   }
 
+  if (sub === 'on') return emit(await adoptPlan(root, ...rest));
+  if (sub === 'indiff') return emit(await indiffReport(root, ...rest));
+
+  if (sub === 'profile') {
+    if (rest.length === 0) return emit(await profileReport(root));
+    if (rest[0] === 'init') {
+      if (rest.length > 1) {
+        process.stderr.write(`cook: profile init: unexpected argument '${rest[1]}'\n`);
+        return process.exit(1);
+      }
+      return emit(await profileInit(root));
+    }
+    process.stderr.write(`cook: unknown profile subcommand: ${rest[0]} (try \`cook profile\` or \`cook profile init\`)\n`);
+    return process.exit(1);
+  }
   if (sub === 'verify') {
     if (rest.length === 0) return emit(await runVerify(root));
     if (rest[0] === '--task' && rest[1] && rest.length === 2) return emit(await runVerify(root, rest[1]));
@@ -157,7 +209,7 @@ async function main() {
     return emit(await PLAN_VERBS[psub](root, ...pargs));
   }
 
-  process.stderr.write(`cook: unknown subcommand: ${sub === undefined ? 'help' : sub} (try \`cook help\`)\n`);
+  process.stderr.write(`cook: unknown subcommand: ${sub} (try \`cook help\`)\n`);
   return process.exit(1);
 }
 

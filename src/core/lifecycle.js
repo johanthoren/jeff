@@ -1,80 +1,65 @@
 // @ts-check
 
-import { lstat, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { appendFile, lstat, readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { readMode, readConfig } from './store.js';
+import { checkProfile } from './validate-store.js';
 import { git } from './git.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
-/**
- * The live `jq --version` (trimmed), or `null` if jq is not on PATH : the JS
- * equivalent of cook.sh's `command -v jq` + `jq --version`. Both the oracle and
- * this port shell the SAME binary, so the version string matches; the jq-present
- * flag also gates `doctor`'s ACTIVE status, replicating cook.sh's quirk (:686).
- *
- * @returns {string | null}
- */
-function jqVersion() {
-  try {
-    return execFileSync('jq', ['--version'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return null;
-  }
+const PROFILE_TEMPLATE = `\`\`\`json
+{
+  "mode": "lite",
+  "plan_store": ".jeff/tasks",
+  "ledger": ".jeff/run-ledger.json",
+  "sources": [
+    { "path": ".jeff/profile.md", "hash": "sha256:000000000000000000000000000000000000000000000000000000000000000" }
+  ]
 }
+\`\`\`
+
+## Operating Profile
+
+Task location: \`.jeff/tasks/\`; breakdown: one task per logical change.
+
+Integration: feature branch → PR → team merges; jeff never pushes the protected base.
+
+Handoff: specialist leaves tests green, \`cook validate\` passing, stage committed.
+
+Test command: \`make test\`.
+
+Standards: operator code-standards skill (baseline); language skill overrides.
+
+Audit triggers: destructive ops, prompt-injection surfaces, security-sensitive paths.
+
+Vocabulary:
+- task = Jeff task (maps to team tracker issue)
+- stage = pipeline phase (capture/plan/implement/refactor/review/audit/done)
+`;
 
 /**
- * `cook doctor` (read-only): the environment/health report, at parity with
- * cook.sh's `cmd_doctor` (skills/cook/scripts/cook.sh:674). Prints, in order:
- * the header, `root:`, the jq line (OK-with-version or the MISSING install
- * hint), `mode:` (via the shared `readMode`), the jeff ACTIVE/inactive status,
- * and : lite mode only : the git-hook note.
- *
- * ACTIVE requires ALL of: `.jeff/config.json` exists, jq is on PATH, and its
- * `.active` reads as `true` : cook.sh gates the status on jq-presence (:686),
- * quirk and all, so this port does too. The `.active // false = "true"` shell
- * test maps to `String(cfg.active ?? false) === 'true'` (a JSON `true` or the
- * string `"true"` both pass; absent/null/false fail).
- *
- * NOTE (item-5 boundary): this reports **jq** to match cook.sh NOW. Item 5
- * flips the dependency check to node; do not jump ahead.
+ * Report the current project mode and activation state without external tools.
  *
  * @param {string} root
  * @returns {Promise<Verdict>}
  */
 export async function doctorReport(root) {
-  const ver = jqVersion();
-
-  /** @type {string[]} */
-  const stdout = [];
-  stdout.push('cook doctor');
-  stdout.push(`  root: ${root}`);
-  stdout.push(
-    ver !== null
-      ? `  jq:   OK (${ver})`
-      : '  jq:   MISSING: run `brew install jq` (macOS) / `apt-get install jq` (Debian)',
-  );
-
   const mode = await readMode(root);
-  stdout.push(`  mode: ${mode}`);
-
-  let active = false;
-  if (ver !== null) {
-    const cfg = await readConfig(root);
-    active = String(cfg?.active ?? false) === 'true';
-  }
-  stdout.push(active ? '  jeff: ACTIVE' : '  jeff: inactive (run `cook init` to activate)');
-
+  const cfg = await readConfig(root);
+  const active = String(cfg?.active ?? false) === 'true';
+  const stdout = [
+    'cook doctor',
+    `  root: ${root}`,
+    '  node: OK',
+    `  mode: ${mode}`,
+    active ? '  jeff: ACTIVE' : '  jeff: inactive (run `cook init` to activate)',
+  ];
   if (mode === 'lite') {
     stdout.push('  git hook: intentionally not installed (no mode installs a hook; team owns git policy)');
   }
-
   return { code: 0, stdout, stderr: [] };
 }
 
@@ -197,4 +182,130 @@ export async function initProject(root) {
     stdout: [`cook: jeff activated in ${root} (scaffold + marked active).`],
     stderr: [],
   };
+}
+
+/**
+ * Activate lite mode and exclude Jeff bookkeeping through Git's local exclude.
+ *
+ * @param {string} root
+ * @returns {Promise<Verdict>}
+ */
+export async function liteProject(root) {
+  if (!isGitRoot(root)) {
+    return { code: 1, stdout: [], stderr: [`cook: not a git repository: ${root} (cook lite needs git to exclude .jeff/ locally)`] };
+  }
+
+  const excludeResult = git(root, ['rev-parse', '--git-path', 'info/exclude']);
+  const excludeValue = (excludeResult.stdout ?? '').trim();
+  if (excludeResult.status !== 0 || excludeValue === '') {
+    return { code: 1, stdout: [], stderr: [`cook: could not resolve Git info/exclude: ${root}`] };
+  }
+  const exclude = isAbsolute(excludeValue) ? excludeValue : join(root, excludeValue);
+
+  const bk = join(root, '.jeff');
+  const tasksDir = join(bk, 'tasks');
+  await mkdir(tasksDir, { recursive: true });
+  await mkdir(join(bk, 'memory'), { recursive: true });
+  await writeFile(join(tasksDir, '.gitkeep'), '', { flag: 'wx', encoding: 'utf8' })
+    .catch((/** @type {any} */ error) => { if (error.code !== 'EEXIST') throw error; });
+
+  const configPath = join(bk, 'config.json');
+  let config;
+  try {
+    config = JSON.parse(await readFile(configPath, 'utf8'));
+  } catch (error) {
+    if (/** @type {any} */ (error).code !== 'ENOENT') throw error;
+    config = { schemaVersion: 1, system: 'jeff' };
+  }
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+    return { code: 1, stdout: [], stderr: [`cook: config.json must be an object: ${configPath}`] };
+  }
+  config.schemaVersion ??= 1;
+  config.mode = 'lite';
+  config.active = true;
+  await writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  await mkdir(dirname(exclude), { recursive: true });
+  let excluded = false;
+  try {
+    excluded = (await readFile(exclude, 'utf8')).split(/\r?\n/).includes('.jeff/');
+  } catch (error) {
+    if (/** @type {any} */ (error).code !== 'ENOENT') throw error;
+  }
+  if (!excluded) await appendFile(exclude, '.jeff/\n', 'utf8');
+
+  return {
+    code: 0,
+    stdout: [`cook: lite mode active in ${root}: quality pipeline on, registry off (.jeff/ git-excluded locally).`],
+    stderr: [],
+  };
+}
+
+/**
+ * Mark Jeff inactive while preserving all task history.
+ *
+ * @param {string} root
+ * @returns {Promise<Verdict>}
+ */
+export async function deinitProject(root) {
+  const configPath = join(root, '.jeff', 'config.json');
+  const stdout = [];
+  try {
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+      return { code: 1, stdout: [], stderr: [`cook: config.json must be an object: ${configPath}`] };
+    }
+    config.active = false;
+    await writeFileAtomic(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    stdout.push('cook: marked inactive (active=false); .jeff/ task state preserved.');
+  } catch (error) {
+    if (/** @type {any} */ (error).code !== 'ENOENT') throw error;
+  }
+  stdout.push('cook: jeff is inactive here. Run `cook init` to re-activate; remove .jeff/ manually to delete history.');
+  return { code: 0, stdout, stderr: [] };
+}
+
+/**
+ * Print and validate the active operating profile.
+ *
+ * @param {string} root
+ * @returns {Promise<Verdict>}
+ */
+export async function profileReport(root) {
+  const profilePath = join(root, '.jeff', 'profile.md');
+  let text;
+  try {
+    text = await readFile(profilePath, 'utf8');
+  } catch (error) {
+    if (/** @type {any} */ (error).code === 'ENOENT') {
+      return { code: 1, stdout: [], stderr: ['cook: no profile found: .jeff/profile.md does not exist (run `cook profile init` to create one)'] };
+    }
+    throw error;
+  }
+  const message = checkProfile(text);
+  const stdout = text.replace(/\n$/, '').split('\n');
+  return message === null
+    ? { code: 0, stdout, stderr: [] }
+    : { code: 1, stdout, stderr: [message] };
+}
+
+/**
+ * Write the bounded default operating profile without clobbering an existing one.
+ *
+ * @param {string} root
+ * @returns {Promise<Verdict>}
+ */
+export async function profileInit(root) {
+  const bk = join(root, '.jeff');
+  const profilePath = join(bk, 'profile.md');
+  await mkdir(bk, { recursive: true });
+  try {
+    await writeFile(profilePath, PROFILE_TEMPLATE, { flag: 'wx', encoding: 'utf8' });
+  } catch (error) {
+    if (/** @type {any} */ (error).code === 'EEXIST') {
+      return { code: 1, stdout: [], stderr: [`cook: profile already exists: ${profilePath} (no-clobber; remove it manually to reinitialise)`] };
+    }
+    throw error;
+  }
+  return { code: 0, stdout: ['cook: wrote default profile to .jeff/profile.md'], stderr: [] };
 }

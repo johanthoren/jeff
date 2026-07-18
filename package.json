@@ -15,7 +15,9 @@
   "publishConfig": {
     "access": "public"
   },
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "files": [
     ".agents/plugins",
     ".claude-plugin",
@@ -30,16 +32,15 @@
     "!src/**/*.test.js"
   ],
   "pi": {
-    "extensions": ["./src/pi/extension.js"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./src/pi/extension.js"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    }
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.10"
   },
   "devDependencies": {
     "@types/node": "20.19.43",

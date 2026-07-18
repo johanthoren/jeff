@@ -2,6 +2,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { readMode } from './store.js';
 
 /**
  * `git -C root ...args`, captured as utf8 and never throwing on a non-zero
@@ -42,4 +43,51 @@ export function treeDirty(root) {
  */
 export function testRunsLogPath(root) {
   return join(root, '.jeff', 'test-runs.jsonl');
+}
+
+/**
+ * Ensure a lite refactor touched only files already changed by implementation.
+ *
+ * @param {string} root
+ * @param {...string} args
+ * @returns {Promise<{ code: number, stdout: string[], stderr: string[] }>}
+ */
+export async function indiffReport(root, ...args) {
+  if ((await readMode(root)) !== 'lite') {
+    return {
+      code: 1,
+      stdout: [],
+      stderr: ['cook: `cook indiff` is a lite-mode command; run `cook lite` first (the in-diff guard bounds refactor in shared repos).'],
+    };
+  }
+  if (args.length !== 2 || args.some((arg) => arg === '')) {
+    return { code: 1, stdout: [], stderr: ['cook: usage: cook indiff <base-ref> <pre-ref>'] };
+  }
+  const [baseRef, preRef] = args;
+  if (git(root, ['rev-parse', '--show-toplevel']).status !== 0) {
+    return { code: 1, stdout: [], stderr: [`cook: not a git repository: ${root} (indiff compares git diffs).`] };
+  }
+
+  const allowedResult = git(root, ['diff', '--name-only', '--end-of-options', baseRef, preRef, '--']);
+  if (allowedResult.status !== 0) {
+    return { code: 1, stdout: [], stderr: [`cook: indiff: could not diff ${baseRef}..${preRef} (bad ref?).`] };
+  }
+  const actualResult = git(root, ['diff', '--name-only', '--end-of-options', preRef, '--']);
+  if (actualResult.status !== 0) {
+    return { code: 1, stdout: [], stderr: [`cook: indiff: could not diff ${preRef} against the working tree (bad ref?).`] };
+  }
+
+  /** @param {string | null | undefined} value */
+  const paths = (value) => new Set((value ?? '').split(/\r?\n/).filter(Boolean));
+  const allowed = paths(allowedResult.stdout);
+  const offending = [...paths(actualResult.stdout)].filter((path) => !allowed.has(path)).sort();
+  if (offending.length === 0) return { code: 0, stdout: [], stderr: [] };
+  return {
+    code: 1,
+    stdout: [],
+    stderr: [
+      `cook: indiff: refactor touched files outside the implement diff (base ${baseRef} → pre ${preRef}):`,
+      ...offending.map((path) => `cook:   ${path}`),
+    ],
+  };
 }

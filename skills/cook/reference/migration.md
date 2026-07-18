@@ -65,8 +65,8 @@ Two independent axes also vary and matter more than the config shape:
 
 ## Full-mode migration (the `.bakehouse/` dir is git-tracked)
 
-Run from the project root. Substitute the path to jeff's CLI for `<cook>`
-(the skill's base directory `+ /scripts/cook.sh`).
+Run from the project root. Substitute `<cook>` with
+`node "<skill-base-directory>/../../src/cli/cook.js"`.
 
 ```bash
 # 0. Start from a clean tree. Commit or stash unrelated work first.

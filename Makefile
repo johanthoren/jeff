@@ -1,12 +1,12 @@
-COOK := ./skills/cook/scripts/cook.sh
+COOK := node ./src/cli/cook.js
 BATS := bats
 JOBS := $(shell getconf _NPROCESSORS_ONLN)
 
-.PHONY: validate doctor init ls status help test typecheck release-check parity
+.PHONY: validate doctor init ls status help test typecheck release-check
 
 help:
 	@echo "make validate  - check .jeff state against the invariants"
-	@echo "make doctor    - check the environment (jq, git hook status)"
+	@echo "make doctor    - check the Node environment and active state"
 	@echo "make init      - scaffold and activate jeff in this repo"
 	@echo "make ls        - list tasks"
 	@echo "make status    - in-flight tasks + backlog health"
@@ -14,15 +14,12 @@ help:
 	@echo "make typecheck - tsc --noEmit --checkJs over src/"
 
 test:
-	@$(BATS) --jobs $(JOBS) tests/convergence.bats tests/lite.bats tests/profile.bats tests/lite-adopt.bats tests/release-check.bats tests/lite-pipeline.bats tests/backlog.bats tests/gh-issues.bats tests/complexity.bats tests/command-routing.bats tests/cli-location.bats tests/role-frontmatter.bats tests/verify.bats tests/gate.bats tests/disposition.bats tests/validate-scale.bats tests/validate-authority.bats tests/payload-hygiene.bats tests/package-publish.bats tests/plugin-manifest.bats tests/strict-args.bats tests/precommit-gate.bats tests/prune.bats tests/flavor.bats tests/security-scanner.bats
+	@$(BATS) --jobs $(JOBS) tests/convergence.bats tests/lite.bats tests/profile.bats tests/lite-adopt.bats tests/release-check.bats tests/lite-pipeline.bats tests/backlog.bats tests/gh-issues.bats tests/complexity.bats tests/command-routing.bats tests/cli-location.bats tests/role-frontmatter.bats tests/verify.bats tests/gate.bats tests/disposition.bats tests/validate-scale.bats tests/payload-hygiene.bats tests/package-publish.bats tests/plugin-manifest.bats tests/strict-args.bats tests/precommit-gate.bats tests/prune.bats tests/flavor.bats tests/security-scanner.bats
 	@node --test src/core/*.test.js src/cli/*.test.js src/pi/*.test.js
-	@$(MAKE) parity
 
 typecheck:
 	@./node_modules/.bin/tsc -p tsconfig.json
 
-parity:
-	@COOK_OVERRIDE="$(CURDIR)/tests/parity-cook.sh" $(BATS) --jobs $(JOBS) tests/prune.bats tests/convergence.bats tests/validate-scale.bats tests/gate.bats tests/disposition.bats tests/backlog.bats tests/lite.bats tests/lite-pipeline.bats tests/profile.bats
 
 validate:
 	@$(COOK) validate

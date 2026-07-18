@@ -22,13 +22,14 @@
  * not a user path).
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import { lstatSync, statSync, realpathSync, readlinkSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { writeFileAtomic } from './lifecycle.js';
-import { readMode } from './store.js';
+import { collectTasks, readMode, writeTask } from './store.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -120,7 +121,7 @@ function isFile(p) {
  * @param {string} ref
  * @returns {string | null}
  */
-function resolveRefPath(root, ref) {
+export function resolveRefPath(root, ref) {
   const rootdir = resolveDir(root);
   if (rootdir === null) return null;
 
@@ -476,7 +477,7 @@ function ghDie(res, enoentMsg, failMsg) {
  * @param {string} ref
  * @returns {string | Verdict}
  */
-function ghFetchBody(ref) {
+export function ghFetchBody(ref) {
   const res = spawnSync('gh', ['issue', 'view', ref, '--json', 'body', '-q', '.body', '--'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
@@ -566,4 +567,89 @@ export async function planIssueOp(root, op, ref, ...rest) {
     default:
       return die(`unknown plan subcommand: ${op}`);
   }
+}
+
+/**
+ * Adopt a markdown file or GitHub issue as a lite task ledger.
+ *
+ * @param {string} root
+ * @param {...string} args
+ * @returns {Promise<Verdict>}
+ */
+export async function adoptPlan(root, ...args) {
+  if ((await readMode(root)) !== 'lite') {
+    return die('`cook on` is a lite-mode command; run `cook lite` first (full mode tracks tasks in the registry).');
+  }
+  if (args.length !== 1 || args[0] === '') return die('usage: cook on <ref>');
+  const ref = args[0];
+
+  if (isIssueRef(ref)) {
+    const invalid = issueRefValidate(ref);
+    if (invalid !== null) return invalid;
+  } else {
+    const filePart = ref.split('#', 1)[0];
+    if (filePart === '') return die(`cook on: invalid ref (no file part): ${ref}`);
+    if (resolveRefPath(root, filePart) === null) {
+      return die(`cook on: ref must resolve to an existing file inside the repo: ${ref}`);
+    }
+  }
+
+  let tasks;
+  try {
+    tasks = await collectTasks(root);
+  } catch {
+    return die('cook on: could not read existing ledgers.');
+  }
+  const existing = tasks.find((task) => task.externalRef === ref);
+  if (existing) {
+    return {
+      code: 0,
+      stdout: [`cook: already adopted: resuming ledger for ${ref} (${existing._dir}).`],
+      stderr: [],
+    };
+  }
+
+  if (isIssueRef(ref)) {
+    const fetched = ghFetchBody(ref);
+    if (typeof fetched !== 'string') return fetched;
+  }
+
+  const base = ref.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 160) || 'task';
+  const hash = createHash('sha256').update(ref).digest('hex').slice(0, 12);
+  const taskDir = join(root, '.jeff', 'tasks', `lite-${base}-${hash}`);
+  const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const task = {
+    schemaVersion: 1,
+    id: ref,
+    externalRef: ref,
+    slug: 'lite-adopt',
+    title: ref,
+    status: 'pending',
+    stage: 'capture',
+    priority: 'p2',
+    deps: [],
+    complexity: 'complex',
+    createdAt: now,
+    updatedAt: now,
+    agents: {
+      implementer_agent_id: null,
+      reviewer_agent_id: null,
+      reviewer2_agent_id: null,
+      audit_agent_id: null,
+    },
+    tests: { authored_by_agent_id: null, green: false, evidence: [] },
+    review: { verdict: null, reviewer_agent_id: null, evidence: [] },
+    audit: { required: false, verdict: 'na', audit_agent_id: null, evidence: [] },
+    commits: [],
+    kickbacks: [],
+    blockedReason: null,
+    abandonReason: null,
+  };
+  await mkdir(taskDir, { recursive: true });
+  await writeTask(taskDir, /** @type {any} */ (task));
+  return {
+    code: 0,
+    stdout: [`cook: adopted ${ref} → ${taskDir.slice(root.length + 1)}/task.json (lite, stage:capture).`],
+    stderr: [],
+  };
 }
