@@ -53,6 +53,17 @@ export async function assertStoreContained(root, paths = []) {
   }
 }
 
+/** @param {string} root @param {string} path */
+async function readContainedFile(root, path) {
+  await assertStoreContained(root, [path]);
+  return readFile(path, 'utf8');
+}
+
+/** @param {string} root */
+export function readProfile(root) {
+  return readContainedFile(root, join(root, '.jeff', 'profile.md'));
+}
+
 /**
  * Build the "unparseable task.json" error `collectTasks` throws for a corrupt
  * or non-object task file, tagged with `.dir` = its root-relative path.
@@ -73,10 +84,14 @@ function unparseableTaskError(rel) {
  * to a default. Callers get an error, never a silently-empty task.
  *
  * @param {string} taskDir - path to the task directory
+ * @param {string} [root] - repository root when reading a store-owned task
  * @returns {Promise<TaskJson>}
  */
-export async function readTask(taskDir) {
-  const raw = await readFile(join(taskDir, TASK_FILE), 'utf8');
+export async function readTask(taskDir, root) {
+  const taskPath = join(taskDir, TASK_FILE);
+  const raw = root === undefined
+    ? await readFile(taskPath, 'utf8')
+    : await readContainedFile(root, taskPath);
   return /** @type {TaskJson} */ (JSON.parse(raw));
 }
 
@@ -141,6 +156,7 @@ export async function collectTasks(root) {
     const full = join(tasksDir, ent.name, 'task.json');
     const rel = ['.jeff', 'tasks', ent.name, 'task.json'].join('/');
     let raw;
+    await assertStoreContained(root, [full]);
     try {
       await lstat(full);
     } catch (e) {
@@ -208,12 +224,7 @@ export async function collectTasks(root) {
  */
 export async function readConfig(root) {
   try {
-    await assertStoreContained(root, [join(root, '.jeff', 'config.json')]);
-  } catch {
-    return null;
-  }
-  try {
-    const raw = await readFile(join(root, '.jeff', 'config.json'), 'utf8');
+    const raw = await readContainedFile(root, join(root, '.jeff', 'config.json'));
     const v = JSON.parse(raw);
     return isType(v, 'object') ? /** @type {Record<string, unknown>} */ (v) : null;
   } catch {

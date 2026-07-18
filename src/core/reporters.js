@@ -10,8 +10,6 @@
  * re-implementation of task collection here.
  */
 
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { collectTasks } from './store.js';
 
 /**
@@ -122,10 +120,8 @@ export async function statusReport(root) {
  * `no task with id <id>`. The extra-argument guard is a CLI-arg concern handled
  * by the dispatcher before this runs (cook.sh order: empty-id, then extra-arg).
  *
- * The success path re-serializes the RAW file (not the `collectTasks` object,
- * which carries an injected `_dir`) as `JSON.stringify(JSON.parse(raw), null, 2)`
- * : byte-exact with cook.sh's `jq '.' "$f"` over the task.json schema (contract
- * C; the caller appends the single trailing newline).
+ * The success path re-serializes the parsed task without its injected `_dir`,
+ * avoiding a second filesystem read after the contained collection pass.
  *
  * @param {string} root
  * @param {string} id
@@ -137,7 +133,7 @@ export async function showReport(root, id) {
   if ('fail' in got) return got.fail;
   const match = got.tasks.find((t) => String(t.id) === id);
   if (!match) return { code: 1, stdout: [], stderr: [`cook: no task with id ${id}`] };
-  const raw = await readFile(join(root, match._dir), 'utf8');
-  const pretty = JSON.stringify(JSON.parse(raw), null, 2);
+  const { _dir, ...task } = match;
+  const pretty = JSON.stringify(task, null, 2);
   return { code: 0, stdout: [pretty], stderr: [] };
 }

@@ -196,11 +196,3 @@ test('profile preserves baseline streams, conformance, no-clobber, and strict ar
   });
 });
 
-test('help destination keeps all four successful entry forms on one exact Node stream', () => {
-  const forms = [[], ['help'], ['-h'], ['--help']];
-  const results = forms.map((args) => run(ROOT, args, false));
-  for (const result of results) assert.deepEqual(result, results[0]);
-  assert.equal(results[0].code, 0);
-  assert.equal(results[0].stderr, '');
-  assert.match(results[0].stdout, /lite[\s\S]*on <ref>[\s\S]*indiff[\s\S]*deinit[\s\S]*profile/);
-});

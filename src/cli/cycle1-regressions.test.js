@@ -2,11 +2,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readlink, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { collectTasks } from '../core/store.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const COOK = join(REPO_ROOT, 'src', 'cli', 'cook.js');
@@ -148,6 +149,128 @@ test('cook profile refuses a symlinked profile leaf without leaking target bytes
     assert.equal(result.stdout, '');
     assert.doesNotMatch(result.stderr, /PROFILE-SECRET-SENTINEL/);
     assert.match(result.stderr, /refusing \.jeff\/profile\.md symlink/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('lite verify refuses an outside profile leaf without running its test command', async () => {
+  const root = await makeGitRoot();
+  const outside = await mkdtemp(join(tmpdir(), 'jeff-cycle1-verify-profile-'));
+  try {
+    await mkdir(join(root, '.jeff'));
+    await writeFile(
+      join(root, '.jeff', 'config.json'),
+      JSON.stringify({ schemaVersion: 1, mode: 'lite', active: true }),
+      'utf8',
+    );
+    const sentinel = join(outside, 'executed');
+    const target = join(outside, 'profile.md');
+    const profile = `Test command: \`printf compromised > ${JSON.stringify(sentinel)}\`.\n`;
+    await writeFile(target, profile, 'utf8');
+    await symlink(target, join(root, '.jeff', 'profile.md'));
+
+    const result = runCook(root, ['verify']);
+    const sentinelCreated = await readFile(sentinel, 'utf8').then(() => true, () => false);
+
+    assert.deepEqual({
+      refused: result.code !== 0,
+      stdout: result.stdout,
+      sentinelCreated,
+      target: await readFile(target, 'utf8'),
+      link: await readlink(join(root, '.jeff', 'profile.md')),
+    }, {
+      refused: true,
+      stdout: '',
+      sentinelCreated: false,
+      target: profile,
+      link: target,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('collect, validate, and show refuse a readable outside task leaf without disclosure or mutation', async () => {
+  const root = await makeGitRoot();
+  const outside = await mkdtemp(join(tmpdir(), 'jeff-cycle1-task-leaf-'));
+  const taskDir = join(root, '.jeff', 'tasks', '938475-outside-json');
+  const target = join(outside, 'task.json');
+  const sentinel = 'OUTSIDE-TASK-CONTENT-938475';
+  const task = {
+    schemaVersion: 1,
+    id: 938475,
+    slug: 'outside-json',
+    title: sentinel,
+    status: 'pending',
+    stage: 'capture',
+    priority: 'p2',
+    deps: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    branch: null,
+    agents: {
+      plan_agent_id: null,
+      test_author_agent_id: null,
+      implementer_agent_id: null,
+      reviewer_agent_id: null,
+      audit_agent_id: null,
+    },
+    tests: { authored_by_agent_id: null, green: false, evidence: [] },
+    review: { verdict: null, reviewer_agent_id: null, evidence: [] },
+    audit: { required: false, verdict: 'na', audit_agent_id: null, evidence: [] },
+    commits: [],
+    kickbacks: [],
+    blockedReason: null,
+    abandonReason: null,
+  };
+  const targetBytes = `${JSON.stringify(task, null, 2)}\n`;
+  try {
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(
+      join(root, '.jeff', 'config.json'),
+      JSON.stringify({ schemaVersion: 1, system: 'jeff', active: true }),
+      'utf8',
+    );
+    await writeFile(target, targetBytes, 'utf8');
+    await symlink(target, join(taskDir, 'task.json'));
+    const beforeRepo = await readdir(taskDir);
+    const beforeOutside = await readdir(outside);
+
+    let collected = [];
+    let collectRefused = false;
+    try {
+      collected = await collectTasks(root);
+    } catch {
+      collectRefused = true;
+    }
+    const validate = runCook(root, ['validate']);
+    const show = runCook(root, ['show', String(task.id)]);
+
+    assert.deepEqual({
+      collectRefused,
+      collectLeaked: JSON.stringify(collected).includes(sentinel),
+      validateRefused: validate.code !== 0,
+      validateLeaked: `${validate.stdout}${validate.stderr}`.includes(sentinel),
+      showRefused: show.code !== 0,
+      showLeaked: `${show.stdout}${show.stderr}`.includes(sentinel),
+      repoMutated: JSON.stringify(await readdir(taskDir)) !== JSON.stringify(beforeRepo),
+      outsideMutated: JSON.stringify(await readdir(outside)) !== JSON.stringify(beforeOutside)
+        || await readFile(target, 'utf8') !== targetBytes,
+      link: await readlink(join(taskDir, 'task.json')),
+    }, {
+      collectRefused: true,
+      collectLeaked: false,
+      validateRefused: true,
+      validateLeaked: false,
+      showRefused: true,
+      showLeaked: false,
+      repoMutated: false,
+      outsideMutated: false,
+      link: target,
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });

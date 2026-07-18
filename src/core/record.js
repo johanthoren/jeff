@@ -542,7 +542,7 @@ export async function updateTask(root, id, update, options = {}) {
   return withStoreLock(root, async () => {
     const tasks = await collectTasks(root);
     const { taskDir, taskPath } = await locateTask(root, id, tasks);
-    const task = await readTask(taskDir);
+    const task = await readTask(taskDir, root);
     const candidate = update(task);
     if (task.status !== 'done' && candidate.status === 'done') {
       const gate = candidate.tests?.gate;
