@@ -6,17 +6,13 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **`#93`:** project each validated Pi specialist return into one bounded, allowlisted display contract shared by model-visible, collapsed, expanded, and detail output. Keep strict JSON and execution evidence internal; add no arbitrary-output sanitizer. This supersedes `#80` and folds `#88`.
+- **`#41`:** run refactor only for a named simplification opportunity. Add no decision stage, analytics, counters, or evaluation subsystem.
 - **Tracker reconciliation: `#76`:** every acceptance criterion is checked; close it if the shipped evidence is complete, otherwise name the missing terminal work.
 - **Parallel/non-blocking: `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
 
 ## NEXT
 
-### 1. Conditional refactor
-
-- **`#41`:** run refactor only for a named simplification opportunity. Add no decision stage, analytics, counters, or evaluation subsystem. The completed Node cutover removed its ordering dependency.
-
-### 2. Instruction boundaries
+### 1. Instruction boundaries
 
 - **`#87`:** state explicitly whether OMP user/project `SYSTEM.md` remains applicable to specialists; do not broaden runtime isolation without a reproduced conflict.
 - **`#77`:** clarify that durable memory writes require an explicit persistence request and preserve the target file's existing purpose and format.
