@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { truncateToVisualLines } from '@earendil-works/pi-coding-agent';
 import jeffExtension, { formatDispatchResult } from './extension.js';
 
 /**
@@ -23,25 +24,116 @@ function registeredDispatchTool(dependencies, hostSdk) {
   return tools.get('cook_dispatch');
 }
 
-function completedDispatchResult(overrides = {}) {
-  const details = {
-    stage: 'review',
-    agent_id: '0123456789abcdef',
-    brain: { provider: 'anthropic', model: 'claude-opus-4-5', effort: 'xhigh' },
-    transcript: 'RAW TRANSCRIPT BLOB',
-    evidence: 'targeted evidence line',
-    diff: 'diff --git a/src/pi/extension.js b/src/pi/extension.js',
-    findings: [
-      { severity: 'blocking', file: 'src/pi/extension.js', line: 12, summary: 'renderer returns raw JSON' },
-      { severity: 'follow-up', file: 'src/pi/extension.test.js', line: 34, summary: 'add compact render guard' },
-    ],
-    ...overrides,
-  };
+const AUDIT_CATEGORIES = [
+  'secrets',
+  'injection_sql',
+  'injection_command',
+  'path_traversal',
+  'insecure_deserialization',
+  'weak_crypto',
+  'dynamic_execution',
+  'tls_transport',
+  'xss',
+  'sensitive_logging',
+  'insecure_permissions',
+];
 
-  return {
-    content: [{ type: 'text', text: formatDispatchResult(details) }],
-    details,
+/** @param {string} stage @param {Record<string, any>} [overrides] */
+function specialistReturn(stage, overrides = {}) {
+  /** @type {Record<string, Record<string, any>>} */
+  const returns = {
+    plan: {
+      agent_id: 'plan-agent', stage: 'plan', result: 'red', complexity: 'complex', auditRequired: true,
+      slices: ['Project the return'], testFiles: ['src/pi/extension.test.js'],
+      redRun: { command: 'node --test src/pi/extension.test.js', output: 'missing projection' }, escalation: null,
+    },
+    implement: {
+      agent_id: 'implement-agent', stage: 'implement', result: 'green', files: ['src/pi/extension.js'],
+      greenRun: { command: 'node --test src/pi/extension.test.js', output: 'pass' }, kickback: null,
+    },
+    refactor: {
+      agent_id: 'refactor-agent', stage: 'refactor', result: 'clean', files: [], outsideDiff: [],
+      greenRun: { command: 'node --test src/pi/extension.test.js', output: 'pass' }, summary: ['Kept one projection'],
+    },
+    review: {
+      agent_id: 'review-agent', stage: 'review', cycle: 0, verdict: 'needs-work',
+      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
+      findings: [
+        {
+          severity: 'high', class: 'blocking', file: 'src/pi/extension.js', line: 12,
+          kickTo: 'implement', what: 'renderer returns raw JSON', why: 'execution metadata reaches consumers',
+        },
+        {
+          severity: 'low', class: 'follow-up', file: 'src/pi/extension.test.js', line: 34,
+          kickTo: 'plan', what: 'add compact render guard', why: 'the compact form should stay useful',
+        },
+      ],
+      evidence: [{ command: 'node --test src/pi/extension.test.js', output: 'failed' }],
+    },
+    audit: {
+      agent_id: 'audit-agent', stage: 'audit', cycle: 0, verdict: 'needs-work',
+      scan: { command: 'cook scan', recommendation: 'BLOCK', reportPath: '.jeff/scan.json' },
+      coverage: AUDIT_CATEGORIES.map((category) => ({ category, status: 'covered_no_hits' })),
+      findings: [{
+        severity: 'high', class: 'blocking', cwe: 'CWE-200', file: 'src/pi/extension.js', line: 247,
+        kickTo: 'implement', what: 'private child data is displayed', why: 'the raw result crosses the trust boundary',
+      }],
+      evidence: [{ command: 'node --test src/pi/extension.test.js', output: 'failed' }],
+    },
+    refute: {
+      agent_id: 'refute-agent', stage: 'refute', cycle: 0, source: 'review',
+      finding: 'src/pi/extension.js:247 raw result', verdict: 'survives',
+      rationale: 'The raw return is reachable by the parent model.',
+      evidence: [{ command: 'read src/pi/extension.js', output: 'raw result returned' }],
+    },
   };
+  return { ...returns[stage], ...overrides };
+}
+
+/**
+ * @param {Record<string, any>} returned
+ * @param {string} marker
+ * @returns {Record<string, any>}
+ */
+function markPrivateReturnFields(returned, marker) {
+  const common = { ...returned, agent_id: marker };
+  switch (returned.stage) {
+    case 'plan':
+      return { ...common, slices: [marker], testFiles: [marker], redRun: { command: marker, output: marker } };
+    case 'implement':
+      return { ...common, files: [marker], greenRun: { command: marker, output: marker } };
+    case 'refactor':
+      return {
+        ...common,
+        files: [marker],
+        outsideDiff: [marker],
+        greenRun: { command: marker, output: marker },
+      };
+    case 'review':
+      return {
+        ...common,
+        acLedger: [{ ac: marker, claimed: 'write', rederived: 'write', ok: true }],
+        evidence: [{ command: marker, output: marker }],
+      };
+    case 'audit':
+      return {
+        ...common,
+        scan: { ...returned.scan, command: marker, reportPath: marker },
+        findings: returned.findings.map((/** @type {Record<string, any>} */ finding) => ({ ...finding, cwe: marker })),
+        evidence: [{ command: marker, output: marker }],
+      };
+    case 'refute':
+      return { ...common, evidence: [{ command: marker, output: marker }] };
+    default:
+      return common;
+  }
+}
+
+/** @param {Record<string, any>} [overrides] */
+function completedDispatchResult(overrides = {}) {
+  const raw = specialistReturn('review', overrides);
+  const details = JSON.parse(formatDispatchResult(raw));
+  return { content: [{ type: 'text', text: formatDispatchResult(raw) }], details };
 }
 
 /**
@@ -68,6 +160,18 @@ function renderDispatchResult(result, options = {}, width = 200) {
   return renderDispatchLines(result, options, width).join('\n');
 }
 
+/** @param {string[]} lines @param {number} width */
+function assertFitsPiWidth(lines, width) {
+  for (const line of lines) {
+    assert.doesNotThrow(() => encodeURIComponent(line));
+    assert.doesNotMatch(line, /\uFFFD/u);
+    assert.equal(
+      truncateToVisualLines(line, Number.MAX_SAFE_INTEGER, width).visualLines.length,
+      1,
+    );
+  }
+}
+
 test('package.json exposes the Pi extension and cook skill package paths', async () => {
   const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
@@ -77,17 +181,21 @@ test('package.json exposes the Pi extension and cook skill package paths', async
   });
 });
 
-test('formatDispatchResult exposes agent id, brain, and transcript to the parent model', () => {
+test('formatDispatchResult exposes only the closed display projection to the parent model', () => {
   const text = formatDispatchResult({
-    agent_id: '0123456789abcdef',
-    stage: 'review',
-    brain: { provider: 'anthropic', model: 'claude-opus-4-5', effort: 'xhigh' },
-    transcript: 'SMOKE OK',
+    ...specialistReturn('review'),
+    brain: { provider: 'MARKER_PROVIDER', model: 'MARKER_MODEL', effort: 'MARKER_EFFORT' },
+    transcript: 'MARKER_TRANSCRIPT',
+    unknown: 'MARKER_UNKNOWN',
   });
+  const display = JSON.parse(text);
 
-  assert.match(text, /0123456789abcdef/);
-  assert.match(text, /claude-opus-4-5/);
-  assert.match(text, /SMOKE OK/);
+  assert.deepEqual(Object.keys(display).sort(), ['findings', 'stage', 'verdict']);
+  assert.deepEqual(Object.keys(display.findings[0]).sort(), [
+    'class', 'file', 'kickTo', 'line', 'severity', 'what', 'why',
+  ]);
+  assert.match(text, /renderer returns raw JSON|execution metadata reaches consumers/);
+  assert.doesNotMatch(text, /review-agent|MARKER_/);
 });
 
 test('extension registers /jeff-status and cook_dispatch', () => {
@@ -118,6 +226,207 @@ test('extension registers /jeff-status and cook_dispatch', () => {
   ]);
 });
 
+test('cook_dispatch parses and projects every specialist result across model and TUI surfaces', async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-display-'));
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    /** @type {[string, Record<string, any>, string, string[], string[]][]} */
+    const cases = [
+      ['routine success', specialistReturn('implement'), 'green', ['implement', 'green'], ['result', 'stage']],
+      ['plan escalation', specialistReturn('plan', {
+        result: 'escalation',
+        redRun: { command: null, output: 'Chef decision required' },
+        escalation: { fork: 'Choose storage', options: ['disk', 'database'] },
+      }), 'Choose storage', ['plan', 'escalation', 'Choose storage', 'disk', 'database'], [
+        'escalation', 'result', 'stage',
+      ]],
+      ['implement kickback', specialistReturn('implement', {
+        result: 'kickback', files: [],
+        greenRun: { command: null, output: 'Tests overfit the implementation' },
+        kickback: { to: 'plan', reason: 'Tests overfit the implementation' },
+      }), 'Tests overfit', ['implement', 'kickback', 'plan', 'Tests overfit'], ['kickback', 'result', 'stage']],
+      ['refactor summary', specialistReturn('refactor'), 'Kept one projection', [
+        'refactor', 'clean', 'Kept one projection',
+      ], ['result', 'stage', 'summary']],
+      ['review findings', specialistReturn('review'), 'renderer returns raw JSON', [
+        'review', 'needs-work', 'high', 'blocking', 'src/pi/extension.js', '12', 'implement',
+        'renderer returns raw JSON', 'execution metadata reaches consumers',
+      ], ['findings', 'stage', 'verdict']],
+      ['audit findings', specialistReturn('audit'), 'private child data is displayed', [
+        'audit', 'needs-work', 'high', 'blocking', 'src/pi/extension.js', '247', 'implement',
+        'private child data is displayed', 'raw result crosses the trust boundary',
+      ], ['findings', 'stage', 'verdict']],
+      ['refute survives', specialistReturn('refute'), 'raw return is reachable', [
+        'refute', 'review', 'src/pi/extension.js:247 raw result', 'survives', 'raw return is reachable',
+      ], ['finding', 'rationale', 'source', 'stage', 'verdict']],
+      ['refute rejected', specialistReturn('refute', {
+        verdict: 'refuted', rationale: 'The projection already omits the source field.',
+      }), 'projection already omits', [
+        'refute', 'review', 'src/pi/extension.js:247 raw result', 'refuted', 'projection already omits',
+      ], ['finding', 'rationale', 'source', 'stage', 'verdict']],
+    ];
+
+    for (const [name, returned, expected, projected, topLevelKeys] of cases) {
+      await t.test(name, async () => {
+        const privateMarker = `PRIVATE_${String(name).replaceAll(' ', '_').toUpperCase()}`;
+        const markedReturn = markPrivateReturnFields(returned, privateMarker);
+        const tool = registeredDispatchTool({
+          dispatchRoleSession: async () => ({
+            stage: markedReturn.stage,
+            agent_id: privateMarker,
+            brain: { provider: privateMarker, model: privateMarker, effort: privateMarker },
+            transcript: JSON.stringify(markedReturn),
+            evidence: privateMarker,
+            commands: privateMarker,
+            diffs: privateMarker,
+            unknown: privateMarker,
+          }),
+        });
+        const result = await tool.execute(
+          'call-1',
+          { stage: markedReturn.stage, brief: 'Project this result.' },
+          undefined,
+          undefined,
+          { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+        );
+        const content = result.content[0].text;
+        const collapsed = renderDispatchResult(result);
+        const expanded = renderDispatchResult(result, { expanded: true });
+
+        assert.deepEqual(result.details, JSON.parse(content));
+        assert.deepEqual(result.details, JSON.parse(expanded));
+        assert.deepEqual(Object.keys(result.details).sort(), topLevelKeys);
+        if (result.details.escalation) {
+          assert.deepEqual(Object.keys(result.details.escalation).sort(), ['fork', 'options']);
+        }
+        if (result.details.kickback) {
+          assert.deepEqual(Object.keys(result.details.kickback).sort(), ['reason', 'to']);
+        }
+        for (const finding of result.details.findings ?? []) {
+          assert.deepEqual(Object.keys(finding).sort(), [
+            'class', 'file', 'kickTo', 'line', 'severity', 'what', 'why',
+          ]);
+        }
+        const detailsText = JSON.stringify(result.details);
+        for (const surface of [content, collapsed, expanded, detailsText]) {
+          assert.match(surface, new RegExp(expected, 'i'));
+          assert.doesNotMatch(surface, new RegExp(privateMarker));
+        }
+        for (const field of projected) {
+          for (const surface of [content, expanded, detailsText]) assert.match(surface, new RegExp(field, 'i'));
+        }
+      });
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('cook_dispatch fails closed before display for malformed, non-object, and non-strict returns', async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-invalid-display-'));
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    /** @type {[string, string][]} */
+    const cases = [
+      ['malformed JSON', 'not json PRIVATE_PAYLOAD'],
+      ['JSON null', 'null'],
+      ['JSON scalar', '42'],
+      ['JSON array', '[]'],
+      ['unknown return field', JSON.stringify({ ...specialistReturn('implement'), unknown: 'PRIVATE_PAYLOAD' })],
+      ['otherwise-valid wrong-stage return', JSON.stringify(specialistReturn('plan'))],
+    ];
+
+    for (const [name, transcript] of cases) {
+      await t.test(name, async () => {
+        const tool = registeredDispatchTool({
+          dispatchRoleSession: async () => ({
+            stage: 'implement',
+            agent_id: 'PRIVATE_CHILD_ID',
+            brain: { provider: 'PRIVATE_PROVIDER', model: 'PRIVATE_MODEL', effort: 'PRIVATE_EFFORT' },
+            transcript,
+          }),
+        });
+        let thrown;
+        try {
+          await tool.execute(
+            'call-1',
+            { stage: 'implement', brief: 'Reject invalid output.' },
+            undefined,
+            undefined,
+            { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+          );
+        } catch (error) {
+          thrown = error;
+        }
+
+        assert.ok(thrown instanceof Error);
+        assert.match(thrown.message, /cook_dispatch: specialist return/i);
+        assert.ok(thrown.message.length <= 200);
+        assert.doesNotMatch(thrown.message, /PRIVATE_|not json|"unknown"|42/);
+      });
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('display projection omits forbidden fields and bounds allowed collections, scalars, and total output', () => {
+  const presentationControls = '\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069';
+  const forbidden = [
+    'PRIVATE_AGENT', 'PRIVATE_PROVIDER', 'PRIVATE_MODEL', 'PRIVATE_EFFORT', 'PRIVATE_TRANSCRIPT',
+    'PRIVATE_EVIDENCE', 'PRIVATE_COMMAND', 'PRIVATE_OUTPUT', 'PRIVATE_DIFF', 'PRIVATE_FILE',
+    'PRIVATE_LEDGER', 'PRIVATE_SCAN', 'PRIVATE_COVERAGE', 'PRIVATE_UNKNOWN', 'OVERSIZED_TAIL',
+  ];
+  const findings = Array.from({ length: 1000 }, (_, index) => ({
+    severity: 'high',
+    class: 'blocking',
+    file: `src/file-${index}.js`,
+    line: index + 1,
+    kickTo: 'implement',
+    what: index === 0
+      ? `SAFE ACTIONABLE FINDING café 界 😀\u001b[31m${presentationControls}${'x'.repeat(100_000)}OVERSIZED_TAIL`
+      : (index === 999 ? 'OVERSIZED_TAIL' : `finding ${index}`),
+    why: 'SAFE ROUTING REASON',
+  }));
+  const text = formatDispatchResult({
+    stage: 'review',
+    verdict: 'needs-work',
+    findings,
+    agent_id: 'PRIVATE_AGENT',
+    brain: { provider: 'PRIVATE_PROVIDER', model: 'PRIVATE_MODEL', effort: 'PRIVATE_EFFORT' },
+    transcript: 'PRIVATE_TRANSCRIPT',
+    evidence: 'PRIVATE_EVIDENCE',
+    commands: ['PRIVATE_COMMAND', 'PRIVATE_OUTPUT'],
+    diffs: ['PRIVATE_DIFF'],
+    files: ['PRIVATE_FILE'],
+    acLedger: ['PRIVATE_LEDGER'],
+    scan: 'PRIVATE_SCAN',
+    coverage: 'PRIVATE_COVERAGE',
+    unknown: 'PRIVATE_UNKNOWN',
+  });
+  const details = JSON.parse(text);
+  const result = { content: [{ type: 'text', text }], details };
+  const surfaces = [
+    text,
+    renderDispatchResult(result),
+    renderDispatchResult(result, { expanded: true }),
+    JSON.stringify(details),
+  ];
+
+  assert.ok(text.length <= 32_768);
+  assert.ok(details.findings.length < findings.length);
+  for (const surface of surfaces) {
+    assert.match(surface, /SAFE ACTIONABLE FINDING|SAFE ROUTING REASON/);
+    assert.doesNotMatch(surface, /[\p{Bidi_Control}\u2028\u2029\u001b]/u);
+    for (const marker of forbidden) assert.doesNotMatch(surface, new RegExp(marker));
+  }
+  for (const surface of [text, renderDispatchResult(result, { expanded: true }), JSON.stringify(details)]) {
+    assert.match(surface, /café 界 😀/u);
+  }
+});
+
 test('completed cook_dispatch results render as compact feed rows', () => {
   const output = renderDispatchResult(completedDispatchResult());
 
@@ -143,15 +452,14 @@ test('partial running cook_dispatch result renders one small active line', () =>
   assert.match(output, /running|active|working/i);
 });
 
-test('expanded cook_dispatch rendering includes metadata transcript evidence and diffs', () => {
-  const collapsed = renderDispatchResult(completedDispatchResult());
-  const expanded = renderDispatchResult(completedDispatchResult(), { expanded: true });
+test('expanded cook_dispatch rendering shows the projection without private execution data', () => {
+  const result = completedDispatchResult();
+  const collapsed = renderDispatchResult(result);
+  const expanded = renderDispatchResult(result, { expanded: true });
 
   assert.notEqual(expanded, collapsed);
-  assert.match(expanded, /0123456789abcdef/);
-  assert.match(expanded, /RAW TRANSCRIPT BLOB/);
-  assert.match(expanded, /targeted evidence line/);
-  assert.match(expanded, /diff --git/);
+  assert.match(expanded, /renderer returns raw JSON|execution metadata reaches consumers/);
+  assert.doesNotMatch(expanded, /review-agent|node --test|missing projection/);
 });
 
 test('review and audit findings render counts and file-line summaries', () => {
@@ -166,8 +474,14 @@ test('review and audit findings render counts and file-line summaries', () => {
 test('collapsed cook_dispatch rows count structured findings by class and show what', () => {
   const output = renderDispatchResult(completedDispatchResult({
     findings: [
-      { severity: 'high', class: 'blocking', file: 'src/pi/extension.js', line: 12, what: 'renderer counts severity' },
-      { severity: 'medium', class: 'follow-up', file: 'src/pi/extension.test.js', line: 34, what: 'renderer hides what' },
+      {
+        severity: 'high', class: 'blocking', file: 'src/pi/extension.js', line: 12,
+        kickTo: 'implement', what: 'renderer counts severity', why: 'the count routes blocking work',
+      },
+      {
+        severity: 'medium', class: 'follow-up', file: 'src/pi/extension.test.js', line: 34,
+        kickTo: 'plan', what: 'renderer hides what', why: 'the summary must remain actionable',
+      },
     ],
   }));
 
@@ -175,32 +489,6 @@ test('collapsed cook_dispatch rows count structured findings by class and show w
   assert.match(output, /follow-up\D+1/i);
   assert.match(output, /src\/pi\/extension\.js:12.*renderer counts severity/);
   assert.match(output, /src\/pi\/extension\.test\.js:34.*renderer hides what/);
-});
-
-test('collapsed cook_dispatch rows summarize findings embedded in yaml transcript', () => {
-  const output = renderDispatchResult(completedDispatchResult({
-    findings: undefined,
-    transcript: `\`\`\`yaml
-stage: review
-verdict: needs-work
-findings:
-  - file: src/pi/role-session.js
-    line: 13
-    class: blocking
-    what: judgment stages can run bash
-  - file: tests/parity-cook.sh
-    line: 37
-    class: follow-up
-    what: shellcheck style
-\`\`\``,
-  }));
-
-  assert.match(output, /blocking\D+1/i);
-  assert.match(output, /follow-up\D+1/i);
-  assert.match(output, /src\/pi\/role-session\.js:13.*judgment stages can run bash/);
-  assert.match(output, /tests\/parity-cook\.sh:37.*shellcheck style/);
-  assert.doesNotMatch(output, /0123456789abcdef|anthropic|claude-opus-4-5|xhigh/);
-  assert.doesNotMatch(output, /```yaml|transcript|RAW TRANSCRIPT BLOB/);
 });
 
 test('cook_dispatch renderCall shows the requested running stage compactly', () => {
@@ -220,33 +508,75 @@ test('cook_dispatch renderCall shows the requested running stage compactly', () 
   assert.doesNotMatch(output, /read every file|long detailed verdict/);
 });
 
-test('cook_dispatch custom renderers keep every line within the requested width', () => {
+test('display projection keeps truncated Unicode well formed', () => {
   const result = completedDispatchResult({
-    transcript: `RAW TRANSCRIPT BLOB ${'x'.repeat(120)}`,
-    findings: [
-      {
-        severity: 'blocking',
-        file: 'src/pi/extension.js',
-        line: 12,
-        summary: `renderer returns ${'x'.repeat(120)}`,
-      },
-    ],
+    findings: [{
+      severity: 'high',
+      class: 'blocking',
+      file: 'src/pi/extension.js',
+      line: 12,
+      kickTo: 'implement',
+      what: 'boundary check',
+      why: `${'x'.repeat(95)}😀 mixed-boundary emoji`,
+    }],
   });
-  const tool = registeredDispatchTool();
+  const why = result.details.findings[0].why;
 
-  for (const line of renderDispatchLines(result, {}, 32)) assert.ok(line.length <= 32);
-  for (const line of renderDispatchLines(result, { expanded: true }, 32)) assert.ok(line.length <= 32);
-  for (const line of renderDispatchLines(result, { isPartial: true }, 10)) assert.ok(line.length <= 10);
-  for (const line of tool.renderCall({ stage: 'review', brief: 'x'.repeat(120) }, {}, {}).render(10)) {
-    assert.ok(line.length <= 10);
+  assert.doesNotThrow(() => encodeURIComponent(why));
+  assert.doesNotMatch(why, /\uFFFD/u);
+});
+
+test('display projection repairs lone surrogates across model and TUI surfaces', () => {
+  const result = completedDispatchResult({
+    findings: [{
+      severity: 'high',
+      class: 'blocking',
+      file: 'src/before-high-\uD800-after-high.js',
+      line: 12,
+      kickTo: 'implement',
+      what: 'before-low-\uDC00-after-low',
+      why: 'surrounding text stays readable',
+    }],
+  });
+  const surfaces = [
+    result.content[0].text,
+    JSON.stringify(result.details),
+    renderDispatchResult(result),
+    renderDispatchResult(result, { expanded: true }),
+  ];
+
+  for (const surface of surfaces) {
+    assert.doesNotThrow(() => encodeURIComponent(surface));
+    assert.match(surface, /before-high-\uFFFD-after-high/u);
+    assert.match(surface, /before-low-\uFFFD-after-low/u);
   }
 });
 
-test('empty transcript renders useful compact output instead of an empty box', () => {
-  const output = renderDispatchResult(completedDispatchResult({ transcript: '', findings: [] }));
+test('cook_dispatch custom renderers fit Pi terminal columns for CJK and emoji', () => {
+  const result = completedDispatchResult({
+    findings: [{
+      severity: 'high',
+      class: 'blocking',
+      file: 'src/pi/extension.js',
+      line: 12,
+      kickTo: 'implement',
+      what: '界😀'.repeat(60),
+      why: 'mixed Unicode stays readable',
+    }],
+  });
+  const tool = registeredDispatchTool();
+
+  assertFitsPiWidth(renderDispatchLines(result, {}, 12), 12);
+  assertFitsPiWidth(renderDispatchLines(result, { expanded: true }, 12), 12);
+  assertFitsPiWidth(renderDispatchLines(result, { isPartial: true }, 10), 10);
+  assertFitsPiWidth(tool.renderCall({ stage: 'review', brief: '界😀'.repeat(60) }, {}, {}).render(10), 10);
+});
+
+test('an empty finding list renders useful compact output instead of an empty box', () => {
+  const output = renderDispatchResult(completedDispatchResult({ verdict: 'pass', findings: [] }));
 
   assert.match(output, /review/);
-  assert.doesNotMatch(output, /RAW TRANSCRIPT BLOB|^\s*$/);
+  assert.doesNotMatch(output, /^\s*$/);
 });
 
 test('cook_dispatch forwards the host-injected SDK through its default role-session boundary', async () => {
@@ -263,7 +593,7 @@ test('cook_dispatch forwards the host-injected SDK through its default role-sess
           stage: 'review',
           agent_id: 'host-sdk-reviewer',
           brain: { provider: 'openai', model: 'gpt-5.6', effort: 'xhigh' },
-          transcript: 'review complete',
+          transcript: JSON.stringify({ ...specialistReturn('review'), verdict: 'pass', findings: [] }),
         };
       },
     }, hostSdk);
@@ -529,7 +859,13 @@ test('cook_dispatch rejects mismatched claimed identity without changing ledger 
         undefined,
         { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
       ),
-      /\[record-identity\] claimed agent claimed-plan-agent does not match observed agent observed-plan-agent/,
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /^cook_dispatch: .*record/i);
+        assert.ok(error.message.length <= 200);
+        assert.doesNotMatch(error.message, /claimed-plan-agent|observed-plan-agent|\[record-/);
+        return true;
+      },
     );
     assert.equal(await readFile(taskFile, 'utf8'), before);
   } finally {
