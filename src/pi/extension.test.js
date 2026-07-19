@@ -526,6 +526,32 @@ test('display projection keeps truncated Unicode well formed', () => {
   assert.doesNotMatch(why, /\uFFFD/u);
 });
 
+test('display projection repairs lone surrogates across model and TUI surfaces', () => {
+  const result = completedDispatchResult({
+    findings: [{
+      severity: 'high',
+      class: 'blocking',
+      file: 'src/before-high-\uD800-after-high.js',
+      line: 12,
+      kickTo: 'implement',
+      what: 'before-low-\uDC00-after-low',
+      why: 'surrounding text stays readable',
+    }],
+  });
+  const surfaces = [
+    result.content[0].text,
+    JSON.stringify(result.details),
+    renderDispatchResult(result),
+    renderDispatchResult(result, { expanded: true }),
+  ];
+
+  for (const surface of surfaces) {
+    assert.doesNotThrow(() => encodeURIComponent(surface));
+    assert.match(surface, /before-high-\uFFFD-after-high/u);
+    assert.match(surface, /before-low-\uFFFD-after-low/u);
+  }
+});
+
 test('cook_dispatch custom renderers fit Pi terminal columns for CJK and emoji', () => {
   const result = completedDispatchResult({
     findings: [{
