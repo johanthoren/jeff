@@ -3,10 +3,89 @@
 import { readConfig } from '../core/store.js';
 import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
 import { recordSpecialistReturn } from '../core/record.js';
+import { validateSpecialistReturn } from '../core/record-contract.js';
+
+const DISPLAY_ITEM_LIMIT = 8;
+const DISPLAY_TEXT_LIMIT = 96;
+
+/** @param {unknown} value */
+function displayText(value) {
+  return typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').slice(0, DISPLAY_TEXT_LIMIT)
+    : '';
+}
+
+/** @param {unknown} values */
+function displayTexts(values) {
+  return Array.isArray(values) ? values.slice(0, DISPLAY_ITEM_LIMIT).map(displayText) : [];
+}
+
+/** @param {Record<string, any>} result */
+function displayProjection(result) {
+  const stage = displayText(result.stage);
+  const status = 'verdict' in result
+    ? { verdict: displayText(result.verdict) }
+    : { result: displayText(result.result) };
+
+  switch (stage) {
+    case 'plan':
+      return {
+        stage,
+        ...status,
+        ...(result.escalation ? {
+          escalation: {
+            fork: displayText(result.escalation.fork),
+            options: displayTexts(result.escalation.options),
+          },
+        } : {}),
+      };
+    case 'implement':
+      return {
+        stage,
+        ...status,
+        ...(result.kickback ? {
+          kickback: {
+            to: displayText(result.kickback.to),
+            reason: displayText(result.kickback.reason),
+          },
+        } : {}),
+      };
+    case 'refactor':
+      return { stage, ...status, summary: displayTexts(result.summary) };
+    case 'review':
+    case 'audit':
+      return {
+        stage,
+        ...status,
+        findings: Array.isArray(result.findings)
+          ? result.findings.slice(0, DISPLAY_ITEM_LIMIT).map((finding) => ({
+              severity: displayText(finding.severity),
+              class: displayText(finding.class),
+              file: displayText(finding.file),
+              line: Number.isInteger(finding.line) && finding.line > 0 ? finding.line : undefined,
+              kickTo: displayText(finding.kickTo),
+              what: displayText(finding.what),
+              why: displayText(finding.why),
+            }))
+          : [],
+      };
+    case 'refute':
+      return {
+        stage,
+        ...(result.source === undefined ? {} : { source: displayText(result.source) }),
+        finding: displayText(result.finding),
+        ...status,
+        rationale: displayText(result.rationale),
+      };
+    default:
+      return { stage, ...status };
+  }
+}
 
 /** @param {unknown} result */
 export function formatDispatchResult(result) {
-  return JSON.stringify(result, null, 2);
+  const record = result && typeof result === 'object' ? /** @type {Record<string, any>} */ (result) : {};
+  return JSON.stringify(displayProjection(record), null, 2);
 }
 
 /** @param {number} width */
@@ -51,81 +130,18 @@ function textComponent(lines, opts = {}) {
 function dispatchDetails(result) {
   if (!result || typeof result !== 'object') return {};
   const r = /** @type {{ details?: unknown, content?: unknown }} */ (result);
-  if (r.details && typeof r.details === 'object') return /** @type {Record<string, any>} */ (r.details);
+  if (r.details && typeof r.details === 'object') return displayProjection(/** @type {Record<string, any>} */ (r.details));
   if (!Array.isArray(r.content)) return {};
   const text = r.content.find((part) => part?.type === 'text' && typeof part.text === 'string')?.text;
   if (!text) return {};
   try {
     const parsed = JSON.parse(text);
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    return parsed && typeof parsed === 'object'
+      ? displayProjection(/** @type {Record<string, any>} */ (parsed))
+      : {};
   } catch {
     return {};
   }
-}
-
-/** @typedef {{ severity?: string, file?: string, line?: number, summary?: string }} DisplayFinding */
-
-/**
- * @param {unknown} finding
- * @returns {DisplayFinding | null}
- */
-function normalizeDisplayFinding(finding) {
-  if (!finding || typeof finding !== 'object') return null;
-  const f = /** @type {Record<string, any>} */ (finding);
-  const severity = (f.class === 'blocking' || f.class === 'follow-up') ? f.class : f.severity;
-  if (severity !== 'blocking' && severity !== 'follow-up') return null;
-  return { ...f, severity, summary: typeof f.what === 'string' ? f.what : f.summary };
-}
-
-/**
- * @param {unknown} transcript
- * @returns {DisplayFinding[]}
- */
-function transcriptFindings(transcript) {
-  if (typeof transcript !== 'string') return [];
-  const lines = transcript.split('\n');
-  const start = lines.findIndex((line) => /^\s*findings:\s*$/.test(line));
-  if (start === -1) return [];
-
-  /** @type {DisplayFinding[]} */
-  const findings = [];
-  /** @type {DisplayFinding | null} */
-  let current = null;
-
-  for (const line of lines.slice(start + 1)) {
-    if (/^\S[^:]*:\s*/.test(line) || /^\s*```/.test(line)) break;
-
-    const item = line.match(/^\s*-\s*(?:file:\s*(.+?)\s*)?$/);
-    if (item) {
-      if (current) findings.push(current);
-      current = item[1] ? { file: item[1] } : {};
-      continue;
-    }
-
-    const field = line.match(/^\s*(file|line|class|severity|what|summary):\s*(.+?)\s*$/);
-    if (!field || !current) continue;
-    const [, key, value] = field;
-    if (key === 'line') current.line = Number(value);
-    else if (key === 'file') current.file = value;
-    else if (key === 'class' || key === 'severity') current.severity = value;
-    else current.summary = value;
-  }
-
-  if (current) findings.push(current);
-  return findings.filter((finding) => finding.severity === 'blocking' || finding.severity === 'follow-up');
-}
-
-/**
- * @param {Record<string, any>} details
- * @returns {DisplayFinding[]}
- */
-function displayFindings(details) {
-  if (!Array.isArray(details.findings)) return transcriptFindings(details.transcript);
-  return details.findings.reduce((findings, finding) => {
-    const display = normalizeDisplayFinding(finding);
-    if (display) findings.push(display);
-    return findings;
-  }, /** @type {DisplayFinding[]} */ ([]));
 }
 
 /**
@@ -134,23 +150,32 @@ function displayFindings(details) {
  */
 function compactDispatchLine(details) {
   const stage = typeof details.stage === 'string' ? details.stage : 'cook_dispatch';
-  const findings = displayFindings(details);
-  const blocking = findings.filter((finding) => finding?.severity === 'blocking').length;
-  const followUp = findings.filter((finding) => finding?.severity === 'follow-up').length;
-  const counts = findings.length ? `blocking ${blocking}, follow-up ${followUp}` : '';
-  const status = [details.status, details.verdict, details.outcome, details.result]
+  const status = [details.verdict, details.result]
     .find((value) => typeof value === 'string' && value.trim()) || 'complete';
+
+  if (stage === 'plan' && details.escalation) {
+    return `${stage}: ${status} | ${details.escalation.fork} (${details.escalation.options.join(', ')})`;
+  }
+  if (stage === 'implement' && details.kickback) {
+    return `${stage}: ${status} to ${details.kickback.to} | ${details.kickback.reason}`;
+  }
+  if (stage === 'refactor') {
+    const summary = details.summary.join('; ');
+    return summary ? `${stage}: ${status} | ${summary}` : `${stage}: ${status}`;
+  }
+  if (stage === 'refute') {
+    return `${stage}: ${status} | ${details.rationale}`;
+  }
+
+  const findings = Array.isArray(details.findings) ? details.findings : [];
+  const blocking = findings.filter((finding) => finding.class === 'blocking').length;
+  const followUp = findings.filter((finding) => finding.class === 'follow-up').length;
+  const counts = findings.length ? `blocking ${blocking}, follow-up ${followUp}` : status;
   const summary = findings
-    .map((finding) => {
-      const file = typeof finding?.file === 'string' ? finding.file : undefined;
-      const line = typeof finding?.line === 'number' ? `:${finding.line}` : '';
-      const text = typeof finding?.summary === 'string' ? finding.summary : '';
-      return file ? `${file}${line} ${text}`.trim() : text;
-    })
+    .map((finding) => `${finding.file}:${finding.line} ${finding.what}`.trim())
     .filter(Boolean)
     .join('; ');
-  const headline = `${stage}: ${counts || status}`;
-  return summary ? `${headline} | ${summary}` : headline;
+  return summary ? `${stage}: ${counts} | ${summary}` : `${stage}: ${counts}`;
 }
 
 /**
@@ -161,7 +186,7 @@ function renderDispatchResult(result, opts) {
   const details = dispatchDetails(result);
   const stage = typeof details.stage === 'string' ? details.stage : 'cook_dispatch';
   if (opts.isPartial) return textComponent([`${stage}: running`]);
-  if (opts.expanded) return textComponent(formatDispatchResult(details).split('\n'), { wrap: true });
+  if (opts.expanded) return textComponent(JSON.stringify(details, null, 2).split('\n'), { wrap: true });
   return textComponent([compactDispatchLine(details)]);
 }
 
@@ -233,19 +258,22 @@ export default function jeffExtension(pi, dependencies = {}) {
         sdk: pi.pi,
       });
 
+      let specialistReturn;
+      try {
+        specialistReturn = JSON.parse(result.transcript);
+        validateSpecialistReturn(params.stage, specialistReturn);
+      } catch {
+        throw new Error('cook_dispatch: specialist return is invalid');
+      }
+
       if (params.taskId) {
-        let specialistReturn;
-        try {
-          specialistReturn = JSON.parse(result.transcript);
-        } catch {
-          throw new Error('cook_dispatch: specialist return is not strict JSON [record-json]');
-        }
         await recordSpecialistReturn(ctx.cwd, params.stage, params.taskId, specialistReturn, result.agent_id);
       }
 
+      const details = displayProjection(specialistReturn);
       return {
-        content: [{ type: 'text', text: formatDispatchResult(result) }],
-        details: result,
+        content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
+        details,
       };
     },
   });
