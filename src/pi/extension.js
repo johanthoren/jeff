@@ -8,12 +8,20 @@ import { validateSpecialistReturn } from '../core/record-contract.js';
 
 const DISPLAY_ITEM_LIMIT = 8;
 const DISPLAY_TEXT_LIMIT = 96;
+const DISPLAY_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/u;
 
 /** @param {unknown} value */
 function displayText(value) {
   if (typeof value !== 'string') return '';
-  const text = value.toWellFormed().replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/gu, '');
-  return Array.from(text).slice(0, DISPLAY_TEXT_LIMIT).join('');
+  let text = '';
+  let characterCount = 0;
+  for (const character of value) {
+    if (DISPLAY_CONTROL.test(character)) continue;
+    text += character.toWellFormed();
+    characterCount += 1;
+    if (characterCount === DISPLAY_TEXT_LIMIT) break;
+  }
+  return text;
 }
 
 /** @param {unknown} values */
