@@ -1,5 +1,6 @@
 // @ts-check
 
+import { truncateToVisualLines } from '@earendil-works/pi-coding-agent';
 import { readConfig } from '../core/store.js';
 import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
 import { recordSpecialistReturn } from '../core/record.js';
@@ -10,9 +11,9 @@ const DISPLAY_TEXT_LIMIT = 96;
 
 /** @param {unknown} value */
 function displayText(value) {
-  return typeof value === 'string'
-    ? value.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').slice(0, DISPLAY_TEXT_LIMIT)
-    : '';
+  if (typeof value !== 'string') return '';
+  const text = value.toWellFormed().replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/gu, '');
+  return Array.from(text).slice(0, DISPLAY_TEXT_LIMIT).join('');
 }
 
 /** @param {unknown} values */
@@ -100,13 +101,9 @@ function safeWidth(width) {
  */
 function fitLine(line, width, wrap) {
   const max = safeWidth(width);
-  const text = String(line);
-  if (!wrap) return [text.slice(0, max)];
   if (max === 0) return [''];
-
-  const chunks = [];
-  for (let i = 0; i < text.length; i += max) chunks.push(text.slice(i, i + max));
-  return chunks.length ? chunks : [''];
+  const lines = truncateToVisualLines(String(line).toWellFormed(), Number.MAX_SAFE_INTEGER, max).visualLines;
+  return wrap ? lines.filter((visualLine) => visualLine.trim()) : [lines[0] ?? ''];
 }
 
 /**
@@ -267,7 +264,11 @@ export default function jeffExtension(pi, dependencies = {}) {
       }
 
       if (params.taskId) {
-        await recordSpecialistReturn(ctx.cwd, params.stage, params.taskId, specialistReturn, result.agent_id);
+        try {
+          await recordSpecialistReturn(ctx.cwd, params.stage, params.taskId, specialistReturn, result.agent_id);
+        } catch {
+          throw new Error('cook_dispatch: specialist return could not be recorded');
+        }
       }
 
       const details = displayProjection(specialistReturn);

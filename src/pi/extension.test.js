@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { truncateToVisualLines } from '@earendil-works/pi-coding-agent';
 import jeffExtension, { formatDispatchResult } from './extension.js';
 
 /**
@@ -89,6 +90,41 @@ function specialistReturn(stage, overrides = {}) {
   return { ...returns[stage], ...overrides };
 }
 
+/** @param {Record<string, any>} returned @param {string} marker */
+function markPrivateReturnFields(returned, marker) {
+  const common = { ...returned, agent_id: marker };
+  switch (returned.stage) {
+    case 'plan':
+      return { ...common, slices: [marker], testFiles: [marker], redRun: { command: marker, output: marker } };
+    case 'implement':
+      return { ...common, files: [marker], greenRun: { command: marker, output: marker } };
+    case 'refactor':
+      return {
+        ...common,
+        files: [marker],
+        outsideDiff: [marker],
+        greenRun: { command: marker, output: marker },
+      };
+    case 'review':
+      return {
+        ...common,
+        acLedger: [{ ac: marker, claimed: 'write', rederived: 'write', ok: true }],
+        evidence: [{ command: marker, output: marker }],
+      };
+    case 'audit':
+      return {
+        ...common,
+        scan: { ...returned.scan, command: marker, reportPath: marker },
+        findings: returned.findings.map((finding) => ({ ...finding, cwe: marker })),
+        evidence: [{ command: marker, output: marker }],
+      };
+    case 'refute':
+      return { ...common, evidence: [{ command: marker, output: marker }] };
+    default:
+      return common;
+  }
+}
+
 /** @param {Record<string, any>} [overrides] */
 function completedDispatchResult(overrides = {}) {
   const raw = specialistReturn('review', overrides);
@@ -118,6 +154,18 @@ function renderDispatchLines(result, options = {}, width = 200) {
  */
 function renderDispatchResult(result, options = {}, width = 200) {
   return renderDispatchLines(result, options, width).join('\n');
+}
+
+/** @param {string[]} lines @param {number} width */
+function assertFitsPiWidth(lines, width) {
+  for (const line of lines) {
+    assert.equal(line, line.toWellFormed());
+    assert.doesNotMatch(line, /\uFFFD/u);
+    assert.equal(
+      truncateToVisualLines(line, Number.MAX_SAFE_INTEGER, width).visualLines.length,
+      1,
+    );
+  }
 }
 
 test('package.json exposes the Pi extension and cook skill package paths', async () => {
@@ -179,47 +227,52 @@ test('cook_dispatch parses and projects every specialist result across model and
   try {
     await mkdir(join(cwd, '.jeff'));
     await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
-    /** @type {[string, Record<string, any>, string, string[]][]} */
+    /** @type {[string, Record<string, any>, string, string[], string[]][]} */
     const cases = [
-      ['routine success', specialistReturn('implement'), 'green', ['implement', 'green']],
+      ['routine success', specialistReturn('implement'), 'green', ['implement', 'green'], ['result', 'stage']],
       ['plan escalation', specialistReturn('plan', {
         result: 'escalation',
         redRun: { command: null, output: 'Chef decision required' },
         escalation: { fork: 'Choose storage', options: ['disk', 'database'] },
-      }), 'Choose storage', ['plan', 'escalation', 'Choose storage', 'disk', 'database']],
+      }), 'Choose storage', ['plan', 'escalation', 'Choose storage', 'disk', 'database'], [
+        'escalation', 'result', 'stage',
+      ]],
       ['implement kickback', specialistReturn('implement', {
         result: 'kickback', files: [],
         greenRun: { command: null, output: 'Tests overfit the implementation' },
         kickback: { to: 'plan', reason: 'Tests overfit the implementation' },
-      }), 'Tests overfit', ['implement', 'kickback', 'plan', 'Tests overfit']],
-      ['refactor summary', specialistReturn('refactor'), 'Kept one projection', ['refactor', 'clean', 'Kept one projection']],
+      }), 'Tests overfit', ['implement', 'kickback', 'plan', 'Tests overfit'], ['kickback', 'result', 'stage']],
+      ['refactor summary', specialistReturn('refactor'), 'Kept one projection', [
+        'refactor', 'clean', 'Kept one projection',
+      ], ['result', 'stage', 'summary']],
       ['review findings', specialistReturn('review'), 'renderer returns raw JSON', [
         'review', 'needs-work', 'high', 'blocking', 'src/pi/extension.js', '12', 'implement',
         'renderer returns raw JSON', 'execution metadata reaches consumers',
-      ]],
+      ], ['findings', 'stage', 'verdict']],
       ['audit findings', specialistReturn('audit'), 'private child data is displayed', [
         'audit', 'needs-work', 'high', 'blocking', 'src/pi/extension.js', '247', 'implement',
         'private child data is displayed', 'raw result crosses the trust boundary',
-      ]],
+      ], ['findings', 'stage', 'verdict']],
       ['refute survives', specialistReturn('refute'), 'raw return is reachable', [
         'refute', 'review', 'src/pi/extension.js:247 raw result', 'survives', 'raw return is reachable',
-      ]],
+      ], ['finding', 'rationale', 'source', 'stage', 'verdict']],
       ['refute rejected', specialistReturn('refute', {
         verdict: 'refuted', rationale: 'The projection already omits the source field.',
       }), 'projection already omits', [
         'refute', 'review', 'src/pi/extension.js:247 raw result', 'refuted', 'projection already omits',
-      ]],
+      ], ['finding', 'rationale', 'source', 'stage', 'verdict']],
     ];
 
-    for (const [name, returned, expected, projected] of cases) {
+    for (const [name, returned, expected, projected, topLevelKeys] of cases) {
       await t.test(name, async () => {
         const privateMarker = `PRIVATE_${String(name).replaceAll(' ', '_').toUpperCase()}`;
+        const markedReturn = markPrivateReturnFields(returned, privateMarker);
         const tool = registeredDispatchTool({
           dispatchRoleSession: async () => ({
-            stage: returned.stage,
+            stage: markedReturn.stage,
             agent_id: privateMarker,
             brain: { provider: privateMarker, model: privateMarker, effort: privateMarker },
-            transcript: JSON.stringify(returned),
+            transcript: JSON.stringify(markedReturn),
             evidence: privateMarker,
             commands: privateMarker,
             diffs: privateMarker,
@@ -228,7 +281,7 @@ test('cook_dispatch parses and projects every specialist result across model and
         });
         const result = await tool.execute(
           'call-1',
-          { stage: returned.stage, brief: 'Project this result.' },
+          { stage: markedReturn.stage, brief: 'Project this result.' },
           undefined,
           undefined,
           { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
@@ -238,6 +291,19 @@ test('cook_dispatch parses and projects every specialist result across model and
         const expanded = renderDispatchResult(result, { expanded: true });
 
         assert.deepEqual(result.details, JSON.parse(content));
+        assert.deepEqual(result.details, JSON.parse(expanded));
+        assert.deepEqual(Object.keys(result.details).sort(), topLevelKeys);
+        if (result.details.escalation) {
+          assert.deepEqual(Object.keys(result.details.escalation).sort(), ['fork', 'options']);
+        }
+        if (result.details.kickback) {
+          assert.deepEqual(Object.keys(result.details.kickback).sort(), ['reason', 'to']);
+        }
+        for (const finding of result.details.findings ?? []) {
+          assert.deepEqual(Object.keys(finding).sort(), [
+            'class', 'file', 'kickTo', 'line', 'severity', 'what', 'why',
+          ]);
+        }
         const detailsText = JSON.stringify(result.details);
         for (const surface of [content, collapsed, expanded, detailsText]) {
           assert.match(surface, new RegExp(expected, 'i'));
@@ -265,6 +331,7 @@ test('cook_dispatch fails closed before display for malformed, non-object, and n
       ['JSON scalar', '42'],
       ['JSON array', '[]'],
       ['unknown return field', JSON.stringify({ ...specialistReturn('implement'), unknown: 'PRIVATE_PAYLOAD' })],
+      ['otherwise-valid wrong-stage return', JSON.stringify(specialistReturn('plan'))],
     ];
 
     for (const [name, transcript] of cases) {
@@ -302,6 +369,7 @@ test('cook_dispatch fails closed before display for malformed, non-object, and n
 });
 
 test('display projection omits forbidden fields and bounds allowed collections, scalars, and total output', () => {
+  const presentationControls = '\u061c\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069';
   const forbidden = [
     'PRIVATE_AGENT', 'PRIVATE_PROVIDER', 'PRIVATE_MODEL', 'PRIVATE_EFFORT', 'PRIVATE_TRANSCRIPT',
     'PRIVATE_EVIDENCE', 'PRIVATE_COMMAND', 'PRIVATE_OUTPUT', 'PRIVATE_DIFF', 'PRIVATE_FILE',
@@ -314,7 +382,7 @@ test('display projection omits forbidden fields and bounds allowed collections, 
     line: index + 1,
     kickTo: 'implement',
     what: index === 0
-      ? `SAFE ACTIONABLE FINDING \u001b[31m${'x'.repeat(100_000)}OVERSIZED_TAIL`
+      ? `SAFE ACTIONABLE FINDING café 界 😀\u001b[31m${presentationControls}${'x'.repeat(100_000)}OVERSIZED_TAIL`
       : (index === 999 ? 'OVERSIZED_TAIL' : `finding ${index}`),
     why: 'SAFE ROUTING REASON',
   }));
@@ -347,8 +415,11 @@ test('display projection omits forbidden fields and bounds allowed collections, 
   assert.ok(details.findings.length < findings.length);
   for (const surface of surfaces) {
     assert.match(surface, /SAFE ACTIONABLE FINDING|SAFE ROUTING REASON/);
-    assert.doesNotMatch(surface, /\u001b/);
+    assert.doesNotMatch(surface, /[\p{Bidi_Control}\u2028\u2029\u001b]/u);
     for (const marker of forbidden) assert.doesNotMatch(surface, new RegExp(marker));
+  }
+  for (const surface of [text, renderDispatchResult(result, { expanded: true }), JSON.stringify(details)]) {
+    assert.match(surface, /café 界 😀/u);
   }
 });
 
@@ -433,7 +504,7 @@ test('cook_dispatch renderCall shows the requested running stage compactly', () 
   assert.doesNotMatch(output, /read every file|long detailed verdict/);
 });
 
-test('cook_dispatch custom renderers keep every line within the requested width', () => {
+test('display projection keeps truncated Unicode well formed', () => {
   const result = completedDispatchResult({
     findings: [{
       severity: 'high',
@@ -441,18 +512,34 @@ test('cook_dispatch custom renderers keep every line within the requested width'
       file: 'src/pi/extension.js',
       line: 12,
       kickTo: 'implement',
-      what: `renderer returns ${'x'.repeat(120)}`,
-      why: 'raw output is private',
+      what: 'boundary check',
+      why: `${'x'.repeat(95)}😀 mixed-boundary emoji`,
+    }],
+  });
+  const why = result.details.findings[0].why;
+
+  assert.equal(why, why.toWellFormed());
+  assert.doesNotMatch(why, /\uFFFD/u);
+});
+
+test('cook_dispatch custom renderers fit Pi terminal columns for CJK and emoji', () => {
+  const result = completedDispatchResult({
+    findings: [{
+      severity: 'high',
+      class: 'blocking',
+      file: 'src/pi/extension.js',
+      line: 12,
+      kickTo: 'implement',
+      what: '界😀'.repeat(60),
+      why: 'mixed Unicode stays readable',
     }],
   });
   const tool = registeredDispatchTool();
 
-  for (const line of renderDispatchLines(result, {}, 32)) assert.ok(line.length <= 32);
-  for (const line of renderDispatchLines(result, { expanded: true }, 32)) assert.ok(line.length <= 32);
-  for (const line of renderDispatchLines(result, { isPartial: true }, 10)) assert.ok(line.length <= 10);
-  for (const line of tool.renderCall({ stage: 'review', brief: 'x'.repeat(120) }, {}, {}).render(10)) {
-    assert.ok(line.length <= 10);
-  }
+  assertFitsPiWidth(renderDispatchLines(result, {}, 12), 12);
+  assertFitsPiWidth(renderDispatchLines(result, { expanded: true }, 12), 12);
+  assertFitsPiWidth(renderDispatchLines(result, { isPartial: true }, 10), 10);
+  assertFitsPiWidth(tool.renderCall({ stage: 'review', brief: '界😀'.repeat(60) }, {}, {}).render(10), 10);
 });
 
 test('an empty finding list renders useful compact output instead of an empty box', () => {
@@ -742,7 +829,13 @@ test('cook_dispatch rejects mismatched claimed identity without changing ledger 
         undefined,
         { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
       ),
-      /\[record-identity\] claimed agent claimed-plan-agent does not match observed agent observed-plan-agent/,
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /^cook_dispatch: .*record/i);
+        assert.ok(error.message.length <= 200);
+        assert.doesNotMatch(error.message, /claimed-plan-agent|observed-plan-agent|\[record-/);
+        return true;
+      },
     );
     assert.equal(await readFile(taskFile, 'utf8'), before);
   } finally {
