@@ -10,6 +10,11 @@ const DISPLAY_ITEM_LIMIT = 8;
 const DISPLAY_TEXT_LIMIT = 96;
 const DISPLAY_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/u;
 
+/** @param {string} value */
+function makeWellFormed(value) {
+  return value.replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD');
+}
+
 /** @param {unknown} value */
 function displayText(value) {
   if (typeof value !== 'string') return '';
@@ -17,7 +22,7 @@ function displayText(value) {
   let characterCount = 0;
   for (const character of value) {
     if (DISPLAY_CONTROL.test(character)) continue;
-    text += character.toWellFormed();
+    text += makeWellFormed(character);
     characterCount += 1;
     if (characterCount === DISPLAY_TEXT_LIMIT) break;
   }
@@ -110,7 +115,7 @@ function safeWidth(width) {
 function fitLine(line, width, wrap) {
   const max = safeWidth(width);
   if (max === 0) return [''];
-  const lines = truncateToVisualLines(String(line).toWellFormed(), Number.MAX_SAFE_INTEGER, max).visualLines;
+  const lines = truncateToVisualLines(makeWellFormed(String(line)), Number.MAX_SAFE_INTEGER, max).visualLines;
   return wrap ? lines.filter((visualLine) => visualLine.trim()) : [lines[0] ?? ''];
 }
 

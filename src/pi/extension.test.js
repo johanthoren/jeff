@@ -90,7 +90,11 @@ function specialistReturn(stage, overrides = {}) {
   return { ...returns[stage], ...overrides };
 }
 
-/** @param {Record<string, any>} returned @param {string} marker */
+/**
+ * @param {Record<string, any>} returned
+ * @param {string} marker
+ * @returns {Record<string, any>}
+ */
 function markPrivateReturnFields(returned, marker) {
   const common = { ...returned, agent_id: marker };
   switch (returned.stage) {
@@ -115,7 +119,7 @@ function markPrivateReturnFields(returned, marker) {
       return {
         ...common,
         scan: { ...returned.scan, command: marker, reportPath: marker },
-        findings: returned.findings.map((finding) => ({ ...finding, cwe: marker })),
+        findings: returned.findings.map((/** @type {Record<string, any>} */ finding) => ({ ...finding, cwe: marker })),
         evidence: [{ command: marker, output: marker }],
       };
     case 'refute':
@@ -159,7 +163,7 @@ function renderDispatchResult(result, options = {}, width = 200) {
 /** @param {string[]} lines @param {number} width */
 function assertFitsPiWidth(lines, width) {
   for (const line of lines) {
-    assert.equal(line, line.toWellFormed());
+    assert.doesNotThrow(() => encodeURIComponent(line));
     assert.doesNotMatch(line, /\uFFFD/u);
     assert.equal(
       truncateToVisualLines(line, Number.MAX_SAFE_INTEGER, width).visualLines.length,
@@ -518,7 +522,7 @@ test('display projection keeps truncated Unicode well formed', () => {
   });
   const why = result.details.findings[0].why;
 
-  assert.equal(why, why.toWellFormed());
+  assert.doesNotThrow(() => encodeURIComponent(why));
   assert.doesNotMatch(why, /\uFFFD/u);
 });
 
