@@ -52,8 +52,10 @@ Full method in [AGENTS.md](AGENTS.md).
 
 ## Install
 
-Jeff is one versioned package with separate host install paths. Install only the
-shells you use; host installs do not activate one another.
+Jeff is one versioned package with separate host install paths. Its operational
+commands run through the bundled Node CLI and require no `jq`. The Pi install
+also brings the dispatch SDK used when the host does not inject `pi.pi`.
+Node.js `>=22.19.0` is required by the bundled Pi dispatch SDK.
 
 ### Pi — recommended stable path
 

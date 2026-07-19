@@ -22,13 +22,13 @@
  * not a user path).
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import { lstatSync, statSync, realpathSync, readlinkSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { writeFileAtomic } from './lifecycle.js';
-import { readMode } from './store.js';
+import { assertStoreContained, collectTasks, readMode, writeTask } from './store.js';
 
 /** @typedef {{ code: number, stdout: string[], stderr: string[] }} Verdict */
 
@@ -120,7 +120,7 @@ function isFile(p) {
  * @param {string} ref
  * @returns {string | null}
  */
-function resolveRefPath(root, ref) {
+export function resolveRefPath(root, ref) {
   const rootdir = resolveDir(root);
   if (rootdir === null) return null;
 
@@ -476,7 +476,7 @@ function ghDie(res, enoentMsg, failMsg) {
  * @param {string} ref
  * @returns {string | Verdict}
  */
-function ghFetchBody(ref) {
+export function ghFetchBody(ref) {
   const res = spawnSync('gh', ['issue', 'view', ref, '--json', 'body', '-q', '.body', '--'], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
@@ -566,4 +566,154 @@ export async function planIssueOp(root, op, ref, ...rest) {
     default:
       return die(`unknown plan subcommand: ${op}`);
   }
+}
+
+/**
+ * POSIX `cksum` for the historical, deterministic lite-ledger directory suffix.
+ *
+ * @param {string} value
+ */
+function cksum(value) {
+  const bytes = Buffer.from(value);
+  let crc = 0;
+  const update = (/** @type {number} */ byte) => {
+    crc = (crc ^ (byte << 24)) >>> 0;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = ((crc & 0x80000000) !== 0 ? (crc << 1) ^ 0x04c11db7 : crc << 1) >>> 0;
+    }
+  };
+  for (const byte of bytes) update(byte);
+  for (let length = bytes.length; length > 0; length = Math.floor(length / 256)) update(length & 0xff);
+  return (~crc) >>> 0;
+}
+
+/** @param {string} ref @param {any} ledger @returns {Verdict} */
+function existingLedgerVerdict(ref, ledger) {
+  if (ledger.externalRef !== ref) {
+    return die(`cook on: ledger collision at ${ledger._dir}: already owned by ${ledger.externalRef ?? 'another ref'}`);
+  }
+  return {
+    code: 0,
+    stdout: [`cook: already adopted: resuming ledger for ${ref} (${ledger._dir}).`],
+    stderr: [],
+  };
+}
+
+/**
+ * Adopt a markdown file or GitHub issue as a lite task ledger.
+ *
+ * @param {string} root
+ * @param {...string} args
+ * @returns {Promise<Verdict>}
+ */
+export async function adoptPlan(root, ...args) {
+  try {
+    await assertStoreContained(root);
+  } catch (error) {
+    return die(/** @type {Error} */ (error).message);
+  }
+  if ((await readMode(root)) !== 'lite') {
+    return die('`cook on` is a lite-mode command; run `cook lite` first (full mode tracks tasks in the registry).');
+  }
+  if (args.length === 0 || args[0] === '') return die('usage: cook on <ref>');
+  if (args.length > 1) return die(`on: unexpected argument '${args[1]}'`);
+  const ref = args[0];
+  const issueRef = isIssueRef(ref);
+
+  if (issueRef) {
+    const invalid = issueRefValidate(ref);
+    if (invalid !== null) return invalid;
+  } else {
+    const filePart = ref.split('#', 1)[0];
+    if (filePart === '') return die(`cook on: invalid ref (no file part): ${ref}`);
+    if (resolveRefPath(root, filePart) === null) {
+      return die(`cook on: ref must resolve to an existing file inside the repo: ${ref}`);
+    }
+  }
+
+  let tasks;
+  try {
+    tasks = await collectTasks(root);
+  } catch {
+    return die('cook on: could not read existing ledgers.');
+  }
+  const existing = tasks.find((task) => task.externalRef === ref);
+  if (existing) return existingLedgerVerdict(ref, existing);
+
+  const base = ref.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 160) || 'task';
+  const hash = cksum(ref);
+  const tasksDir = join(root, '.jeff', 'tasks');
+  const taskDir = join(tasksDir, `lite-${base}-${hash}`);
+  try {
+    await assertStoreContained(root, [taskDir]);
+  } catch (error) {
+    return die(/** @type {Error} */ (error).message);
+  }
+  const taskFile = `.jeff/tasks/${basename(taskDir)}/task.json`;
+  const collision = tasks.find((task) => task._dir === taskFile);
+  if (collision) return existingLedgerVerdict(ref, collision);
+  if (issueRef) {
+    const fetched = ghFetchBody(ref);
+    if (typeof fetched !== 'string') return fetched;
+  }
+
+  const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const task = {
+    schemaVersion: 1,
+    id: ref,
+    externalRef: ref,
+    slug: 'lite-adopt',
+    title: ref,
+    status: 'pending',
+    stage: 'capture',
+    priority: 'p2',
+    deps: [],
+    complexity: 'complex',
+    createdAt: now,
+    updatedAt: now,
+    agents: {
+      implementer_agent_id: null,
+      reviewer_agent_id: null,
+      reviewer2_agent_id: null,
+      audit_agent_id: null,
+    },
+    tests: { authored_by_agent_id: null, green: false, evidence: [] },
+    review: { verdict: null, reviewer_agent_id: null, evidence: [] },
+    audit: { required: false, verdict: 'na', audit_agent_id: null, evidence: [] },
+    commits: [],
+    kickbacks: [],
+    blockedReason: null,
+    abandonReason: null,
+  };
+  try {
+    await mkdir(tasksDir, { recursive: true });
+  } catch {
+    return die('cook on: could not initialize ledger.');
+  }
+  try {
+    await mkdir(taskDir);
+  } catch (error) {
+    if (/** @type {any} */ (error).code !== 'EEXIST') {
+      return die('cook on: could not initialize ledger.');
+    }
+    let currentTasks;
+    try {
+      currentTasks = await collectTasks(root);
+    } catch {
+      return die('cook on: could not read existing ledgers.');
+    }
+    const owner = currentTasks.find((currentTask) => currentTask._dir === taskFile);
+    if (owner) return existingLedgerVerdict(ref, owner);
+    return die(`cook on: ledger initialization in progress at ${taskFile}.`);
+  }
+  try {
+    await writeTask(taskDir, /** @type {any} */ (task));
+  } catch {
+    return die('cook on: could not initialize ledger.');
+  }
+  return {
+    code: 0,
+    stdout: [`cook: adopted ${ref} → ${taskDir.slice(root.length + 1)}/task.json (lite, stage:capture).`],
+    stderr: [],
+  };
 }

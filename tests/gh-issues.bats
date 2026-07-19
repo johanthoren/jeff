@@ -39,7 +39,8 @@
 REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
 setup_file() { cook_hermetic_git; }
-COOK="$REPO/skills/cook/scripts/cook.sh"
+COOK="$REPO/src/cli/cook.js"
+NODE_BIN="$(command -v node)"
 
 # Fixture issue number and URL used throughout.
 FIXTURE_ISSUE_NUM=42
@@ -175,14 +176,14 @@ teardown() {
 
 # Shorthand: run cook with $TMP as COOK_ROOT and stub gh on PATH.
 cook() {
-  PATH="$GH_STUB_PATH" COOK_ROOT="$TMP" "$COOK" "$@"
+  PATH="$GH_STUB_PATH" COOK_ROOT="$TMP" "$NODE_BIN" "$COOK" "$@"
 }
 
 # bake_no_gh: run cook with NO gh on PATH (for degraded-absent tests).
 bake_no_gh() {
   local no_gh_path
   no_gh_path="$(mktemp -d)"
-  PATH="$no_gh_path:/usr/bin:/bin" COOK_ROOT="$TMP" "$COOK" "$@"
+  PATH="$no_gh_path" COOK_ROOT="$TMP" "$NODE_BIN" "$COOK" "$@"
   local rc=$?
   rm -rf "$no_gh_path"
   return $rc
@@ -190,7 +191,7 @@ bake_no_gh() {
 
 # bake_fail_view: run cook with gh stub that exits non-zero on issue view.
 bake_fail_view() {
-  GH_STUB_FAIL_VIEW=1 PATH="$GH_STUB_PATH" COOK_ROOT="$TMP" "$COOK" "$@"
+  GH_STUB_FAIL_VIEW=1 PATH="$GH_STUB_PATH" COOK_ROOT="$TMP" "$NODE_BIN" "$COOK" "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -430,8 +431,7 @@ gh_log_not_contains() {
 
   run bake_no_gh on "#${FIXTURE_ISSUE_NUM}"
   [ "$status" -ne 0 ]
-  # The output must not be empty: a message is required.
-  [ -n "$output" ]
+  [ "$output" = 'cook: cook: `gh` is required to read issue #42 but was not found on PATH (install the GitHub CLI, then retry).' ]
 }
 
 # ---------------------------------------------------------------------------

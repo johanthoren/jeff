@@ -1,10 +1,9 @@
 // @ts-check
 
-import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync, lstatSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { readMode, readConfig } from './store.js';
+import { readProfile, readMode, readConfig } from './store.js';
 import { git, treeDirty, testRunsLogPath } from './git.js';
 import { updateTask } from './record.js';
 
@@ -22,12 +21,8 @@ import { updateTask } from './record.js';
  */
 async function resolveCommand(root, mode) {
   if (mode === 'lite') {
-    let profile;
-    try {
-      profile = await readFile(join(root, '.jeff', 'profile.md'), 'utf8');
-    } catch {
-      return '';
-    }
+    const profile = await readProfile(root).catch(() => '');
+    if (!profile) return '';
     // Port of `sed -n 's/^Test command:[^`]*`\([^`]*\)`.*/\1/p' | head -1`:
     // the first `Test command:` line's first backtick-delimited span.
     for (const line of profile.split('\n')) {

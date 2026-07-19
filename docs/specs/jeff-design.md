@@ -80,10 +80,10 @@ validator mechanically enforces the current schema, separation, completion,
 gate, mode, and convergence invariants documented in the canonical schema
 reference.
 
-`skills/cook/scripts/cook.sh` remains a portable Bash + `jq` compatibility
-wrapper and temporary transition oracle. It preserves parity fixtures and still
-hosts verbs that have not moved, but its duplicated assertions do not define
-schema or validation truth. The post-`#18` one-core cutover is tracked as `#61`.
+`src/cli/cook.js` is the sole operational CLI. The retired Bash implementation
+is retained only in test fixtures when a deterministic historical oracle is
+needed; it is neither installed nor included in the npm payload. Checked-JS
+under `src/core/` owns runtime behavior and validation.
 
 Jeff runs `cook validate` before every commit, and CI runs it on push. It proves
 that separation and completeness records satisfy the contract; fresh specialists
@@ -91,12 +91,11 @@ still judge whether the spec and implementation are good.
 
 ## 8. Commands
 
-The checked-JS entry point currently implements `validate`, `ls`, `status`,
-`show`, `verify`, `doctor`, `init`, `flavor`, `baseline check`, and
-`plan section|check|append`. Its header and dispatch in `src/cli/cook.js` are the
-source of truth for that verb set. `skills/cook/SKILL.md` owns request routing and
-the complete operational procedure; the Bash wrapper supplies compatibility and
-the remaining transition verbs until `#61`.
+The checked-JS entry point implements the complete operational surface:
+`validate`, `verify`, `record`, `baseline check`, `ls`, `status`, `show`,
+`init`, `lite`, `on`, `plan section|check|append`, `indiff`, `deinit`,
+`flavor`, `profile`, `doctor`, and help routing. Its header and dispatch in
+`src/cli/cook.js` are the source of truth for the verb set.
 
 ## 9. Ambient entry
 

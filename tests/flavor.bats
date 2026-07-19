@@ -6,7 +6,7 @@
 REPO="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 load test_helper
 setup_file() { cook_hermetic_git; }
-COOK="$REPO/skills/cook/scripts/cook.sh"
+COOK="$REPO/src/cli/cook.js"
 
 setup() {
   TMP="$(mktemp -d)"

@@ -3,7 +3,7 @@
 import { readFile, lstat, mkdir, realpath, rmdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { collectTasks, readMode, readTask, writeTask } from './store.js';
+import { assertStoreContained, collectTasks, readMode, readTask, writeTask } from './store.js';
 import { git, treeDirty } from './git.js';
 import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
@@ -490,18 +490,14 @@ function escapes(parent, child) {
   return path === '..' || path.startsWith(`..${sep}`);
 }
 
-/** @param {string} root */
-async function assertStoreContained(root) {
-  const rootPath = await realpath(root);
-  const jeffPath = join(root, '.jeff');
-  if ((await lstat(jeffPath)).isSymbolicLink()) throw new Error('[record-task] .jeff symlink escapes repository');
-  const actualJeff = await realpath(jeffPath);
-  if (escapes(rootPath, actualJeff)) throw new Error('[record-task] .jeff is outside repository');
-}
 
 /** @param {string} root @param {() => Promise<any>} operation */
 async function withStoreLock(root, operation) {
-  await assertStoreContained(root);
+  try {
+    await assertStoreContained(root);
+  } catch (error) {
+    throw new Error(`[record-task] ${/** @type {Error} */ (error).message}`);
+  }
   const lock = join(root, '.jeff', '.record-lock');
   let acquired = false;
   for (let attempt = 0; attempt < RECORD_LOCK_ATTEMPTS; attempt += 1) {
@@ -546,7 +542,7 @@ export async function updateTask(root, id, update, options = {}) {
   return withStoreLock(root, async () => {
     const tasks = await collectTasks(root);
     const { taskDir, taskPath } = await locateTask(root, id, tasks);
-    const task = await readTask(taskDir);
+    const task = await readTask(taskDir, root);
     const candidate = update(task);
     if (task.status !== 'done' && candidate.status === 'done') {
       const gate = candidate.tests?.gate;

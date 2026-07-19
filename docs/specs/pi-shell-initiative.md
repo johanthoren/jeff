@@ -17,9 +17,9 @@ only launch a specialist and return its result; the method, stage contracts,
 and validation rules remain shared.
 
 The checked-JS Node core under `src/core/`, exposed through `src/cli/cook.js`,
-is authoritative for validation. `skills/cook/scripts/cook.sh` remains only a
-temporary transition oracle for parity and verbs not yet ported. `#61` is the
-remaining one-core cutover. `.jeff/BACKLOG.md` owns the live roadmap.
+owns the complete operational CLI. The retired shell implementation served only
+as a bounded transition oracle while unchanged behavior moved to Node.
+`.jeff/BACKLOG.md` owns the live roadmap.
 
 ## 2. Constraints retained in the shipped design
 
@@ -29,8 +29,8 @@ remaining one-core cutover. `.jeff/BACKLOG.md` owns the live roadmap.
 3. **One model, host-native effort.** Every specialist inherits the
    orchestrator provider and model. Pi and Claude Code apply role-frontmatter
    effort where supported; Codex children inherit orchestrator effort.
-4. **One authoritative core.** Checked-JS Node owns validation truth. Bash is a
-   bounded transition oracle, not a competing architecture.
+4. **One authoritative core.** Checked-JS Node owns CLI and validation truth;
+   transition-only shell parity machinery is not shipped.
 5. **One stage-effort definition.** `agents/cook-*.md` frontmatter owns role
    effort. There are no model aliases, provider rankings, fallbacks, or
    stage-specific model selectors.
@@ -92,10 +92,9 @@ The core shipped as plain ESM JavaScript with JSDoc types, checked by
 bundler, and no committed `dist/`. Every host runs the checked-in source.
 
 The original proposal expected Bash and `jq` to disappear as part of the same
-initiative. The delivered boundary is narrower and safer: checked-JS Node is
-already authoritative for validation, while the Bash wrapper remains a frozen
-oracle until `#61` completes the remaining cutover. That temporary
-duplication is transition evidence, not a second source of truth.
+initiative. The final cutover removed both from the operational path after the
+retained differential suites proved unchanged behavior. Host adapters still
+own only launch and result collection.
 
 ## 6. Historical influences and cuts
 
@@ -111,7 +110,8 @@ the slower validation foundation.
 
 ## 7. Follow-on work
 
-- `#61`: finish the one-core Node cutover and retire the Bash
-  transition oracle only after parity and host smoke tests.
+- `#61`: completed the one-core Node cutover after deterministic parity. Native
+  host smoke results are release evidence, recorded per host rather than assumed
+  from the in-repository test suite.
 - `#56`: retain the Codex-native UX follow-up without changing model routing or
   the shared method.

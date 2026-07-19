@@ -4,6 +4,9 @@
   "description": "Jeff is a model-native quality control plane with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates.",
   "type": "module",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/johanthoren/jeff.git"
@@ -33,13 +36,8 @@
     "extensions": ["./src/pi/extension.js"],
     "skills": ["./skills"]
   },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    }
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.10"
   },
   "devDependencies": {
     "@types/node": "20.19.43",

@@ -7,8 +7,8 @@
 #   AC2a: non-commit Bash command in active project   → pass-through, validator NOT run
 #   AC2b: git commit + no .jeff/config.json      → pass-through allow
 #   AC3 : git commit + active lite-mode invalid store → deny (mode-aware; same deny contract)
-#   AC4-open-jq     : jq unavailable to validator    → fail-open allow
-#   AC4-open-missing: cook.sh missing from PLUGIN_ROOT → fail-open allow
+#   AC4-no-jq      : jq absent from PATH does not disable validation
+#   AC4-open-missing: Node CLI missing from PLUGIN_ROOT → fail-open allow
 #   AC6-mut: fixture FS unchanged after deny + allow runs
 #
 # Cycle-2 additions (audit F1/F2/F3 findings):
@@ -285,49 +285,41 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# AC4-open-jq: jq unavailable → fail-open allow
-# Stub cook.sh that exits 3 (mimics require_jq path: no terminal verdict).
-# RED: hook script does not exist yet
+# AC4-no-jq: jq absent from PATH must not disable the Node validator.
 # ---------------------------------------------------------------------------
 
-@test "gate/AC4-open-jq: validator exits 3 (jq unavailable) -> fail-open allow" {
+@test "gate/AC4-no-jq: invalid state is denied when jq is absent from PATH" {
   write_config_full
   write_invalid_done_task "$BK/tasks/0001-invalid"
 
-  # Stub cook.sh that exits 3 (mimics require_jq failure: no terminal verdict)
-  local fake_root
-  fake_root="$(mktemp -d)"
-  mkdir -p "$fake_root/skills/cook/scripts"
-  cat > "$fake_root/skills/cook/scripts/cook.sh" <<'EOF'
-#!/bin/sh
-echo "cook: \`jq\` is required but was not found on PATH." >&2
-exit 3
-EOF
-  chmod +x "$fake_root/skills/cook/scripts/cook.sh"
-
-  local p
+  local no_jq_bin p
+  no_jq_bin="$(mktemp -d)"
+  ln -s "$(command -v bash)" "$no_jq_bin/bash"
+  ln -s "$(command -v node)" "$no_jq_bin/node"
+  ln -s "$(command -v cat)" "$no_jq_bin/cat"
+  ln -s "$(command -v grep)" "$no_jq_bin/grep"
+  ln -s "$(command -v tail)" "$no_jq_bin/tail"
   p="$(payload "git commit -m 'release'")"
-  run bash -c "printf '%s' '$p' | CLAUDE_PLUGIN_ROOT=\"$fake_root\" \"$HOOK\""
 
-  # Fail-open: hook must exit 0 with no deny
+  run bash -c "printf '%s' '$p' | PATH=\"$no_jq_bin\" CLAUDE_PLUGIN_ROOT=\"$REPO\" \"$HOOK\""
+
   [ "$status" -eq 0 ]
   local decision
   decision="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.permissionDecision' 2>/dev/null)"
-  [ "$decision" != "deny" ]
+  [ "$decision" = "deny" ]
 
-  rm -rf "$fake_root"
+  rm -rf "$no_jq_bin"
 }
 
 # ---------------------------------------------------------------------------
-# AC4-open-missing: cook.sh absent from PLUGIN_ROOT → fail-open allow (exec 127)
-# RED: hook script does not exist yet
+# AC4-open-missing: Node CLI absent from PLUGIN_ROOT → fail-open allow (exec 127)
 # ---------------------------------------------------------------------------
 
-@test "gate/AC4-open-missing: cook.sh missing from PLUGIN_ROOT -> fail-open allow" {
+@test "gate/AC4-open-missing: Node CLI missing from PLUGIN_ROOT -> fail-open allow" {
   write_config_full
   write_invalid_done_task "$BK/tasks/0001-invalid"
 
-  # Point PLUGIN_ROOT at a dir that has no cook.sh: exec → exit 127
+  # Point PLUGIN_ROOT at a dir that has no Node CLI: exec → exit 127
   local empty_root
   empty_root="$(mktemp -d)"
 
