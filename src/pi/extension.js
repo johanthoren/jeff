@@ -116,7 +116,9 @@ function fitLine(line, width, wrap) {
   const max = safeWidth(width);
   if (max === 0) return [''];
   const lines = truncateToVisualLines(makeWellFormed(String(line)), Number.MAX_SAFE_INTEGER, max).visualLines;
-  return wrap ? lines.filter((visualLine) => visualLine.trim()) : [lines[0] ?? ''];
+  const fitted = lines.filter((visualLine) =>
+    truncateToVisualLines(visualLine, Number.MAX_SAFE_INTEGER, max).visualLines.length <= 1);
+  return wrap ? fitted.filter((visualLine) => visualLine.trim()) : [fitted[0] ?? ''];
 }
 
 /**
