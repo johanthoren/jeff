@@ -163,10 +163,7 @@ instructions, with no task or specialist. Experiment freely, then choose what
 deserves durability:
 
 - **Explore:** keep quick, reversible work in the current context.
-- **Remember:** preserve a finding without creating work. Full mode uses
-  `.jeff/memory/`; elsewhere Jeff prefers a suitable existing tracked memory,
-  decisions, learnings, or handoff file, then falls back to local
-  `.jeff/memory/`.
+- **Remember:** an explicit Remember request is the consent to write durable memory without creating work. Full mode uses `.jeff/memory/`; elsewhere Jeff prefers a suitable existing tracked memory, decisions, learnings, or handoff file and preserves its purpose and format, then falls back to local `.jeff/memory/`. Without an explicit Remember (or other persistence) request, ordinary Explore work does not write durable memory. Never use `AGENTS.md`, a README, or ordinary product documentation as a memory dump.
 - **Record:** create pending future work without starting it. In lite mode, the
   external item is also registered as an idempotent local pending ledger; this
   is adoption for bookkeeping, not execution.
