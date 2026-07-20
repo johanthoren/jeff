@@ -46,6 +46,9 @@ function displayProjection(result) {
       return {
         stage,
         ...status,
+        ...(typeof result.refactorOpportunity === 'string'
+          ? { refactorOpportunity: displayText(result.refactorOpportunity) }
+          : {}),
         ...(result.escalation ? {
           escalation: {
             fork: displayText(result.escalation.fork),

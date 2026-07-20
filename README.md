@@ -13,9 +13,11 @@ deterministic gates decide whether the plate can leave the pass.
 
 You run the kitchen: you call the order, you get the last word. Jeff works the
 pass: takes the order, fires the line, holds the standard, lets nothing out
-until it's worthy. A plan, a failing test, the smallest change to green, a
-refactor, an independent review, an audit when the dish calls for it. The cooks
-answer to him; he answers to you, Chef.
+until it's worthy. A plan, a failing test, the smallest change to green. A
+named plan opportunity or surviving review/audit finding can owe refactor; an
+older plan without an explicit disposition conservatively owes it. Then an
+independent review, and an audit when the dish calls for it. The cooks answer
+to him; he answers to you, Chef.
 
 ## The brigade
 
@@ -23,7 +25,7 @@ You give the order. Jeff runs it down the line, one specialist to a station,
 and brings back the plate only when it's worthy.
 
 ```
-Capture > Plan + Tests > Implement > Refactor > Review > (Audit) > Done
+Capture > Plan + Tests > Implement > (Refactor if owed) > Review > (Audit if risky) > Done
 ```
 
 - **Capture:** Jeff pins the order down with you: what *done* means, what's out
@@ -31,8 +33,10 @@ Capture > Plan + Tests > Implement > Refactor > Review > (Audit) > Done
 - **Plan + tests:** one fresh cook designs the approach and proof, then puts the
   tests on the line first, all red. On purpose.
 - **Implement:** the smallest change that turns them green. Nothing fancier.
-- **Refactor:** tidy the station while the tests stay green: simpler, deduped,
-  up to standard.
+- **Refactor:** a named plan opportunity or surviving review/audit finding can
+  owe refactor; an older plan without an explicit disposition conservatively
+  owes it. Tidy the station while the tests stay green: simpler, deduped, up to
+  standard.
 - **Review:** a fresh cook who never touched the dish checks it against your
   standard.
 - **Audit:** when the dish is risky, a security pass before it leaves.

@@ -42,9 +42,9 @@ Linear by default; kickback to any earlier stage allowed, recorded.
 | # | stage | does | effort | separation |
 |---|---|---|---|---|
 | 1 | `capture` | interrogate intent (one question at a time), drive good architecture, confirm alignment, produce crisp acceptance criteria + scope/non-goals | orchestrator setting | n/a |
-| 2 | `plan` | approach, slices, deps, design and author failing tests (targeted red), whether an audit is needed | xhigh | ≠ implementer |
+| 2 | `plan` | approach, slices, deps, design and author failing tests (targeted red), whether an audit is needed, and an explicit named opportunity limited to behavior-preserving deduplication, deletion, or harmonization, or `null` | xhigh | ≠ implementer |
 | 3 | `implement` | make tests green; may **not** author/weaken tests | high | ≠ test-author, ≠ every reviewer |
-| 4 | `refactor` | **always when code changed**: simplify, align to standards, dedup; may reach beyond the diff in service of this change; tests stay green | xhigh | n/a |
+| 4 | `refactor` | when named by the plan or owed by a surviving review/audit finding: simplify, align to standards, dedup; may reach beyond the diff in service of this change; tests stay green | xhigh | n/a |
 | 5 | `review` | independent code review | xhigh | ≠ implementer |
 | 6 | `audit` | **conditional** (plan flags a security-relevant surface): adversarial security audit | xhigh | n/a |
 | 7 | `done` | terminal state (not an active stage); gated by validator invariants | n/a | n/a |

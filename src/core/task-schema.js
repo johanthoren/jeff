@@ -202,6 +202,18 @@ export function taskSchemaViolations(task, { lite }) {
   if (task.complexity !== undefined) requireField(out, 'complexity', isOneOf(task.complexity, ['simple', 'complex']));
   if (task.externalRef !== undefined) requireField(out, 'externalRef', typeof task.externalRef === 'string');
   if (task.branch !== undefined) requireField(out, 'branch', isNullableString(task.branch));
+  if (Object.hasOwn(task, 'plan')) {
+    const validPlan = isType(task.plan, 'object');
+    requireField(out, 'plan', validPlan);
+    if (validPlan && Object.hasOwn(task.plan, 'refactorOpportunity')) {
+      const value = task.plan.refactorOpportunity;
+      requireField(
+        out,
+        'plan.refactorOpportunity',
+        value === null || (typeof value === 'string' && value.trim().length > 0),
+      );
+    }
+  }
   validateAgents(task.agents, out);
   validateTests(task.tests, out);
   validateReview(task.review, 'review', out, HISTORICAL_REVIEW_VERDICTS);

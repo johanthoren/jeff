@@ -13,6 +13,14 @@ const canonicalTask = {
   createdAt: '2026-07-12T00:00:00.000Z',
   updatedAt: '2026-07-12T00:00:00.000Z',
   complexity: 'complex',
+  plan: {
+    result: 'red',
+    slices: ['Route conditional refactor'],
+    testFiles: ['src/cli/record.test.js'],
+    redRun: { command: 'node --test src/cli/record.test.js', output: 'missing routing' },
+    escalation: null,
+    refactorOpportunity: null,
+  },
   agents: {
     implementer_agent_id: null,
     reviewer_agent_id: null,
@@ -44,6 +52,19 @@ const canonicalTask = {
   },
 };
 void canonicalTask;
+
+/** @type {import('./types.js').TaskJson} */
+const historicalTaskWithoutRefactorOpportunity = {
+  ...canonicalTask,
+  plan: {
+    result: 'red',
+    slices: ['Retain historical mandatory refactor'],
+    testFiles: ['src/cli/record.test.js'],
+    redRun: { command: 'node --test src/cli/record.test.js', output: 'missing routing' },
+    escalation: null,
+  },
+};
+void historicalTaskWithoutRefactorOpportunity;
 
 /** @type {import('./types.js').TaskJson['review']} */
 const badReview = {

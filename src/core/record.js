@@ -426,6 +426,30 @@ function judgmentSources(task) {
   ];
 }
 
+/** @param {MutableRecordTask} task @param {boolean} isScopedCouncilFix */
+function isRefactorOwed(task, isScopedCouncilFix) {
+  if (task.plan?.refactorOpportunity !== null) return true;
+  return judgmentSources(task).some(({ source, outcome }) => (
+    (outcome?.findings ?? []).some((/** @type {any} */ finding) => (
+      finding.class === 'blocking'
+      && finding.kickTo === 'refactor'
+      && finding.refute?.source === source
+      && finding.refute.verdict === 'survives'
+      && (!isScopedCouncilFix || task.convergence.council.findings.some((/** @type {any} */ councilFinding) => (
+        councilFinding.source === source
+        && councilFinding.summary === finding.what
+        && councilFinding.survived === true
+      )))
+    ))
+  ));
+}
+
+/** @param {MutableRecordTask} task */
+function invalidateVerification(task) {
+  task.tests = { ...task.tests, green: false };
+  delete task.tests.gate;
+}
+
 /** @param {TaskJson} task @param {string} stage @param {Record<string, any>} result @returns {TaskJson} */
 export function transitionTask(task, stage, result) {
   const at = now();
@@ -451,16 +475,13 @@ export function transitionTask(task, stage, result) {
     next.tests.authored_by_agent_id = result.agent_id;
     next.complexity = result.complexity;
     next.audit.required = result.auditRequired;
-    next.plan = { result: result.result, slices: result.slices, testFiles: result.testFiles, redRun: result.redRun, escalation: result.escalation };
+    next.plan = { result: result.result, slices: result.slices, testFiles: result.testFiles, redRun: result.redRun, escalation: result.escalation, refactorOpportunity: result.refactorOpportunity };
     next.stage = result.result === 'escalation' ? 'capture' : 'implement';
   } else if (stage === 'implement') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
     next.agents.implementer_agent_id = result.agent_id;
     next.implement = { agent_id: result.agent_id, result: result.result, files: result.files, greenRun: result.greenRun };
-    if (isScopedCouncilFix) {
-      next.tests = { ...next.tests, green: false };
-      delete next.tests.gate;
-    }
+    if (isScopedCouncilFix || !result.kickback) invalidateVerification(next);
     if (isScopedCouncilFix && (result.result !== 'green' || result.kickback !== null)) {
       blockCouncilRecovery(next);
       return /** @type {TaskJson} */ (next);
@@ -469,13 +490,15 @@ export function transitionTask(task, stage, result) {
       next.kickbacks = [...next.kickbacks, { from: 'implement', to: result.kickback.to, reason: result.kickback.reason, at }];
       next.stage = result.kickback.to;
     } else {
+      const refactorOwed = isRefactorOwed(next, isScopedCouncilFix);
       if (isScopedCouncilFix) archiveAndResetJudgments(next, at);
       else resetJudgmentsAfterFix(next, at);
-      next.stage = 'refactor';
+      next.stage = refactorOwed ? 'refactor' : 'review';
     }
   } else if (stage === 'refactor') {
     next.refactor = { agent_id: result.agent_id, result: result.result, files: result.files, outsideDiff: result.outsideDiff, greenRun: result.greenRun, summary: result.summary };
-    delete next.tests.gate;
+    resetJudgmentsAfterFix(next, at);
+    invalidateVerification(next);
     next.stage = 'review';
   } else if (stage === 'review') recordReview(next, result);
   else if (stage === 'audit') recordAudit(next, result);

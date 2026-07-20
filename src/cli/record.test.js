@@ -83,12 +83,21 @@ async function makeRoot(task = canonicalTask()) {
 /** @param {string} root @param {string} taskDir */
 async function recordCurrentGate(root, taskDir) {
   const task = await readTask(taskDir);
-  task.tests.gate = {
-    hash: runGit(root, ['rev-parse', 'HEAD']),
-    clean: true,
+  const command = 'make test';
+  task.tests = {
+    ...task.tests,
     green: true,
-    command: 'make test',
-    at: '2026-07-12T01:00:00Z',
+    evidence: [
+      ...task.tests.evidence,
+      { command, output: `cook: verify green (${command})` },
+    ],
+    gate: {
+      hash: runGit(root, ['rev-parse', 'HEAD']),
+      clean: true,
+      green: true,
+      command,
+      at: '2026-07-12T01:00:00Z',
+    },
   };
   await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
 }
@@ -139,6 +148,7 @@ function planReturn(overrides = {}) {
     result: 'red',
     complexity: 'simple',
     auditRequired: true,
+    refactorOpportunity: null,
     slices: ['Add the recording boundary'],
     testFiles: ['src/cli/record.test.js'],
     redRun: { command: 'node --test src/cli/record.test.js', output: 'record is unavailable' },
@@ -469,6 +479,250 @@ test('record accepts the strict plan return and advances the task atomically', a
     assert.equal(task.audit.required, true);
     assert.equal(task.stage, 'implement');
     assert.equal(task.status, 'in_progress');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 95 strict plan return requires an explicit non-empty refactor decision atomically', async (t) => {
+  for (const [name, mutate] of [
+    ['omitted', (/** @type {any} */ value) => { delete value.refactorOpportunity; }],
+    ['empty', (/** @type {any} */ value) => { value.refactorOpportunity = ''; }],
+    ['whitespace', (/** @type {any} */ value) => { value.refactorOpportunity = '   '; }],
+  ]) {
+    await t.test(name, async () => {
+      const { root, taskDir } = await makeRoot();
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        const returned = planReturn();
+        mutate(returned);
+        const file = await writeReturn(root, returned);
+
+        const result = runCook(root, ['record', 'plan', '18', 'plan-agent', file]);
+
+        assert.notEqual(result.code, 0);
+        assert.match(result.stderr, /\[record-schema\].*refactorOpportunity/);
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 95 named plan opportunity runs refactor before review without judgment history', async () => {
+  const { root, taskDir } = await makeRoot(canonicalTask({
+    tests: { authored_by_agent_id: null, green: true, evidence: [] },
+  }));
+  try {
+    const opportunity = 'Harmonize verification-gate invalidation across code-changing stages.';
+    const file = await writeReturn(root, planReturn({ refactorOpportunity: opportunity }));
+
+    const result = runCook(root, ['record', 'plan', '18', 'plan-agent', file]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal((await readTask(taskDir)).plan.refactorOpportunity, opportunity);
+
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn());
+    assert.equal((await readTask(taskDir)).stage, 'refactor');
+
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn());
+    const refactored = await readTask(taskDir);
+    assert.equal(refactored.stage, 'review');
+    assert.equal(refactored.judgmentHistory, undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 95 explicit null skips planned refactor while historical omission remains mandatory', async (t) => {
+  await t.test('explicit null', async () => {
+    const { root, taskDir } = await makeRoot(canonicalTask({
+      tests: { authored_by_agent_id: null, green: true, evidence: [] },
+    }));
+    try {
+      const file = await writeReturn(root, planReturn({ refactorOpportunity: null }));
+      const result = runCook(root, ['record', 'plan', '18', 'plan-agent', file]);
+      assert.equal(result.code, 0, result.stderr);
+
+      await recordSpecialistReturn(root, 'implement', '18', implementReturn());
+      const implemented = await readTask(taskDir);
+      assert.equal(implemented.stage, 'review');
+      assert.equal(implemented.tests.green, false);
+      assert.equal(implemented.tests.gate, undefined);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('historical omission', async () => {
+    const { root, taskDir } = await makeRoot(canonicalTask({
+      stage: 'implement',
+      plan: {
+        result: 'red',
+        slices: ['Implement the requested behavior'],
+        testFiles: ['src/cli/record.test.js'],
+        redRun: { command: 'node --test src/cli/record.test.js', output: 'missing behavior' },
+        escalation: null,
+      },
+      tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: [] },
+    }));
+    try {
+      await recordSpecialistReturn(root, 'implement', '18', implementReturn());
+      const implemented = await readTask(taskDir);
+      assert.equal(implemented.stage, 'refactor');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 95 mixed implement and refactor survivors preserve refactor after implementation', async () => {
+  const implementFinding = blockingFinding({
+    line: 20,
+    what: 'The implementation path loses a surviving correction.',
+  });
+  const refactorFinding = blockingFinding({
+    line: 21,
+    kickTo: 'refactor',
+    what: 'The behavior-preserving cleanup remains necessary after implementation.',
+  });
+  const { root, taskDir } = await makeRoot(canonicalTask({
+    stage: 'review',
+    plan: {
+      result: 'red',
+      slices: ['Implement without planned refactor'],
+      testFiles: ['src/cli/record.test.js'],
+      redRun: { command: 'node --test src/cli/record.test.js', output: 'missing behavior' },
+      escalation: null,
+      refactorOpportunity: null,
+    },
+    agents: {
+      implementer_agent_id: 'initial-implementer',
+      reviewer_agent_id: null,
+      reviewer2_agent_id: null,
+      audit_agent_id: null,
+    },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: [] },
+  }));
+  try {
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer', {
+      verdict: 'needs-work',
+      findings: [implementFinding, refactorFinding],
+    }));
+    await recordSpecialistReturn(root, 'refute', '18', refuteReturn('implement-refuter', implementFinding, {
+      source: 'review',
+    }));
+    await recordSpecialistReturn(root, 'refute', '18', refuteReturn('refactor-refuter', refactorFinding, {
+      source: 'review',
+    }));
+    assert.equal((await readTask(taskDir)).stage, 'implement');
+
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('correcting-implementer'));
+    assert.equal((await readTask(taskDir)).stage, 'refactor');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 95 council-demoted refactor finding is not revived after scoped implementation', async () => {
+  const task = councilTask();
+  task.plan = {
+    result: 'red',
+    slices: ['Implement without planned refactor'],
+    testFiles: ['src/cli/record.test.js'],
+    redRun: { command: 'node --test src/cli/record.test.js', output: 'missing behavior' },
+    escalation: null,
+    refactorOpportunity: null,
+  };
+  const refactorFinding = blockingFinding({
+    line: 22,
+    kickTo: 'refactor',
+    what: 'Harmonize duplicate recovery routing.',
+  });
+  refactorFinding.refute = {
+    agent_id: 'refactor-refuter',
+    source: 'review',
+    finding: `${refactorFinding.file}:${refactorFinding.line} ${refactorFinding.what}`,
+    verdict: 'survives',
+    rationale: 'The duplicate path is reachable.',
+    evidence: [{ command: 'node --test src/cli/record.test.js', output: 'failure reproduced' }],
+  };
+  task.review.findings.push(refactorFinding);
+  task.refutes.push(refactorFinding.refute);
+  const returned = councilReturn();
+  returned.council.findings.push({
+    id: 'F2',
+    summary: refactorFinding.what,
+    source: 'review',
+    blockingVotes: 1,
+    survived: false,
+    followupTaskId: 18,
+  });
+
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(root, 'council', '18', returned);
+    assert.equal((await readTask(taskDir)).stage, 'implement');
+
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
+    const implemented = await readTask(taskDir);
+
+    assert.equal(implemented.stage, 'review');
+    assert.equal(implemented.tests.green, false);
+    assert.equal(implemented.tests.gate, undefined);
+    assert.equal(implemented.judgmentHistory.length, 1);
+    assert.equal(implemented.review.verdict, null);
+    assert.equal(implemented.convergence.council.findings[1].survived, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 95 direct review-to-refactor archives once and accepts a fresh separated review', async () => {
+  const blocker = blockingFinding({
+    kickTo: 'refactor',
+    what: 'Harmonize duplicate verification-gate invalidation.',
+  });
+  const { root, taskDir } = await makeRoot(canonicalTask({
+    stage: 'review',
+    plan: {
+      result: 'red',
+      slices: ['Implement without planned refactor'],
+      testFiles: ['src/cli/record.test.js'],
+      redRun: { command: 'node --test src/cli/record.test.js', output: 'missing behavior' },
+      escalation: null,
+      refactorOpportunity: null,
+    },
+    agents: {
+      implementer_agent_id: 'implementer',
+      reviewer_agent_id: null,
+      reviewer2_agent_id: null,
+      audit_agent_id: null,
+    },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: [] },
+  }));
+  try {
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer', {
+      verdict: 'needs-work',
+      findings: [blocker],
+    }));
+    await recordSpecialistReturn(root, 'refute', '18', refuteReturn('refuter', blocker));
+    assert.equal((await readTask(taskDir)).stage, 'refactor');
+
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn());
+    const refactored = await readTask(taskDir);
+    assert.equal(refactored.stage, 'review');
+    assert.equal(refactored.judgmentHistory?.length, 1);
+    assert.equal(refactored.judgmentHistory[0].review.reviewer_agent_id, 'reviewer');
+    assert.equal(refactored.review.reviewer_agent_id, null);
+    assert.equal(refactored.agents.reviewer_agent_id, null);
+
+    await recordCurrentGate(root, taskDir);
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-reviewer', { cycle: 1 }));
+    const completed = await readTask(taskDir);
+    assert.equal(completed.judgmentHistory.length, 1);
+    assert.equal(completed.review.reviewer_agent_id, 'fresh-reviewer');
+    assert.equal(completed.status, 'done');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

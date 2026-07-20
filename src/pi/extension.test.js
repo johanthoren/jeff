@@ -44,6 +44,7 @@ function specialistReturn(stage, overrides = {}) {
   const returns = {
     plan: {
       agent_id: 'plan-agent', stage: 'plan', result: 'red', complexity: 'complex', auditRequired: true,
+      refactorOpportunity: null,
       slices: ['Project the return'], testFiles: ['src/pi/extension.test.js'],
       redRun: { command: 'node --test src/pi/extension.test.js', output: 'missing projection' }, escalation: null,
     },
@@ -196,6 +197,15 @@ test('formatDispatchResult exposes only the closed display projection to the par
   ]);
   assert.match(text, /renderer returns raw JSON|execution metadata reaches consumers/);
   assert.doesNotMatch(text, /review-agent|MARKER_/);
+});
+
+test('issue 95 plan projection exposes a named refactor opportunity', () => {
+  const opportunity = 'Delete the superseded transition helper.';
+  const display = JSON.parse(formatDispatchResult(specialistReturn('plan', {
+    refactorOpportunity: opportunity,
+  })));
+
+  assert.equal(display.refactorOpportunity, opportunity);
 });
 
 test('extension registers /jeff-status and cook_dispatch', () => {
@@ -669,6 +679,7 @@ test('cook_dispatch taskId persists the specialist result through the shared rec
       result: 'red',
       complexity: 'complex',
       auditRequired: true,
+      refactorOpportunity: null,
       slices: ['Record one specialist result'],
       testFiles: ['src/pi/extension.test.js'],
       redRun: { command: 'node --test src/pi/extension.test.js', output: 'missing persistence' },
@@ -837,6 +848,7 @@ test('cook_dispatch rejects mismatched claimed identity without changing ledger 
       result: 'red',
       complexity: 'complex',
       auditRequired: true,
+      refactorOpportunity: null,
       slices: ['Record one specialist result'],
       testFiles: ['src/pi/extension.test.js'],
       redRun: { command: 'node --test src/pi/extension.test.js', output: 'missing identity binding' },

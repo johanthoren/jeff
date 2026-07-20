@@ -115,6 +115,7 @@
  * @property {string} createdAt
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]
+ * @property {{result: string, slices: string[], testFiles: string[], redRun: {command: string | null, output: string}, escalation: {fork: string, options: string[]} | null, refactorOpportunity?: string | null}} [plan]
  * @property {TaskAgents} agents
  * @property {TaskTests} tests
  * @property {Review} review

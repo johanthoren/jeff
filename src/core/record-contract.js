@@ -101,10 +101,14 @@ function findings(value, path, destinations, audit) {
 
 /** @param {any} value */
 function validatePlan(value) {
-  closed(value, '', ['agent_id', 'stage', 'result', 'complexity', 'auditRequired', 'slices', 'testFiles', 'redRun', 'escalation']);
+  closed(value, '', ['agent_id', 'stage', 'result', 'complexity', 'auditRequired', 'refactorOpportunity', 'slices', 'testFiles', 'redRun', 'escalation']);
   oneOf(value.result, 'result', RESULTS.plan);
   oneOf(value.complexity, 'complexity', ['simple', 'complex']);
   if (typeof value.auditRequired !== 'boolean') invalid('auditRequired');
+  if (value.refactorOpportunity !== null) {
+    string(value.refactorOpportunity, 'refactorOpportunity');
+    if (value.refactorOpportunity.trim().length === 0) invalid('refactorOpportunity');
+  }
   strings(value.slices, 'slices');
   strings(value.testFiles, 'testFiles');
   run(value.redRun, 'redRun');

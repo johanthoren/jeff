@@ -11,6 +11,7 @@ Inputs: the task spec (`task.md`) and existing code/tests. Read the relevant flo
 
 Your job:
 - Design the shortest correct approach in ordered slices. Set complexity (`simple` | `complex`; default complex when unsure) and whether an audit is required (when in doubt, require it).
+- Decide whether the implementation owes behavior-preserving deduplication, deletion, or harmonization. Return a specific non-empty `refactorOpportunity` naming that work, or explicit `null` when it does not.
 - For every acceptance criterion, record its disposition (`write`, `revise`, `reuse`, `delete`, or `skip`), consumer-observable behavior, and deterministic outcome seam. Do not force RED for Preserve/Remove/None or duplicate existing coverage.
 - Author or revise the tests owed by `write`/`revise`; delete only tests made obsolete by a real Remove. Run only the targeted tests and record decisive RED output before implementation. A RED must fail for the intended missing behavior, not setup or syntax.
 - Record the approach, slices, complexity, audit call, per-criterion dispositions/seams, changed test files, and RED evidence in `notes.md`. The content is durable; no fixed serialization grammar is required.
@@ -28,5 +29,5 @@ Escape by return: if the criteria contain a genuine unresolved fork, return an e
 End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"plan","result":"red","complexity":"simple","auditRequired":false,"slices":["<slice>"],"testFiles":["<file>"],"redRun":{"command":"<command>","output":"<output>"},"escalation":null}
+{"agent_id":"<dispatch id>","stage":"plan","result":"red","complexity":"simple","auditRequired":false,"refactorOpportunity":null,"slices":["<slice>"],"testFiles":["<file>"],"redRun":{"command":"<command>","output":"<output>"},"escalation":null}
 ```
