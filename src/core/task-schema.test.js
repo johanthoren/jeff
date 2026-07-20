@@ -104,23 +104,27 @@ test('canonical task shape validates through the authoritative core', async () =
 });
 
 test('issue 95 persisted plan refactor opportunity preserves omission and validates present values', async (t) => {
-  for (const [name, plan] of [
+  /** @type {Array<[string, Record<string, any>]>} */
+  const validPlans = [
     ['historical omission', { result: 'red' }],
     ['explicit null', { result: 'red', refactorOpportunity: null }],
     ['named opportunity', { result: 'red', refactorOpportunity: 'Deduplicate plan routing.' }],
-  ]) {
+  ];
+  for (const [name, plan] of validPlans) {
     await t.test(name, async () => {
       const result = await verdictFor(canonicalTask({ plan }));
       assert.equal(result.ok, true, result.stderr.join('\n'));
     });
   }
 
-  for (const [name, refactorOpportunity] of [
+  /** @type {Array<[string, any]>} */
+  const invalidRefactorOpportunities = [
     ['whitespace', '   '],
     ['empty', ''],
     ['false', false],
     ['object', {}],
-  ]) {
+  ];
+  for (const [name, refactorOpportunity] of invalidRefactorOpportunities) {
     await t.test(name, async () => {
       const result = await verdictFor(canonicalTask({
         plan: { result: 'red', refactorOpportunity },
@@ -136,13 +140,15 @@ test('issue 95 persisted plan container preserves absence and rejects non-object
     assert.equal(result.ok, true, result.stderr.join('\n'));
   });
 
-  for (const [name, plan] of [
+  /** @type {Array<[string, any]>} */
+  const invalidPlans = [
     ['null', null],
     ['boolean', false],
     ['string', 'not-a-plan'],
     ['array', []],
     ['number', 0],
-  ]) {
+  ];
+  for (const [name, plan] of invalidPlans) {
     await t.test(name, async () => {
       const result = await verdictFor(canonicalTask({ plan }));
       assertNamedFailure(result, '[schema] plan');

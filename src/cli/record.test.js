@@ -214,6 +214,7 @@ function auditReturn(agentId = 'auditor', overrides = {}) {
   };
 }
 
+/** @param {Record<string, any>} [overrides] @returns {Record<string, any>} */
 function blockingFinding(overrides = {}) {
   return {
     file: 'src/core/record.js',
@@ -485,11 +486,13 @@ test('record accepts the strict plan return and advances the task atomically', a
 });
 
 test('issue 95 strict plan return requires an explicit non-empty refactor decision atomically', async (t) => {
-  for (const [name, mutate] of [
-    ['omitted', (/** @type {any} */ value) => { delete value.refactorOpportunity; }],
-    ['empty', (/** @type {any} */ value) => { value.refactorOpportunity = ''; }],
-    ['whitespace', (/** @type {any} */ value) => { value.refactorOpportunity = '   '; }],
-  ]) {
+  /** @type {Array<[string, (value: any) => void]>} */
+  const invalidDecisions = [
+    ['omitted', (value) => { delete value.refactorOpportunity; }],
+    ['empty', (value) => { value.refactorOpportunity = ''; }],
+    ['whitespace', (value) => { value.refactorOpportunity = '   '; }],
+  ];
+  for (const [name, mutate] of invalidDecisions) {
     await t.test(name, async () => {
       const { root, taskDir } = await makeRoot();
       try {
