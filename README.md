@@ -102,6 +102,11 @@ Jeff specialists inherit the exact active model and only their stage tools. They
 do not inherit OMP orchestration, extensions, custom or MCP tools, advisor,
 memory/autolearn, or model fallback behavior.
 
+OMP user- and project-level `SYSTEM.md` instructions remain applicable to
+specialists by design: like other applicable user, host, and repository
+instructions, they may tighten or specialize Jeff's bundled first-party
+standards floor, never weaken it.
+
 ### Claude Code — recommended path
 
 Use Claude Code's plugin CLI flow:
