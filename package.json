@@ -1,6 +1,6 @@
 {
   "name": "@johanthoren/jeff",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "description": "Jeff is a model-native quality control plane with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates.",
   "type": "module",
   "license": "Apache-2.0",
