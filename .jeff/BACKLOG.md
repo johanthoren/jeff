@@ -6,7 +6,7 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **`#77`:** clarify that durable memory writes require an explicit persistence request and preserve the target file's existing purpose and format.
+- _(empty)_
 
 ## DEFERRED / NON-CRITICAL
 
