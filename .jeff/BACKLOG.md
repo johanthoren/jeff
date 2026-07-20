@@ -6,14 +6,10 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **Tracker reconciliation: `#76`:** every acceptance criterion is checked; close it if the shipped evidence is complete, otherwise name the missing terminal work.
-- **Parallel/non-blocking: `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
+- **`#87`:** state explicitly whether OMP user/project `SYSTEM.md` remains applicable to specialists; do not broaden runtime isolation without a reproduced conflict.
 
 ## NEXT
 
-### 1. Instruction boundaries
-
-- **`#87`:** state explicitly whether OMP user/project `SYSTEM.md` remains applicable to specialists; do not broaden runtime isolation without a reproduced conflict.
 - **`#77`:** clarify that durable memory writes require an explicit persistence request and preserve the target file's existing purpose and format.
 
 ## DEFERRED / NON-CRITICAL
