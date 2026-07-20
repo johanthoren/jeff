@@ -6,7 +6,6 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **`#41`:** run refactor only for a named simplification opportunity. Add no decision stage, analytics, counters, or evaluation subsystem.
 - **Tracker reconciliation: `#76`:** every acceptance criterion is checked; close it if the shipped evidence is complete, otherwise name the missing terminal work.
 - **Parallel/non-blocking: `#37`:** investigate duplicated collapsed `Thinking...` rows; fix locally or track the owning Pi/provider defect.
 
