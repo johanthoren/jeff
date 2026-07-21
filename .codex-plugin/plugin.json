@@ -1,22 +1,30 @@
 {
   "name": "jeff",
-  "version": "3.6.1",
+  "version": "3.6.2",
   "description": "Jeff is a model-native quality control plane for coding agents.",
   "author": {
-    "name": "Johan Thorén"
+    "name": "Johan Thor\u00e9n"
   },
   "homepage": "https://github.com/johanthoren/jeff",
   "repository": "https://github.com/johanthoren/jeff",
   "license": "Apache-2.0",
-  "keywords": ["workflow", "agents", "code-review", "orchestration"],
+  "keywords": [
+    "workflow",
+    "agents",
+    "code-review",
+    "orchestration"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Jeff",
     "shortDescription": "A model-native quality control plane",
     "longDescription": "Your sous chef, Jeff, is a model-native quality control plane. Fresh specialist contexts, enforced separation, durable evidence, and deterministic gates hold the pass. Nothing leaves the pass until it is worthy.",
-    "developerName": "Johan Thorén",
+    "developerName": "Johan Thor\u00e9n",
     "category": "Developer Tools",
-    "capabilities": ["Task orchestration", "Code review"],
+    "capabilities": [
+      "Task orchestration",
+      "Code review"
+    ],
     "defaultPrompt": [
       "Jeff, set up here.",
       "Jeff, work this task through the full pipeline."
