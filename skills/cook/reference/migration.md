@@ -218,8 +218,7 @@ cross-order constraint is each order's `dependsOn`, preserved as `deps`.
   once `.bakehouse/` is gone, the bakehouse `PreToolUse` hook finds no project and
   stands down, while jeff's can engage on the new `.jeff/`. Disabling the
   bakehouse plugin is still cleaner while both are installed.
-- **In-flight branches** (`task/<id>-<slug>` for complex tasks) are unaffected:
-  branch names do not reference the state dir.
+- **In-flight branches** are unaffected: branch names do not reference the state dir.
 - `cook validate` is safe to run anywhere; it skips cleanly when the cwd is not
   an active jeff project.
 

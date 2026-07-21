@@ -110,3 +110,40 @@ setup() {
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
+
+# ---------------------------------------------------------------------------
+# task #47: migration.md After migration — in-flight branches are generic
+#
+# Consumer-observable: operators reading the shipped migration guide must not
+# be told that branch topology depends on complexity. The After migration note
+# still teaches that existing in-flight branches are unaffected (names do not
+# reference the state dir), but without a complexity-conditioned branch form.
+#
+# RED now: "**In-flight branches** (`task/<id>-<slug>` for complex tasks)".
+# GREEN after implementer drops the complexity association and keeps a generic
+# in-flight-branches note.
+# ---------------------------------------------------------------------------
+
+@test "migration.md: After migration still notes in-flight branches generically" {
+  local section
+  section="$(
+    awk '/^## After migration[[:space:]]*$/ {p=1; next} p && /^## / {exit} p' \
+      "$REPO/skills/cook/reference/migration.md"
+  )"
+  [ -n "$section" ]
+
+  # Retain the operator-facing aftercare note (do not delete the bullet).
+  grep -F '**In-flight branches**' <<<"$section"
+  grep -F 'unaffected' <<<"$section"
+  grep -F 'branch names do not reference the state dir' <<<"$section"
+}
+
+@test "migration.md: no branch topology associated with complexity" {
+  # Any residual complexity↔branch coupling in the migration guide fails AC2.
+  # Scoped patterns: complexity on the same line as branch guidance, or the
+  # retired "for complex tasks" parenthetical on the in-flight branch example.
+  local pattern='for complex tasks|In-flight branches[^\n]*complex|complex[^\n]*In-flight branches|branch[^\n]{0,100}complex|complex[^\n]{0,100}branch|task/<id>-<slug>[^\n]{0,40}complex'
+  run grep -nEi "$pattern" "$REPO/skills/cook/reference/migration.md"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
