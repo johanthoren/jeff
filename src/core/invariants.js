@@ -75,7 +75,7 @@ function assertContainerType(v, type, name) {
 
 const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
 // `test` is accepted only as a legacy persisted-ledger resume state.
-const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'audit', 'done'];
+const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'done'];
 const PRIOS = ['p0', 'p1', 'p2', 'p3', 'p4'];
 
 /**
@@ -90,6 +90,7 @@ export function gatePreflight(tasks) {
   const out = [];
   for (const t of tasks) {
     if (t.status !== 'done') continue;
+    if (t.category === 'operation') continue;
     // jq reads `$t.tests.gate` for this done task; a present non-object `tests`
     // would abort jq (index a non-object) → fail CLOSED. Mirror it.
     assertContainerType(t.tests, 'object', 'tests');
@@ -111,6 +112,48 @@ export function gatePreflight(tasks) {
     }
   }
   return out;
+}
+
+/** @param {any[]} evidence */
+function hasNonemptyEvidence(evidence) {
+  return Array.isArray(evidence)
+    && evidence.length > 0
+    && evidence.every((item) => (
+      typeof item?.command === 'string'
+      && item.command.length > 0
+      && typeof item.output === 'string'
+      && item.output.length > 0
+    ));
+}
+
+/** @param {any} task */
+function isExactOperationCouncilShip(task) {
+  const council = task.convergence?.council;
+  if (council?.convened !== true || council.verdict !== 'ship' || council.outcome !== 'shipped') {
+    return false;
+  }
+  const blockers = [
+    ['verify', task.verification],
+    ['audit', task.audit],
+  ].flatMap(([source, outcome]) => (
+    (outcome?.findings ?? [])
+      .filter((/** @type {any} */ finding) => finding.class === 'blocking')
+      .map((/** @type {any} */ finding) => `${source}\0${finding.what}`)
+  ));
+  const resolved = council.findings
+    .filter((/** @type {any} */ finding) => finding.survived === false)
+    .map((/** @type {any} */ finding) => `${finding.source}\0${finding.summary}`);
+  return blockers.length > 0
+    && blockers.length === resolved.length
+    && new Set(blockers).size === blockers.length
+    && new Set(resolved).size === resolved.length
+    && blockers.every((/** @type {string} */ finding) => resolved.includes(finding));
+}
+
+/** @param {any} outcome @param {boolean} exactCouncilShip */
+function isResolvedOperationJudgment(outcome, exactCouncilShip) {
+  const hasBlockers = outcome?.findings?.some((/** @type {any} */ finding) => finding.class === 'blocking') === true;
+  return (!hasBlockers && outcome?.verdict === 'pass') || (hasBlockers && exactCouncilShip);
 }
 
 /**
@@ -137,8 +180,8 @@ export function runInvariants(tasks, { lite }) {
     assertContainerType(t.agents, 'object', 'agents');
     assertContainerType(t.convergence, 'object', 'convergence');
     if (t.status === 'done') {
-      assertContainerType(t.review, 'object', 'review');
       assertContainerType(t.audit, 'object', 'audit');
+      if (t.category !== 'operation') assertContainerType(t.review, 'object', 'review');
     }
     // Item 2 (documented strictness, Chef call 2026-07-03). cook.sh iterates
     // `($t.deps // [])[]`, which tolerates `deps:{}` (iterates an object's values →
@@ -155,6 +198,9 @@ export function runInvariants(tasks, { lite }) {
     const im = agents.implementer_agent_id != null ? agents.implementer_agent_id : null;
     const rv = agents.reviewer_agent_id != null ? agents.reviewer_agent_id : null;
     const rv2 = agents.reviewer2_agent_id != null ? agents.reviewer2_agent_id : null;
+    const ex = agents.executor_agent_id != null ? agents.executor_agent_id : null;
+    const vr = agents.verifier_agent_id != null ? agents.verifier_agent_id : null;
+    const au = agents.audit_agent_id != null ? agents.audit_agent_id : null;
 
     // id-type: registry invariant (full only). Lite ledgers may carry a string id.
     if (!lite && typeof t.id !== 'number') {
@@ -182,6 +228,36 @@ export function runInvariants(tasks, { lite }) {
     if (im !== null && (im === rv || im === rv2)) {
       out.push(`task ${id}: implementer == reviewer (${jqStr(im)}) [inv2]`);
     }
+    if (t.category === 'operation' && isType(t.execution, 'object')) {
+      const outcomeExecutor = t.execution.executor_agent_id != null ? t.execution.executor_agent_id : null;
+      if ((outcomeExecutor !== null && ex !== null && outcomeExecutor !== ex)
+        || (outcomeExecutor !== null && ex === null)
+        || (ex !== null && outcomeExecutor === null)) {
+        out.push(`task ${id}: execution outcome identity does not match its executor [inv2]`);
+      }
+    }
+    if (ex !== null && ex === vr) {
+      out.push(`task ${id}: executor == verifier (${jqStr(ex)}) [inv2]`);
+    }
+    if (t.category === 'operation' && isType(t.verification, 'object')) {
+      const outcomeVerifier = t.verification.verifier_agent_id != null ? t.verification.verifier_agent_id : null;
+      const hasVerdict = t.verification.verdict === 'pass' || t.verification.verdict === 'needs-work';
+      if ((hasVerdict && (vr === null || outcomeVerifier === null))
+        || (vr !== null && outcomeVerifier !== null && vr !== outcomeVerifier)
+        || (ex !== null && outcomeVerifier === ex)) {
+        out.push(`task ${id}: verification outcome identity does not match its separated verifier [inv2]`);
+      }
+    }
+    if (t.category === 'operation' && isType(t.audit, 'object')) {
+      const outcomeAuditor = t.audit.audit_agent_id != null ? t.audit.audit_agent_id : null;
+      const hasVerdict = t.audit.verdict === 'pass' || t.audit.verdict === 'needs-work';
+      if ((hasVerdict && (au === null || outcomeAuditor === null))
+        || (au === null) !== (outcomeAuditor === null)
+        || (au !== null && outcomeAuditor !== null && au !== outcomeAuditor)
+        || (ex !== null && (au === ex || outcomeAuditor === ex))) {
+        out.push(`task ${id}: audit outcome identity does not match its separated auditor [inv2]`);
+      }
+    }
     const reviews = [
       [t.review, rv, true],
       [t.review2, rv2, false],
@@ -202,7 +278,53 @@ export function runInvariants(tasks, { lite }) {
     }
 
     // inv4: done-gate quality invariant
-    if (t.status === 'done') {
+    if (t.status === 'done' && t.category === 'operation') {
+      const executionApproval = t.execution?.approval;
+      const retainedExecutionApproval = executionApproval === undefined
+        ? t.plan?.requiresApproval === false
+        : Array.isArray(t.approvals) && t.approvals.some((/** @type {any} */ approval) => (
+          approval?.mutation === executionApproval.mutation
+          && approval?.grantedBy === executionApproval.grantedBy
+          && approval?.grantedAt === executionApproval.grantedAt
+        ));
+      const executionPass = t.execution?.result === 'executed'
+        && t.execution?.approvalRequired === null
+        && t.execution?.executor_agent_id === ex
+        && ex !== null
+        && Array.isArray(t.execution?.actions)
+        && t.execution.actions.length > 0
+        && t.execution.actions.every((/** @type {any} */ action) => typeof action === 'string' && action.length > 0)
+        && hasNonemptyEvidence(t.execution?.evidence)
+        && retainedExecutionApproval;
+      const planned = t.plan?.postconditions;
+      const verified = t.verification?.postconditions;
+      const exactPostconditions = Array.isArray(planned)
+        && planned.length > 0
+        && Array.isArray(verified)
+        && planned.length === verified.length
+        && planned.every((/** @type {any} */ postcondition, /** @type {number} */ index) => (
+          verified[index]?.postcondition === postcondition
+          && verified[index].ok === true
+          && typeof verified[index].evidence === 'string'
+          && verified[index].evidence.length > 0
+        ));
+      const exactCouncilShip = isExactOperationCouncilShip(t);
+      const verificationPass = t.verification?.verifier_agent_id === vr
+        && vr !== null
+        && vr !== ex
+        && exactPostconditions
+        && isResolvedOperationJudgment(t.verification, exactCouncilShip)
+        && hasNonemptyEvidence(t.verification?.evidence);
+      const auditPass = t.audit?.required === true
+        ? typeof t.audit.audit_agent_id === 'string'
+          && isResolvedOperationJudgment(t.audit, exactCouncilShip)
+        : t.audit?.verdict === 'pass' || t.audit?.verdict === 'na';
+      if (!executionPass || !verificationPass || !auditPass) {
+        out.push(`task ${id}: done operation requires executed actions/evidence, independent passing verification, and conditional audit pass [inv4]`);
+      }
+    }
+
+    if (t.status === 'done' && t.category !== 'operation') {
       const tests = t.tests || {};
       const g = tests.green;
       const evidence = jqOr(tests.evidence, []);
@@ -324,13 +446,14 @@ function convergenceChecks(t, id, ids, out) {
   if (c === null || c === undefined) return;
   const cl = c.council;
   const conv = (cl !== null && cl !== undefined && cl.convened === true);
+  const judgmentStages = t.category === 'operation' ? ['verify', 'audit'] : ['review', 'audit'];
 
   // inv7: cap integer ≥1; each of review/audit blockingKickbacks int in 0..cap.
   const cap = c.cap;
   if (typeof cap !== 'number' || cap < 1 || Math.floor(cap) !== cap) {
     out.push(`task ${id}: convergence.cap must be an integer ≥ 1 [inv7]`);
   } else {
-    for (const st of ['review', 'audit']) {
+    for (const st of judgmentStages) {
       const bk = (c.stages && c.stages[st]) ? c.stages[st].blockingKickbacks : undefined;
       if (typeof bk !== 'number' || bk < 0 || bk > cap || Math.floor(bk) !== bk) {
         out.push(`task ${id}: convergence.stages.${st}.blockingKickbacks must be an integer in 0..${cap} [inv7]`);
@@ -383,8 +506,8 @@ function convergenceChecks(t, id, ids, out) {
     if (JSON.stringify([...lenses].sort()) !== JSON.stringify(['integrity', 'pragmatist', 'security'])) {
       out.push(`task ${id}: council lenses must be exactly integrity, security, pragmatist [inv8]`);
     }
-    if (!['review', 'audit'].includes(cl.stage)) {
-      out.push(`task ${id}: convened council.stage must be review or audit [inv8]`);
+    if (!judgmentStages.includes(cl.stage)) {
+      out.push(`task ${id}: convened council.stage must be ${judgmentStages.join(' or ')} [inv8]`);
     }
   }
 

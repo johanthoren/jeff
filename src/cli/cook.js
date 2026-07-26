@@ -148,6 +148,7 @@ async function main() {
     return process.exit(1);
   }
 
+
   if (sub === 'record') {
     const councilRecord = rest[0] === 'council';
     const expectedArguments = councilRecord ? 3 : 4;

@@ -73,6 +73,91 @@ function canonicalTask(overrides = {}) {
 }
 
 /**
+ * Canonical operation ledger. Code-only identities and outcome containers are
+ * deliberately absent so validation cannot make compatibility scaffolding mandatory.
+ *
+ * @param {Record<string, any>} [overrides]
+ * @returns {Record<string, any>}
+ */
+function canonicalOperationTask(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    id: '#28',
+    externalRef: '#28',
+    slug: 'operation-one',
+    title: 'Operation One',
+    category: 'operation',
+    status: 'in_progress',
+    stage: 'execute',
+    priority: 'p2',
+    deps: [],
+    createdAt: '2026-07-12T00:00:00.000Z',
+    updatedAt: '2026-07-12T00:00:00.000Z',
+    complexity: 'complex',
+    agents: {
+      executor_agent_id: null,
+      verifier_agent_id: null,
+      audit_agent_id: null,
+    },
+    audit: {
+      required: false,
+      verdict: 'na',
+      audit_agent_id: null,
+      evidence: [],
+    },
+    commits: [],
+    kickbacks: [],
+    blockedReason: null,
+    abandonReason: null,
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, any>} [overrides] */
+function completedOperationTask(overrides = {}) {
+  return canonicalOperationTask({
+    status: 'done',
+    stage: 'done',
+    agents: {
+      executor_agent_id: 'executor',
+      verifier_agent_id: 'verifier',
+      audit_agent_id: null,
+    },
+    plan: {
+      result: 'plan',
+      slices: ['Move the bounded registry entry.'],
+      runbook: ['Confirm the source entry, then move it to the destination.'],
+      preconditions: ['The source entry exists exactly once.'],
+      recoveryBoundary: 'Before the shared registry write, restore the captured source entry.',
+      approvalBoundary: 'The shared registry write requires approval when it is irreversible.',
+      requiresApproval: false,
+      postconditions: ['The registry has exactly one destination entry.'],
+      verificationSeams: ['Read the source and destination entries independently.'],
+      escalation: null,
+    },
+    execution: {
+      result: 'executed',
+      executor_agent_id: 'executor',
+      actions: ['Moved the bounded registry entry.'],
+      evidence: [{ command: 'inspect registry', output: 'entry moved' }],
+      approvalRequired: null,
+    },
+    verification: {
+      verdict: 'pass',
+      verifier_agent_id: 'verifier',
+      postconditions: [{
+        postcondition: 'The registry has exactly one destination entry.',
+        ok: true,
+        evidence: 'source absent; destination present once',
+      }],
+      findings: [],
+      evidence: [{ command: 'inspect registry', output: 'postconditions satisfied' }],
+    },
+    ...overrides,
+  });
+}
+
+/**
  * @param {Record<string, any>} task
  * @param {'lite' | 'full'} [mode]
  */
@@ -101,6 +186,353 @@ function assertNamedFailure(result, name) {
 test('canonical task shape validates through the authoritative core', async () => {
   const result = await verdictFor(canonicalTask());
   assert.equal(result.ok, true);
+});
+
+test('issue 101 canonical operation ledger omits all code-only scaffolding and rejects malformed fields when present', async (t) => {
+  const operation = canonicalOperationTask();
+  const accepted = await verdictFor(operation);
+  assert.equal(accepted.ok, true, accepted.stderr.join('\n'));
+
+  /** @type {Array<[string, Record<string, any>, string]>} */
+  const malformed = [
+    ['tests', { ...operation, tests: null }, '[schema] tests'],
+    ['review', { ...operation, review: null }, '[schema] review'],
+    ['review2', { ...operation, review2: {} }, '[schema] review2'],
+    ['code identity', {
+      ...operation,
+      agents: { ...operation.agents, implementer_agent_id: 42 },
+    }, '[schema] agents.implementer_agent_id'],
+  ];
+  for (const [name, task, failure] of malformed) {
+    await t.test(name, async () => {
+      const result = await verdictFor(task);
+      assertNamedFailure(result, failure);
+    });
+  }
+});
+
+test('issue 101 category defaults historical tasks to code and keeps both graphs closed', async (t) => {
+  const operation = canonicalOperationTask();
+
+  for (const task of [canonicalTask(), canonicalTask({ category: 'code' }), operation]) {
+    const result = await verdictFor(task);
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  }
+
+  await t.test('unknown category fails closed', async () => {
+    const result = await verdictFor(canonicalTask({ category: 'documentation' }));
+    assertNamedFailure(result, '[schema] category');
+  });
+
+  await t.test('historical omission stays on the code graph', async () => {
+    const result = await verdictFor(canonicalTask({ stage: 'execute' }));
+    assertNamedFailure(result, '[category-stage]');
+  });
+
+  await t.test('operation cannot enter the code graph', async () => {
+    const result = await verdictFor({ ...operation, stage: 'implement' });
+    assertNamedFailure(result, '[category-stage]');
+  });
+
+  for (const destination of ['capture', 'plan', 'execute']) {
+    await t.test(`operation judgment can kick back to ${destination}`, async () => {
+      const result = await verdictFor({
+        ...operation,
+        kickbacks: [{
+          from: 'verify',
+          to: destination,
+          reason: 'A deterministic postcondition failed.',
+          at: '2026-07-12T01:00:00Z',
+        }],
+      });
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+    });
+  }
+
+  await t.test('operation kickback cannot target a code stage', async () => {
+    const result = await verdictFor({
+      ...operation,
+      kickbacks: [{
+        from: 'verify',
+        to: 'implement',
+        reason: 'Wrong graph.',
+        at: '2026-07-12T01:00:00Z',
+      }],
+    });
+    assertNamedFailure(result, '[category-stage]');
+  });
+});
+
+test('issue 101 operation done gate requires execution, independent verification, and conditional audit only', async (t) => {
+  const doneOperation = completedOperationTask();
+
+  const accepted = await verdictFor(doneOperation);
+  assert.equal(accepted.ok, true, accepted.stderr.join('\n'));
+
+  /** @type {Array<[string, Record<string, any>, string]>} */
+  const invalid = [
+    ['execution actions', {
+      ...doneOperation,
+      execution: { ...doneOperation.execution, actions: [] },
+    }, '[inv4]'],
+    ['execution evidence', {
+      ...doneOperation,
+      execution: { ...doneOperation.execution, evidence: [] },
+    }, '[inv4]'],
+    ['verification pass', {
+      ...doneOperation,
+      verification: { ...doneOperation.verification, verdict: 'needs-work' },
+    }, '[inv4]'],
+    ['successful postconditions', {
+      ...doneOperation,
+      verification: {
+        ...doneOperation.verification,
+        postconditions: [{ ...doneOperation.verification.postconditions[0], ok: false }],
+      },
+    }, '[inv4]'],
+    ['verification evidence', {
+      ...doneOperation,
+      verification: { ...doneOperation.verification, evidence: [] },
+    }, '[inv4]'],
+    ['executor/verifier separation', {
+      ...doneOperation,
+      agents: { ...doneOperation.agents, verifier_agent_id: 'executor' },
+      verification: { ...doneOperation.verification, verifier_agent_id: 'executor' },
+    }, '[inv2]'],
+    ['required audit pass', {
+      ...doneOperation,
+      audit: { ...doneOperation.audit, required: true },
+    }, '[inv4]'],
+  ];
+
+  for (const [name, task, failure] of invalid) {
+    await t.test(`done rejects missing ${name}`, async () => {
+      const result = await verdictFor(task);
+      assertNamedFailure(result, failure);
+    });
+  }
+});
+
+test('issue 101 surviving blocker: persisted done operation requires exact planned postconditions', async (t) => {
+  const planned = [
+    'AC1: The source is absent.',
+    'AC2: The destination exists exactly once.',
+  ];
+  const base = completedOperationTask();
+  const verified = planned.map((postcondition, index) => ({
+    postcondition,
+    ok: true,
+    evidence: `independent check ${index + 1} passed`,
+  }));
+  const exact = completedOperationTask({
+    plan: { ...base.plan, postconditions: planned },
+    verification: { ...base.verification, postconditions: verified },
+  });
+  const accepted = await verdictFor(exact);
+  assert.equal(accepted.ok, true, accepted.stderr.join('\n'));
+
+  const withoutPlan = structuredClone(exact);
+  delete withoutPlan.plan;
+  /** @type {Array<[string, Record<string, any>]>} */
+  const invalid = [
+    ['missing plan', withoutPlan],
+    ['omitted result', {
+      ...exact,
+      verification: { ...exact.verification, postconditions: [verified[0]] },
+    }],
+    ['duplicate result', {
+      ...exact,
+      verification: { ...exact.verification, postconditions: [verified[0], verified[0]] },
+    }],
+    ['extra result', {
+      ...exact,
+      verification: {
+        ...exact.verification,
+        postconditions: [...verified, {
+          postcondition: 'AC3: The audit log is unchanged.',
+          ok: true,
+          evidence: 'independent check passed',
+        }],
+      },
+    }],
+    ['renamed result', {
+      ...exact,
+      verification: {
+        ...exact.verification,
+        postconditions: [verified[0], {
+          ...verified[1],
+          postcondition: 'AC2: A destination exists.',
+        }],
+      },
+    }],
+    ['reordered results', {
+      ...exact,
+      verification: { ...exact.verification, postconditions: [verified[1], verified[0]] },
+    }],
+  ];
+  for (const [name, task] of invalid) {
+    await t.test(name, async () => {
+      const result = await verdictFor(task);
+      assertNamedFailure(result, '[inv4]');
+    });
+  }
+});
+
+test('issue 101 surviving blocker: persisted operation action and evidence content is nonempty', async (t) => {
+  const done = completedOperationTask();
+  /** @type {Array<[string, Record<string, any>, string]>} */
+  const invalid = [
+    ['non-string execution action', {
+      ...done,
+      execution: { ...done.execution, actions: [42] },
+    }, '[schema] execution.actions[0]'],
+    ['empty execution action', {
+      ...done,
+      execution: { ...done.execution, actions: [''] },
+    }, '[schema] execution.actions[0]'],
+    ['empty execution evidence command', {
+      ...done,
+      execution: {
+        ...done.execution,
+        evidence: [{ ...done.execution.evidence[0], command: '' }],
+      },
+    }, '[schema] execution.evidence[0].command'],
+    ['empty execution evidence output', {
+      ...done,
+      execution: {
+        ...done.execution,
+        evidence: [{ ...done.execution.evidence[0], output: '' }],
+      },
+    }, '[schema] execution.evidence[0].output'],
+    ['empty verified postcondition', {
+      ...done,
+      verification: {
+        ...done.verification,
+        postconditions: [{ ...done.verification.postconditions[0], postcondition: '' }],
+      },
+    }, '[schema] verification.postconditions[0].postcondition'],
+    ['empty postcondition evidence', {
+      ...done,
+      verification: {
+        ...done.verification,
+        postconditions: [{ ...done.verification.postconditions[0], evidence: '' }],
+      },
+    }, '[schema] verification.postconditions[0].evidence'],
+    ['empty verification evidence command', {
+      ...done,
+      verification: {
+        ...done.verification,
+        evidence: [{ ...done.verification.evidence[0], command: '' }],
+      },
+    }, '[schema] verification.evidence[0].command'],
+    ['empty verification evidence output', {
+      ...done,
+      verification: {
+        ...done.verification,
+        evidence: [{ ...done.verification.evidence[0], output: '' }],
+      },
+    }, '[schema] verification.evidence[0].output'],
+  ];
+  for (const [name, task, failure] of invalid) {
+    await t.test(name, async () => {
+      const result = await verdictFor(task);
+      assertNamedFailure(result, failure);
+    });
+  }
+});
+
+test('issue 101 irreversible operation done gate requires an exact retained operator approval', async (t) => {
+  const mutation = 'Rewrite the shared release registry entry from source to destination.';
+  const approval = {
+    mutation,
+    grantedBy: 'Chef',
+    grantedAt: '2026-07-26T15:30:00Z',
+  };
+  const approved = completedOperationTask({
+    plan: {
+      ...completedOperationTask().plan,
+      requiresApproval: true,
+    },
+    approvals: [approval],
+    execution: {
+      ...completedOperationTask().execution,
+      approval,
+    },
+  });
+
+  const accepted = await verdictFor(approved);
+  assert.equal(accepted.ok, true, accepted.stderr.join('\n'));
+
+  /** @type {Array<[string, Record<string, any>, string]>} */
+  const invalid = [
+    ['approval-gated plan without operator grant', completedOperationTask({
+      plan: {
+        ...completedOperationTask().plan,
+        requiresApproval: true,
+      },
+    }), '[inv4]'],
+    ['missing retained grant', {
+      ...approved,
+      approvals: [],
+    }, '[inv4]'],
+    ['different granted mutation', {
+      ...approved,
+      approvals: [{ ...approval, mutation: 'Delete the shared release registry entry.' }],
+    }, '[inv4]'],
+    ['malformed grant time', {
+      ...approved,
+      approvals: [{ ...approval, grantedAt: 'tomorrow' }],
+    }, '[schema] approvals[0].grantedAt'],
+    ['malformed executed grant', {
+      ...approved,
+      execution: {
+        ...approved.execution,
+        approval: { ...approval, grantedAt: 'tomorrow' },
+      },
+    }, '[schema] execution.approval.grantedAt'],
+  ];
+  for (const [name, task, failure] of invalid) {
+    await t.test(name, async () => {
+      const result = await verdictFor(task);
+      assertNamedFailure(result, failure);
+    });
+  }
+});
+
+test('issue 101 cycle 2: operation auditor identity is ledger-bound and differs from the executor', async (t) => {
+  const completed = completedOperationTask();
+  const audited = completedOperationTask({
+    agents: {
+      ...completed.agents,
+      audit_agent_id: 'operation-auditor',
+    },
+    audit: {
+      required: true,
+      verdict: 'pass',
+      audit_agent_id: 'operation-auditor',
+      findings: [],
+      evidence: [{ command: 'inspect operation boundary', output: 'no findings' }],
+    },
+  });
+  const accepted = await verdictFor(audited);
+  assert.equal(accepted.ok, true, accepted.stderr.join('\n'));
+
+  await t.test('container identity must equal the ledger identity', async () => {
+    const result = await verdictFor({
+      ...audited,
+      audit: { ...audited.audit, audit_agent_id: 'different-auditor' },
+    });
+    assertNamedFailure(result, '[inv2]');
+  });
+
+  await t.test('auditor cannot reuse the executor identity', async () => {
+    const result = await verdictFor({
+      ...audited,
+      agents: { ...audited.agents, audit_agent_id: audited.agents.executor_agent_id },
+      audit: { ...audited.audit, audit_agent_id: audited.agents.executor_agent_id },
+    });
+    assertNamedFailure(result, '[inv2]');
+  });
 });
 
 test('issue 95 persisted plan refactor opportunity preserves omission and validates present values', async (t) => {

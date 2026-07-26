@@ -10,7 +10,7 @@ const SKILL_FILES = [
   '../../skills/security-auditor/SKILL.md',
   '../../skills/testing/SKILL.md',
 ];
-const JUDGMENT_AGENT_FILES = ['../../agents/cook-review.md', '../../agents/cook-audit.md', '../../agents/cook-refute.md'];
+const JUDGMENT_AGENT_FILES = ['../../agents/cook-review.md', '../../agents/cook-verify.md', '../../agents/cook-audit.md', '../../agents/cook-refute.md'];
 const MAX_SKILL_DESCRIPTION_CHARS = 1024;
 
 /**
@@ -73,7 +73,7 @@ test('skill frontmatter descriptions stay under Pi limit', async () => {
   }
 });
 
-test('judgment agent frontmatter stays read-only', async () => {
+test('issue 101 surviving blocker: judgment agent frontmatter stays read-only', async () => {
   for (const relative of JUDGMENT_AGENT_FILES) {
     const file = new URL(relative, import.meta.url);
     const text = await readFile(file, 'utf8');

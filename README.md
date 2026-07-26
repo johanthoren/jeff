@@ -28,6 +28,18 @@ and brings back the plate only when it's worthy.
 Capture > Plan + Tests > Implement > (Refactor if owed) > Review > (Audit if risky) > Done
 ```
 
+For bounded operation tasks, the alternate path is:
+
+`capture → plan → execute → verify → conditional audit → done`
+
+Operation tasks do not use code-task test scaffolding, implementation, refactor,
+review, or the full-suite gate. Done retains the operation plan and requires
+nonempty execution evidence, exact ordered independent verification of every
+planned postcondition, and an audit pass when audit is required. Pi supplies
+fixed plan-bound Git/HTTPS reads and a parent-only exact approval UI. Hosts that
+cannot narrow verification or authenticate parent approval fail closed; the
+executor can neither supply nor rewrite a grant.
+
 - **Capture:** Jeff pins the order down with you: what *done* means, what's out
   of scope, before a pan gets hot.
 - **Plan + tests:** one fresh cook designs the approach and proof, then puts the
@@ -40,7 +52,7 @@ Capture > Plan + Tests > Implement > (Refactor if owed) > Review > (Audit if ris
 - **Review:** a fresh cook who never touched the dish checks it against your
   standard.
 - **Audit:** when the dish is risky, a security pass before it leaves.
-- **Done:** only when the full suite is green and the order is met. Not "should
+- **Code done:** only when the full suite is green and the order is met. Not "should
   work." Does work.
 
 Every station is a fresh cook: no one works off a half-remembered chat. The cook

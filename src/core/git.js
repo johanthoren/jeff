@@ -11,10 +11,15 @@ import { readMode } from './store.js';
  *
  * @param {string} root
  * @param {string[]} args
+ * @param {{env?: NodeJS.ProcessEnv}} [options]
  * @returns {import('node:child_process').SpawnSyncReturns<string>}
  */
-export function git(root, args) {
-  return spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+export function git(root, args, options = {}) {
+  return spawnSync('git', ['-C', root, ...args], {
+    ...options,
+    encoding: 'utf8',
+    env: { ...process.env, ...options.env },
+  });
 }
 
 /**

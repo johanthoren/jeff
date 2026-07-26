@@ -6,7 +6,8 @@
  */
 
 /** @typedef {'pending' | 'in_progress' | 'blocked' | 'done' | 'abandoned'} TaskStatus */
-/** @typedef {'capture' | 'plan' | 'implement' | 'refactor' | 'review' | 'audit' | 'done'} TaskStage */
+/** @typedef {'code' | 'operation'} TaskCategory */
+/** @typedef {'capture' | 'plan' | 'implement' | 'refactor' | 'execute' | 'review' | 'verify' | 'audit' | 'done'} TaskStage */
 /** @typedef {'p0' | 'p1' | 'p2' | 'p3' | 'p4'} TaskPriority */
 /** @typedef {'simple' | 'complex'} TaskComplexity */
 /** @typedef {'pass' | 'needs-work' | null} ReviewVerdict */
@@ -32,11 +33,44 @@
  */
 
 /**
+ * @typedef {Object} Approval
+ * @property {string} mutation
+ * @property {string} grantedBy
+ * @property {string} grantedAt
+ */
+
+/**
+ * @typedef {Object} PlanEscalation
+ * @property {string} fork
+ * @property {string[]} options
+ */
+
+/**
+ * @typedef {Object} TaskPlan
+ * @property {string} result
+ * @property {string[]} slices
+ * @property {string[]} [testFiles]
+ * @property {{command: string | null, output: string}} [redRun]
+ * @property {PlanEscalation | null} escalation
+ * @property {string | null} [refactorOpportunity]
+ * @property {string[]} [runbook]
+ * @property {string[]} [preconditions]
+ * @property {string} [recoveryBoundary]
+ * @property {string} [approvalBoundary]
+ * @property {boolean} [requiresApproval]
+ * @property {string[]} [postconditions]
+ * @property {string[]} [verificationSeams]
+ */
+
+
+/**
  * @typedef {Object} TaskAgents
- * @property {string | null} implementer_agent_id
- * @property {string | null} reviewer_agent_id
+ * @property {string | null} [implementer_agent_id]
+ * @property {string | null} [reviewer_agent_id]
  * @property {string | null} [reviewer2_agent_id]
  * @property {string | null} audit_agent_id
+ * @property {string | null} [executor_agent_id]
+ * @property {string | null} [verifier_agent_id]
  */
 
 /**
@@ -86,18 +120,27 @@
  * @typedef {Object} CouncilFinding
  * @property {string} id
  * @property {string} summary
- * @property {'review' | 'review2' | 'audit'} [source]
+ * @property {'review' | 'review2' | 'verify' | 'audit'} [source]
  * @property {number} blockingVotes
  * @property {boolean} survived
  * @property {number | string | null} followupTaskId
  */
 
 /**
- * @typedef {Object} Convergence
+ * @typedef {Object} CodeConvergence
  * @property {number} cap
  * @property {{review: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
  * @property {{convened: boolean, stage: 'review' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  */
+
+/**
+ * @typedef {Object} OperationConvergence
+ * @property {number} cap
+ * @property {{verify: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
+ * @property {{convened: boolean, stage: 'verify' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ */
+
+/** @typedef {CodeConvergence | OperationConvergence} Convergence */
 
 /**
  * The canonical per-task state persisted to `task.json`. `id` is numeric in
@@ -109,18 +152,22 @@
  * @property {string} slug
  * @property {string} title
  * @property {TaskStatus} status
+ * @property {TaskCategory} [category]
  * @property {TaskStage} stage
  * @property {TaskPriority} priority
  * @property {Array<number | string>} deps
  * @property {string} createdAt
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]
- * @property {{result: string, slices: string[], testFiles: string[], redRun: {command: string | null, output: string}, escalation: {fork: string, options: string[]} | null, refactorOpportunity?: string | null}} [plan]
+ * @property {TaskPlan} [plan]
  * @property {TaskAgents} agents
- * @property {TaskTests} tests
- * @property {Review} review
+ * @property {TaskTests} [tests]
+ * @property {Review} [review]
  * @property {Review | null} [review2]
  * @property {Audit} audit
+ * @property {{result: 'executed' | 'kickback' | 'approval-required', executor_agent_id: string | null, actions: string[], evidence: unknown[], approvalRequired: string | null, approval?: Approval}} [execution]
+ * @property {Approval[]} [approvals]
+ * @property {{verdict: ReviewVerdict, verifier_agent_id: string | null, postconditions: Array<{postcondition: string, ok: boolean, evidence: string}>, findings: unknown[], evidence: unknown[]}} [verification]
  * @property {unknown[]} commits
  * @property {Kickback[]} kickbacks
  * @property {string | null} blockedReason

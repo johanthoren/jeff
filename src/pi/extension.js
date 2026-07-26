@@ -3,7 +3,11 @@
 import { truncateToVisualLines } from '@earendil-works/pi-coding-agent';
 import { readConfig } from '../core/store.js';
 import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
-import { recordSpecialistReturn } from '../core/record.js';
+import {
+  getPendingApproval as readPendingApproval,
+  recordApproval as saveApproval,
+  recordSpecialistReturn,
+} from '../core/record.js';
 import { validateSpecialistReturn } from '../core/record-contract.js';
 
 const DISPLAY_ITEM_LIMIT = 8;
@@ -28,6 +32,12 @@ function displayText(value) {
   }
   return text;
 }
+/** @param {unknown} value */
+function displayApproval(value) {
+  if (typeof value !== 'string') return '';
+  return makeWellFormed([...value].filter((character) => !DISPLAY_CONTROL.test(character)).join(''));
+}
+
 
 /** @param {unknown} values */
 function displayTexts(values) {
@@ -66,6 +76,34 @@ function displayProjection(result) {
             reason: displayText(result.kickback.reason),
           },
         } : {}),
+      };
+    case 'execute':
+      return {
+        stage,
+        ...status,
+        ...(result.kickback ? {
+          kickback: {
+            to: displayText(result.kickback.to),
+            reason: displayText(result.kickback.reason),
+          },
+        } : {}),
+        ...(result.approvalRequired ? { approvalRequired: displayApproval(result.approvalRequired) } : {}),
+      };
+    case 'verify':
+      return {
+        stage,
+        ...status,
+        findings: Array.isArray(result.findings)
+          ? result.findings.slice(0, DISPLAY_ITEM_LIMIT).map((finding) => ({
+              severity: displayText(finding.severity),
+              class: displayText(finding.class),
+              file: displayText(finding.file),
+              line: Number.isInteger(finding.line) && finding.line > 0 ? finding.line : undefined,
+              kickTo: displayText(finding.kickTo),
+              what: displayText(finding.what),
+              why: displayText(finding.why),
+            }))
+          : [],
       };
     case 'refactor':
       return { stage, ...status, summary: displayTexts(result.summary) };
@@ -171,6 +209,12 @@ function compactDispatchLine(details) {
   if (stage === 'plan' && details.escalation) {
     return `${stage}: ${status} | ${details.escalation.fork} (${details.escalation.options.join(', ')})`;
   }
+  if (stage === 'execute' && details.approvalRequired) {
+    return `${stage}: ${status} | ${details.approvalRequired}`;
+  }
+  if (stage === 'execute' && details.kickback) {
+    return `${stage}: ${status} to ${details.kickback.to} | ${details.kickback.reason}`;
+  }
   if (stage === 'implement' && details.kickback) {
     return `${stage}: ${status} to ${details.kickback.to} | ${details.kickback.reason}`;
   }
@@ -229,12 +273,28 @@ const DispatchParams = {
   },
 };
 
+const ApprovalParams = {
+  type: 'object',
+  required: ['taskId'],
+  additionalProperties: false,
+  properties: {
+    taskId: { type: 'string', description: 'Operation task awaiting exact parent approval' },
+  },
+};
+
+
 /**
  * @param {any} pi
- * @param {{ dispatchRoleSession?: typeof runRoleSession }} [dependencies]
+ * @param {{
+ *   dispatchRoleSession?: typeof runRoleSession,
+ *   getPendingApproval?: typeof readPendingApproval,
+ *   recordApproval?: typeof saveApproval,
+ * }} [dependencies]
  */
 export default function jeffExtension(pi, dependencies = {}) {
   const dispatchRoleSession = dependencies.dispatchRoleSession ?? runRoleSession;
+  const getPendingApproval = dependencies.getPendingApproval ?? readPendingApproval;
+  const recordApproval = dependencies.recordApproval ?? saveApproval;
   pi.registerCommand('jeff-status', {
     description: 'Report that the jeff Pi package is active',
     /**
@@ -247,10 +307,43 @@ export default function jeffExtension(pi, dependencies = {}) {
   });
 
   pi.registerTool({
+    name: 'cook_approve',
+    label: 'Cook Approve',
+    description: 'Ask the parent operator to approve the exact pending operation mutation.',
+    parameters: ApprovalParams,
+    /**
+     * @param {string} _toolCallId
+     * @param {{ taskId: string }} params
+     * @param {AbortSignal | undefined} _signal
+     * @param {unknown} _onUpdate
+     * @param {any} ctx
+     */
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (typeof ctx?.ui?.confirm !== 'function' || typeof ctx.ui.input !== 'function') {
+        throw new Error('cook_approve: parent approval UI is unavailable');
+      }
+      const mutation = await getPendingApproval(ctx.cwd, params.taskId);
+      const confirmed = await ctx.ui.confirm(
+        'Approve exact mutation?',
+        `The executor is stopped before this irreversible shared mutation:\n\n${mutation}`,
+      );
+      if (!confirmed) {
+        return { content: [{ type: 'text', text: 'Approval not recorded.' }], details: { recorded: false } };
+      }
+      const operator = await ctx.ui.input('Operator identity', 'Enter the identity granting this exact mutation.');
+      if (typeof operator !== 'string' || operator.trim().length === 0) {
+        return { content: [{ type: 'text', text: 'Approval not recorded.' }], details: { recorded: false } };
+      }
+      await recordApproval(ctx.cwd, params.taskId, operator, mutation);
+      return { content: [{ type: 'text', text: 'Approval recorded.' }], details: { recorded: true } };
+    },
+  });
+
+  pi.registerTool({
     name: 'cook_dispatch',
     label: 'Cook Dispatch',
     description: 'Dispatch a jeff specialist in a fresh Pi role session.',
-    promptSnippet: 'Dispatch a jeff plan, implement, refactor, review, audit, or refute role session.',
+    promptSnippet: 'Dispatch a jeff plan, implement, refactor, execute, review, verify, audit, or refute role session.',
     parameters: DispatchParams,
     renderCall: renderDispatchCall,
     renderResult: renderDispatchResult,
@@ -271,6 +364,7 @@ export default function jeffExtension(pi, dependencies = {}) {
         currentModel: ctx.model,
         modelRegistry: ctx.modelRegistry,
         sdk: pi.pi,
+        taskId: params.taskId,
       });
 
       let specialistReturn;

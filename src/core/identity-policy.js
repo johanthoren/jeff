@@ -12,15 +12,18 @@ function activeAgentIds(task) {
     task.agents?.reviewer_agent_id,
     task.agents?.reviewer2_agent_id,
     task.agents?.audit_agent_id,
+    task.agents?.executor_agent_id,
+    task.agents?.verifier_agent_id,
     task.review?.reviewer_agent_id,
     task.review2?.reviewer_agent_id,
     task.audit?.audit_agent_id,
+    task.verification?.verifier_agent_id,
   ]);
 }
 
 /** @param {Record<string, any>} task */
 export function activeRefuterAgentIds(task) {
-  return [task.review, task.review2, task.audit]
+  return [task.review, task.review2, task.verification, task.audit]
     .flatMap((/** @type {any} */ outcome) => outcome?.findings ?? [])
     .flatMap((/** @type {any} */ finding) => agentIds([finding.refute?.agent_id]));
 }

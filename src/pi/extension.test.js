@@ -13,7 +13,7 @@ import jeffExtension, { formatDispatchResult } from './extension.js';
  * @param {Record<string, unknown>} [dependencies]
  * @param {unknown} [hostSdk]
  */
-function registeredDispatchTool(dependencies, hostSdk) {
+function registeredTools(dependencies, hostSdk) {
   const tools = new Map();
   /** @type {any} */ (jeffExtension)({
     pi: hostSdk,
@@ -21,7 +21,15 @@ function registeredDispatchTool(dependencies, hostSdk) {
     /** @param {any} definition */
     registerTool(definition) { tools.set(definition.name, definition); },
   }, dependencies);
-  return tools.get('cook_dispatch');
+  return tools;
+}
+
+/**
+ * @param {Record<string, unknown>} [dependencies]
+ * @param {unknown} [hostSdk]
+ */
+function registeredDispatchTool(dependencies, hostSdk) {
+  return registeredTools(dependencies, hostSdk).get('cook_dispatch');
 }
 
 const AUDIT_CATEGORIES = [
@@ -51,6 +59,28 @@ function specialistReturn(stage, overrides = {}) {
     implement: {
       agent_id: 'implement-agent', stage: 'implement', result: 'green', files: ['src/pi/extension.js'],
       greenRun: { command: 'node --test src/pi/extension.test.js', output: 'pass' }, kickback: null,
+    },
+    execute: {
+      agent_id: 'execute-agent',
+      stage: 'execute',
+      result: 'approval-required',
+      actions: ['Captured recoverable state.'],
+      evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
+      kickback: null,
+      approvalRequired: 'Rewrite the exact shared registry entry.',
+    },
+    verify: {
+      agent_id: 'verify-agent',
+      stage: 'verify',
+      cycle: 0,
+      verdict: 'pass',
+      postconditions: [{
+        postcondition: 'The registry has one destination entry.',
+        ok: true,
+        evidence: 'source absent; destination present once',
+      }],
+      findings: [],
+      evidence: [{ command: 'inspect registry', output: 'postconditions satisfied' }],
     },
     refactor: {
       agent_id: 'refactor-agent', stage: 'refactor', result: 'clean', files: [], outsideDiff: [],
@@ -103,6 +133,18 @@ function markPrivateReturnFields(returned, marker) {
       return { ...common, slices: [marker], testFiles: [marker], redRun: { command: marker, output: marker } };
     case 'implement':
       return { ...common, files: [marker], greenRun: { command: marker, output: marker } };
+    case 'execute':
+      return {
+        ...common,
+        actions: [marker],
+        evidence: [{ command: marker, output: marker }],
+      };
+    case 'verify':
+      return {
+        ...common,
+        postconditions: [{ ...returned.postconditions[0], evidence: marker }],
+        evidence: [{ command: marker, output: marker }],
+      };
     case 'refactor':
       return {
         ...common,
@@ -208,7 +250,7 @@ test('issue 95 plan projection exposes a named refactor opportunity', () => {
   assert.equal(display.refactorOpportunity, opportunity);
 });
 
-test('extension registers /jeff-status and cook_dispatch', () => {
+test('extension registers /jeff-status plus parent dispatch and approval tools', () => {
   const commands = new Map();
   const tools = new Map();
   const pi = {
@@ -232,8 +274,86 @@ test('extension registers /jeff-status and cook_dispatch', () => {
   assert.equal(tools.has('cook_dispatch'), true);
   assert.deepEqual(tools.get('cook_dispatch').parameters.required, ['stage', 'brief']);
   assert.deepEqual(tools.get('cook_dispatch').parameters.properties.stage.enum, [
-    'plan', 'implement', 'refactor', 'review', 'audit', 'refute',
+    'plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute',
   ]);
+  assert.equal(tools.has('cook_approve'), true);
+  assert.deepEqual(tools.get('cook_approve').parameters.required, ['taskId']);
+  assert.deepEqual(Object.keys(tools.get('cook_approve').parameters.properties), ['taskId']);
+});
+
+test('issue 101 cycle 2: parent approval UI authenticates the exact pending mutation', async (t) => {
+  const mutation = 'Rewrite the exact shared registry entry from source to destination.';
+
+  await t.test('confirmed mutation is recorded with parent-entered operator identity', async () => {
+    /** @type {any[]} */
+    const recorded = [];
+    const tool = registeredTools({
+      getPendingApproval: async (
+        /** @type {string} */ root,
+        /** @type {string} */ taskId,
+      ) => {
+        assert.deepEqual([root, taskId], ['/repo', '18']);
+        return mutation;
+      },
+      recordApproval: async (
+        /** @type {string} */ root,
+        /** @type {string} */ taskId,
+        /** @type {string} */ operator,
+        /** @type {string} */ exactMutation,
+      ) => { recorded.push([root, taskId, operator, exactMutation]); },
+    }).get('cook_approve');
+    /** @type {Array<{ title: string, message: string }>} */
+    const prompts = [];
+    assert.ok(tool, '[parent-approval] cook_approve tool is not registered');
+
+    const result = await tool.execute(
+      'approval-call',
+      { taskId: '18' },
+      undefined,
+      undefined,
+      {
+        cwd: '/repo',
+        ui: {
+          confirm: async (/** @type {string} */ title, /** @type {string} */ message) => {
+            prompts.push({ title, message });
+            return true;
+          },
+          input: async (/** @type {string} */ title, /** @type {string} */ message) => {
+            prompts.push({ title, message });
+            return 'Chef';
+          },
+        },
+      },
+    );
+
+    assert.deepEqual(recorded, [['/repo', '18', 'Chef', mutation]]);
+    assert.equal(prompts.some(({ message }) => message.includes(mutation)), true);
+    assert.match(result.content[0].text, /approval recorded/i);
+  });
+
+  await t.test('declined mutation cannot update the ledger', async () => {
+    let recorded = false;
+    const tool = registeredTools({
+      getPendingApproval: async () => mutation,
+      recordApproval: async () => { recorded = true; },
+    }).get('cook_approve');
+    assert.ok(tool, '[parent-approval] cook_approve tool is not registered');
+
+    await tool.execute(
+      'approval-call',
+      { taskId: '18' },
+      undefined,
+      undefined,
+      {
+        cwd: '/repo',
+        ui: {
+          confirm: async () => false,
+          input: assert.fail,
+        },
+      },
+    );
+    assert.equal(recorded, false);
+  });
 });
 
 test('cook_dispatch parses and projects every specialist result across model and TUI surfaces', async (t) => {
@@ -256,6 +376,12 @@ test('cook_dispatch parses and projects every specialist result across model and
         greenRun: { command: null, output: 'Tests overfit the implementation' },
         kickback: { to: 'plan', reason: 'Tests overfit the implementation' },
       }), 'Tests overfit', ['implement', 'kickback', 'plan', 'Tests overfit'], ['kickback', 'result', 'stage']],
+      ['execute approval stop', specialistReturn('execute'), 'Rewrite the exact shared registry entry', [
+        'execute', 'approval-required', 'Rewrite the exact shared registry entry',
+      ], ['approvalRequired', 'result', 'stage']],
+      ['operation verification', specialistReturn('verify'), 'pass', [
+        'verify', 'pass',
+      ], ['findings', 'stage', 'verdict']],
       ['refactor summary', specialistReturn('refactor'), 'Kept one projection', [
         'refactor', 'clean', 'Kept one projection',
       ], ['result', 'stage', 'summary']],

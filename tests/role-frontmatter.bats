@@ -63,3 +63,30 @@ CASES
   grep -E 'notification.*do not require' <<<"$contract"
   grep -E 'not_found.*(prove|evidence).*(cancel|cancellation)' <<<"$contract"
 }
+
+@test "issue 101 cycle 2: operation verification is capability-gated per supported host" {
+  local verify_role contract
+  verify_role="$(cat "$REPO/agents/cook-verify.md")"
+  contract="$(awk '
+    /^### Operation verification host capability gate$/ { found = 1 }
+    found && /^### / && $0 != "### Operation verification host capability gate" { exit }
+    found { print }
+  ' "$REPO/skills/cook/SKILL.md")"
+  grep -F 'verify_query' <<<"$verify_role"
+  grep -E 'unavailable.*(fail closed|escalat)|(fail closed|escalat).*unavailable' <<<"$verify_role"
+  grep -E 'Pi.*verify_query' <<<"$contract"
+  grep -E 'Claude Code.*fail closed' <<<"$contract"
+  grep -E 'Codex.*fail closed' <<<"$contract"
+  grep -E 'before.*dispatch' <<<"$contract"
+  grep -E 'Git.*external-state' <<<"$contract"
+  grep -E '(Never|never).*(executor|execute).*evidence' <<<"$contract"
+}
+
+@test "issue 101 cycle 2: operation planner has a strict durable escalation return" {
+  local role
+  role="$(cat "$REPO/agents/cook-plan.md")"
+
+  grep -E 'operation.*unresolved fork|unresolved fork.*operation' <<<"$role"
+  grep -F '"stage":"plan","result":"escalation"' <<<"$role"
+  grep -E '"slices":.*"escalation":.*"fork":.*"options"' <<<"$role"
+}

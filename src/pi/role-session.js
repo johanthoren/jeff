@@ -1,16 +1,26 @@
 // @ts-check
 
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { prepareInstalledSdkSession } from './pi-sdk-adapter.js';
+import {
+  getApprovedOperationBoundary as readApprovedOperationBoundary,
+  getOperationApprovalBoundary as readOperationApprovalBoundary,
+  getVerificationSeams as readVerificationSeams,
+} from '../core/record.js';
+import { canonicalizeOperationBatch, parseCanonicalOperationBatch } from '../core/operation-batch.js';
+import { readConfig } from '../core/store.js';
+import { queryVerificationState as runVerificationQuery } from '../core/verify-query.js';
 
-export const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refute'];
+export const STAGES = ['plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute'];
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
-const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
+const COMMAND_TOOLS = [...READ_TOOLS, 'bash'];
+const EDIT_TOOLS = [...COMMAND_TOOLS, 'edit', 'write'];
 const PACKAGE_ROOT = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..'));
 const OMP_SETTINGS = {
   'advisor.enabled': false,
@@ -37,10 +47,136 @@ const OMP_SETTINGS = {
  * @param {string} stage
  * @returns {string[]}
  */
-function toolsForStage(stage) {
-  if (stage === 'plan' || stage === 'implement' || stage === 'refactor') return EDIT_TOOLS;
+function toolsForStage(stage, approvalGated = false) {
+  if (stage === 'execute' && approvalGated) return READ_TOOLS;
+  if (['plan', 'implement', 'refactor', 'execute'].includes(stage)) return EDIT_TOOLS;
   return READ_TOOLS;
 }
+
+const VerifyQueryParams = {
+  type: 'object',
+  required: ['kind'],
+  additionalProperties: false,
+  properties: {
+    kind: {
+      type: 'string',
+      enum: ['git-head', 'git-status', 'git-ref', 'git-tree', 'git-object', 'https-get'],
+      description: 'Fixed read-only query kind',
+    },
+    target: { type: 'string', description: 'Plan-named Git target' },
+    url: { type: 'string', description: 'Plan-named HTTPS URL' },
+  },
+};
+
+/**
+ * @param {string} root
+ * @param {string[]} verificationSeams
+ * @param {(root: string, value: unknown, dependencies: { verificationSeams: string[] }) => Promise<{ command: string, output: string }>} queryVerificationState
+ */
+function createVerifyQueryTool(root, verificationSeams, queryVerificationState) {
+  return {
+    name: 'verify_query',
+    label: 'Verify Query',
+    description: 'Run one fixed read-only Git or HTTPS query named by the operation plan.',
+    parameters: VerifyQueryParams,
+    /**
+     * @param {string} _toolCallId
+     * @param {Record<string, unknown>} query
+     */
+    async execute(_toolCallId, query) {
+      const evidence = await queryVerificationState(root, query, { verificationSeams });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(evidence) }],
+        details: evidence,
+      };
+    },
+  };
+}
+
+const OperationApplyParams = {
+  type: 'object',
+  required: ['batch'],
+  additionalProperties: false,
+  properties: {
+    batch: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        required: ['program', 'args'],
+        additionalProperties: false,
+        properties: {
+          program: { type: 'string', minLength: 1 },
+          args: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+  },
+};
+
+/**
+ * @param {string} root
+ * @param {string} taskId
+ * @param {string} approvalBoundary
+ * @param {(root: string, taskId: string) => Promise<string>} getApprovedOperationBoundary
+ * @param {(program: string, args: string[], options: Record<string, unknown>) => any} spawnOperation
+ */
+function createOperationApplyTool(
+  root,
+  taskId,
+  approvalBoundary,
+  getApprovedOperationBoundary,
+  spawnOperation,
+) {
+  return {
+    name: 'operation_apply',
+    label: 'Operation Apply',
+    description: 'Run the exact parent-approved argv batch from the completed operation plan.',
+    parameters: OperationApplyParams,
+    /** @param {string} _toolCallId @param {unknown} params */
+    async execute(_toolCallId, params) {
+      if (params === null || typeof params !== 'object' || Array.isArray(params)
+        || Object.keys(params).length !== 1 || !Object.hasOwn(params, 'batch')) {
+        throw new Error('[operation-apply] input must contain only batch');
+      }
+      const requested = canonicalizeOperationBatch(/** @type {Record<string, unknown>} */ (params).batch);
+      const approved = await getApprovedOperationBoundary(root, taskId);
+      if (requested.canonical !== approvalBoundary || approved !== approvalBoundary) {
+        throw new Error('[operation-apply] batch does not match the plan, pending request, and parent grant');
+      }
+      const evidence = [];
+      let ok = true;
+      for (const action of requested.batch) {
+        const result = spawnOperation(action.program, action.args, {
+          cwd: root,
+          encoding: 'utf8',
+          shell: false,
+        });
+        const status = typeof result.status === 'number' ? result.status : null;
+        evidence.push({
+          command: JSON.stringify(action),
+          output: JSON.stringify({
+            status,
+            signal: result.signal ?? null,
+            stdout: typeof result.stdout === 'string' ? result.stdout : '',
+            stderr: typeof result.stderr === 'string' ? result.stderr : '',
+            ...(result.error ? { error: String(result.error.message ?? result.error) } : {}),
+          }),
+        });
+        if (status !== 0 || result.error) {
+          ok = false;
+          break;
+        }
+      }
+      const details = { ok, evidence };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(details) }],
+        details,
+      };
+    },
+  };
+}
+
 
 /** @returns {string} */
 export function generateAgentId() {
@@ -347,12 +483,18 @@ async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, 
  *   stage: string,
  *   brief: string,
  *   taskDir?: string,
+ *   taskId?: string,
  *   cwd: string,
  *   repoRoot?: string,
  *   currentModel?: unknown,
  *   modelRegistry?: unknown,
  *   sdk?: unknown,
  *   generateAgentId?: () => string,
+ *   getVerificationSeams?: typeof readVerificationSeams,
+ *   queryVerificationState?: (root: string, value: unknown, dependencies: { verificationSeams: string[] }) => Promise<{ command: string, output: string }>,
+ *   getOperationApprovalBoundary?: typeof readOperationApprovalBoundary,
+ *   getApprovedOperationBoundary?: typeof readApprovedOperationBoundary,
+ *   spawnOperation?: (program: string, args: string[], options: Record<string, unknown>) => any,
  * }} opts
  * @returns {Promise<{ agent_id: string, stage: string, brain: { provider: string | undefined, model: string | undefined, effort: string | undefined }, transcript: string }>}
  */
@@ -366,6 +508,46 @@ export async function dispatchRoleSession(opts) {
   const current = modelParts(opts.currentModel);
   if (!current.provider || !current.id) throw new Error('cook_dispatch: orchestrator model is unavailable');
   const sdk = await loadSdk(opts.sdk);
+  let approvalBoundary = null;
+  if (opts.stage === 'execute') {
+    const config = await readConfig(opts.cwd);
+    const resolveTrackedTask = opts.getOperationApprovalBoundary !== undefined || config?.active === true;
+    const missingScopedTaskId = opts.taskDir !== undefined
+      || opts.taskId !== undefined
+      || opts.getOperationApprovalBoundary !== undefined;
+    if (resolveTrackedTask && missingScopedTaskId
+      && (typeof opts.taskId !== 'string' || opts.taskId.trim().length === 0)) {
+      throw new Error('cook_dispatch: approval-gated operation execute requires a task id');
+    }
+    if (resolveTrackedTask && typeof opts.taskId === 'string' && opts.taskId.trim().length > 0) {
+      approvalBoundary = await (opts.getOperationApprovalBoundary ?? readOperationApprovalBoundary)(
+        opts.cwd,
+        opts.taskId,
+      );
+      if (approvalBoundary !== null) {
+        approvalBoundary = parseCanonicalOperationBatch(approvalBoundary).canonical;
+      }
+    }
+  }
+  const verificationSeams = opts.stage === 'verify' && opts.taskId
+    ? await (opts.getVerificationSeams ?? readVerificationSeams)(opts.cwd, opts.taskId)
+    : [];
+  let customTools;
+  if (opts.stage === 'verify') {
+    customTools = [createVerifyQueryTool(
+      opts.cwd,
+      verificationSeams,
+      opts.queryVerificationState ?? runVerificationQuery,
+    )];
+  } else if (opts.stage === 'execute' && approvalBoundary !== null && opts.taskId) {
+    customTools = [createOperationApplyTool(
+      opts.cwd,
+      opts.taskId,
+      approvalBoundary,
+      opts.getApprovedOperationBoundary ?? readApprovedOperationBoundary,
+      opts.spawnOperation ?? spawnSync,
+    )];
+  }
   const prompt = buildRolePrompt({
     stage: opts.stage,
     agentId,
@@ -377,7 +559,7 @@ export async function dispatchRoleSession(opts) {
   let streamed = '';
   let final = '';
   const sessionManager = sdk.SessionManager?.inMemory?.(opts.cwd);
-  const tools = toolsForStage(opts.stage);
+  const tools = toolsForStage(opts.stage, approvalBoundary !== null);
   const omp = typeof sdk.createSubagentSettings === 'function'
     ? await prepareOmpSession(sdk, opts.cwd, tools, agentId, opts.modelRegistry, opts.currentModel)
     : undefined;
@@ -390,6 +572,7 @@ export async function dispatchRoleSession(opts) {
     parentModelRegistry: opts.modelRegistry,
     currentModel: opts.currentModel,
   });
+  /** @type {Record<string, any>} */
   const sessionOptions = {
     cwd: opts.cwd,
     model: opts.currentModel,
@@ -399,6 +582,7 @@ export async function dispatchRoleSession(opts) {
     modelRegistry: opts.modelRegistry,
     ...isolation?.sessionOptions,
   };
+  if (customTools) sessionOptions.customTools = customTools;
   let created;
   try {
     created = await sdk.createAgentSession(sessionOptions);
@@ -415,10 +599,14 @@ export async function dispatchRoleSession(opts) {
       throw new Error(`cook_dispatch: child model drifted from ${current.provider}/${current.id} to ${actual.provider ?? 'unknown'}/${actual.id ?? 'unknown'}`);
     }
     if (isolation) {
+      const expectedTools = [
+        ...isolation.toolNames,
+        ...(customTools ?? []).map((tool) => tool.name),
+      ];
       const active = session.getActiveToolNames?.();
-      if (!Array.isArray(active) || active.length !== isolation.toolNames.length || isolation.toolNames.some((tool) => !active.includes(tool))) {
+      if (!Array.isArray(active) || active.length !== expectedTools.length || expectedTools.some((tool) => !active.includes(tool))) {
         const received = Array.isArray(active) ? active.join(', ') : 'unavailable';
-        throw new Error(`cook_dispatch: child tool isolation failed (expected ${isolation.toolNames.join(', ')}, got ${received})`);
+        throw new Error(`cook_dispatch: child tool isolation failed (expected ${expectedTools.join(', ')}, got ${received})`);
       }
     }
     session.subscribe((/** @type {any} */ event) => {

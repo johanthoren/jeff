@@ -459,12 +459,14 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
   });
 });
 
-test('dispatchRoleSession grants stage-appropriate tools without command or edit access to judgment stages', async () => {
+test('issue 101 cycle 2: dispatchRoleSession gives verify one fixed query seam and no unrestricted shell', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {Record<string, string>} */
     const agents = {
       plan: '---\nname: cook-plan\neffort: xhigh\n---\nPlan body.',
       implement: '---\nname: cook-implement\neffort: high\n---\nImplement body.',
+      execute: '---\nname: cook-execute\neffort: high\n---\nExecute body.',
+      verify: '---\nname: cook-verify\neffort: xhigh\n---\nVerify body.',
       refactor: '---\nname: cook-refactor\neffort: xhigh\n---\nRefactor body.',
       audit: '---\nname: cook-audit\neffort: xhigh\n---\nAudit body.',
       refute: '---\nname: cook-refute\neffort: xhigh\n---\nRefute body.',
@@ -477,21 +479,42 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
     const toolsByStage = {};
     /** @type {Record<string, string>} */
     const effortByStage = {};
+    /** @type {any} */
+    let verifyQueryTool;
+    /** @type {Array<{ root: string, taskId: string }>} */
+    const seamLoads = [];
+    /** @type {Array<{ root: string, query: unknown, verificationSeams: string[] }>} */
+    const queryCalls = [];
     const sdk = {
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (/** @type {any} */ options) => {
-        toolsByStage[options.stageForTest] = options.tools;
+        toolsByStage[options.stageForTest] = [
+          ...options.tools,
+          ...(options.customTools ?? []).map((/** @type {{ name: string }} */ tool) => tool.name),
+        ];
+        if (options.stageForTest === 'verify') {
+          verifyQueryTool = options.customTools?.find((/** @type {{ name: string }} */ tool) => tool.name === 'verify_query');
+        }
         return { session: { subscribe() {}, async prompt() {}, dispose() {} } };
       },
     };
 
-    for (const stage of ['plan', 'implement', 'refactor', 'review', 'audit', 'refute']) {
+    for (const stage of ['plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute']) {
       await dispatchRoleSession({
         stage,
         brief: 'Check the diff.',
         cwd: repoRoot,
         repoRoot,
         currentModel: { provider: 'local', id: 'qwen-dev' },
+        taskId: '18',
+        getVerificationSeams: async (root, taskId) => {
+          seamLoads.push({ root, taskId });
+          return ['git-ref refs/heads/release'];
+        },
+        queryVerificationState: async (root, query, dependencies) => {
+          queryCalls.push({ root, query, verificationSeams: dependencies.verificationSeams });
+          return { command: 'git rev-parse refs/heads/release', output: '0123456789abcdef' };
+        },
         sdk: {
           ...sdk,
           createAgentSession: async (/** @type {any} */ options) => {
@@ -507,13 +530,30 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
       plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       refactor: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      execute: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      verify: ['read', 'grep', 'find', 'ls', 'verify_query'],
       review: ['read', 'grep', 'find', 'ls'],
       audit: ['read', 'grep', 'find', 'ls'],
       refute: ['read', 'grep', 'find', 'ls'],
     });
+    assert.ok(verifyQueryTool, '[verify-query] verify_query custom tool is not registered');
+    assert.deepEqual(verifyQueryTool.parameters.required, ['kind']);
+    assert.deepEqual(verifyQueryTool.parameters.properties.kind.enum, [
+      'git-head', 'git-status', 'git-ref', 'git-tree', 'git-object', 'https-get',
+    ]);
+    assert.deepEqual(Object.keys(verifyQueryTool.parameters.properties).sort(), ['kind', 'target', 'url']);
+    await verifyQueryTool.execute('query-call', { kind: 'git-ref', target: 'refs/heads/release' });
+    assert.deepEqual(seamLoads, [{ root: repoRoot, taskId: '18' }]);
+    assert.deepEqual(queryCalls, [{
+      root: repoRoot,
+      query: { kind: 'git-ref', target: 'refs/heads/release' },
+      verificationSeams: ['git-ref refs/heads/release'],
+    }]);
     assert.deepEqual(effortByStage, {
       plan: 'xhigh',
       implement: 'high',
+      execute: 'high',
+      verify: 'xhigh',
       refactor: 'xhigh',
       review: 'xhigh',
       audit: 'xhigh',
@@ -529,6 +569,8 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
       plan: 'xhigh',
       implement: 'high',
       refactor: 'xhigh',
+      execute: 'high',
+      verify: 'xhigh',
       review: 'xhigh',
       audit: 'xhigh',
       refute: 'xhigh',
@@ -555,6 +597,8 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
       plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       refactor: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      execute: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      verify: ['read', 'grep', 'find', 'ls'],
       review: ['read', 'grep', 'find', 'ls'],
       audit: ['read', 'grep', 'find', 'ls'],
       refute: ['read', 'grep', 'find', 'ls'],
@@ -563,6 +607,8 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
     const expectedOmpToolNames = {
       plan: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
+      execute: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
+      verify: ['read', 'grep', 'glob'],
       refactor: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
       review: ['read', 'grep', 'glob'],
       audit: ['read', 'grep', 'glob'],
@@ -597,8 +643,14 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
     for (const [stage, options] of Object.entries(optionsByStage)) {
       assert.deepEqual(options.tools, expectedTools[stage]);
       assert.deepEqual(options.toolNames, expectedOmpToolNames[stage]);
-      assert.equal('customTools' in options, false);
-      assert.equal(options.model, currentModel);
+      if (stage === 'verify') {
+        assert.deepEqual(
+          options.customTools?.map((/** @type {{ name: string }} */ tool) => tool.name),
+          ['verify_query'],
+        );
+      } else {
+        assert.equal('customTools' in options, false);
+      }
       assert.equal(options.thinkingLevel, efforts[stage]);
       assert.equal(options.disableExtensionDiscovery, true);
       assert.deepEqual(options.preloadedCustomToolPaths, []);

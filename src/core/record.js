@@ -9,6 +9,7 @@ import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
 import { activeRefuterAgentIds, forbiddenCouncilAgentIds, isRefuteAgentForbidden } from './identity-policy.js';
+import { parseCanonicalOperationBatch } from './operation-batch.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 /** @typedef {Record<string, any>} MutableRecordTask */
@@ -16,12 +17,51 @@ import { activeRefuterAgentIds, forbiddenCouncilAgentIds, isRefuteAgentForbidden
 const now = () => `${new Date().toISOString().slice(0, 19)}Z`;
 const wait = (/** @type {number} */ milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
 const RECORD_LOCK_ATTEMPTS = 100;
-const KICKBACK_STAGE_ORDER = ['capture', 'plan', 'implement', 'refactor'];
+const KICKBACK_STAGE_ORDER = ['capture', 'plan', 'execute', 'implement', 'refactor'];
+const FALSE_VERIFICATION_REASON = 'Verifier postconditions remain false after finding demotion.';
 const DEFAULT_CONVERGENCE = {
   cap: 2,
   stages: { review: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
   council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
 };
+
+/** @param {MutableRecordTask} task */
+function isOperation(task) {
+  return task.category === 'operation';
+}
+
+/** @param {Record<string, any>} result */
+function isOperationPlanReturn(result) {
+  return result.result === 'plan'
+    || (result.result === 'escalation' && !Object.hasOwn(result, 'refactorOpportunity'));
+}
+
+/** @param {MutableRecordTask} task */
+function canonicalPlanApprovalBoundary(task) {
+  if (!isOperation(task) || task.plan?.requiresApproval !== true) return null;
+  try {
+    return parseCanonicalOperationBatch(task.plan.approvalBoundary).canonical;
+  } catch {
+    return null;
+  }
+}
+
+/** @param {MutableRecordTask} task */
+function isAwaitingCouncil(task) {
+  return task.convergence?.council?.convened === false
+    && task.convergence.council.stage !== null;
+}
+
+
+/** @param {MutableRecordTask} task */
+function defaultConvergence(task) {
+  if (!isOperation(task)) return structuredClone(DEFAULT_CONVERGENCE);
+  return {
+    cap: 2,
+    stages: { verify: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
+    council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+  };
+}
 
 /** @param {any} outcome */
 function hasBlockingFinding(outcome) {
@@ -62,6 +102,17 @@ function haveActiveBlockersSurvivedRefute(task) {
 
 /** @param {MutableRecordTask} task @param {string} at */
 function judgmentHistoryEntry(task, at) {
+  if (isOperation(task)) {
+    return {
+      at,
+      verification: task.verification,
+      audit: task.audit,
+      agents: {
+        verifier_agent_id: task.agents.verifier_agent_id,
+        audit_agent_id: task.agents.audit_agent_id,
+      },
+    };
+  }
   return {
     at,
     review: task.review,
@@ -95,12 +146,16 @@ function assertCurrentJudgment(task, result) {
   if (result.cycle !== activeJudgmentCycle(task)) {
     throw new Error(`[record-transition] judgment cycle ${result.cycle} is not active`);
   }
-  if (isPendingCouncilRecovery(task) && task.agents.implementer_agent_id === result.agent_id) {
+  const builderId = isOperation(task)
+    ? task.agents.executor_agent_id
+    : task.agents.implementer_agent_id;
+  if (isPendingCouncilRecovery(task) && builderId === result.agent_id) {
     throw new Error(`[record-identity] recovery judge ${result.agent_id} violates specialist separation`);
   }
   const currentAgentIds = [
     task.review?.reviewer_agent_id,
     task.review2?.reviewer_agent_id,
+    task.verification?.verifier_agent_id,
     task.audit?.audit_agent_id,
     ...activeRefuterAgentIds(task),
   ];
@@ -111,13 +166,30 @@ function assertCurrentJudgment(task, result) {
 
 /** @param {MutableRecordTask} task */
 function settleJudgments(task) {
+  if (isOperation(task)) {
+    const blockingVerification = hasBlockingFinding(task.verification);
+    const blockingAudit = hasBlockingFinding(task.audit);
+    task.status = 'in_progress';
+    if (isAwaitingCouncil(task)) task.stage = task.convergence.council.stage;
+    else if (blockingAudit) task.stage = 'audit';
+    else if (blockingVerification || !task.verification?.verifier_agent_id) task.stage = 'verify';
+    else if (task.audit.required && !task.audit.audit_agent_id) task.stage = 'audit';
+    else if (isPendingCouncilRecovery(task)) task.stage = task.convergence.council.stage;
+    else {
+      task.stage = 'done';
+      task.status = 'done';
+    }
+    return;
+  }
+
   const requiredReviews = task.complexity === 'simple' ? 1 : 2;
   const reviews = [task.review, task.review2].filter((outcome) => outcome?.reviewer_agent_id);
   const blockingReview = reviews.some(hasBlockingFinding);
   const blockingAudit = hasBlockingFinding(task.audit);
 
   task.status = 'in_progress';
-  if (blockingAudit) task.stage = 'audit';
+  if (isAwaitingCouncil(task)) task.stage = task.convergence.council.stage;
+  else if (blockingAudit) task.stage = 'audit';
   else if (blockingReview || reviews.length < requiredReviews) task.stage = 'review';
   else if (task.audit.required && !task.audit.audit_agent_id) task.stage = 'audit';
   else if (isPendingCouncilRecovery(task)) task.stage = task.convergence.council.stage;
@@ -127,29 +199,58 @@ function settleJudgments(task) {
   }
 }
 
+/** @param {MutableRecordTask} task */
+function hasFalseVerificationPostcondition(task) {
+  return isOperation(task)
+    && task.verification?.postconditions?.some((/** @type {any} */ row) => row.ok !== true) === true;
+}
+
+/** @param {MutableRecordTask} task @param {string} at */
+function kickFalseVerificationToExecute(task, at) {
+  task.kickbacks = [...task.kickbacks, {
+    from: 'verify',
+    to: 'execute',
+    reason: FALSE_VERIFICATION_REASON,
+    at,
+  }];
+  task.stage = 'execute';
+  task.status = 'in_progress';
+}
+
 /** @param {MutableRecordTask} task @param {string} at */
 function archiveAndResetJudgments(task, at) {
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
     judgmentHistoryEntry(task, at),
   ];
+  task.agents.audit_agent_id = null;
+  task.audit = { required: task.audit.required, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] };
+  if (isOperation(task)) {
+    task.agents.verifier_agent_id = null;
+    task.verification = { verdict: null, verifier_agent_id: null, postconditions: [], findings: [], evidence: [] };
+    return;
+  }
   task.agents.reviewer_agent_id = null;
   task.agents.reviewer2_agent_id = null;
-  task.agents.audit_agent_id = null;
   task.review = { verdict: null, reviewer_agent_id: null, findings: [], evidence: [] };
   task.review2 = null;
-  task.audit = { required: task.audit.required, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] };
 }
 
 /** @param {MutableRecordTask} task @param {string} at */
 function resetJudgmentsAfterFix(task, at) {
   const hasCurrentJudgment = judgmentSources(task).some(({ outcome }) => (
-    outcome?.reviewer_agent_id != null || outcome?.audit_agent_id != null
-  )) || [task.agents.reviewer_agent_id, task.agents.reviewer2_agent_id, task.agents.audit_agent_id]
-    .some((agentId) => agentId != null);
+    outcome?.reviewer_agent_id != null
+    || outcome?.verifier_agent_id != null
+    || outcome?.audit_agent_id != null
+  )) || [
+    task.agents.reviewer_agent_id,
+    task.agents.reviewer2_agent_id,
+    task.agents.verifier_agent_id,
+    task.agents.audit_agent_id,
+  ].some((agentId) => agentId != null);
   if (!hasCurrentJudgment) return;
   const latestJudgmentKickback = task.kickbacks.findLast((/** @type {any} */ kickback) => (
-    ['review', 'audit'].includes(kickback.from)
+    judgmentSources(task).some(({ source }) => source === kickback.from)
   ));
   if (!latestJudgmentKickback) return;
   const latestHistory = task.judgmentHistory?.at(-1);
@@ -185,9 +286,43 @@ function recordReview(task, result) {
 }
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
+function recordVerify(task, result) {
+  if (task.verification?.verifier_agent_id != null || task.agents.verifier_agent_id != null) {
+    throw new Error('[record-transition] verification slot is already occupied for this judgment cycle');
+  }
+  if (task.agents.executor_agent_id === result.agent_id) {
+    throw new Error('[inv2] executor == verifier');
+  }
+  const planned = task.plan?.postconditions;
+  if (!Array.isArray(planned)
+    || planned.length !== result.postconditions.length
+    || planned.some((/** @type {string} */ postcondition, /** @type {number} */ index) => (
+      postcondition !== result.postconditions[index].postcondition
+    ))) {
+    throw new Error('[record-transition] verification postconditions must exactly match the plan in order');
+  }
+  task.agents.verifier_agent_id = result.agent_id;
+  task.verification = {
+    verdict: judgmentVerdict(result, 'pass'),
+    reportedVerdict: result.verdict,
+    verifier_agent_id: result.agent_id,
+    postconditions: result.postconditions,
+    findings: result.findings,
+    evidence: result.evidence,
+  };
+  settleJudgments(task);
+}
+
+/** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function recordAudit(task, result) {
   if (task.audit?.audit_agent_id != null || task.agents.audit_agent_id != null) {
     throw new Error('[record-transition] audit slot is already occupied for this judgment cycle');
+  }
+  if (isOperation(task) && task.audit.required === true && result.verdict === 'na') {
+    throw new Error('[record-transition] required audit cannot return na');
+  }
+  if (isOperation(task) && task.agents.executor_agent_id === result.agent_id) {
+    throw new Error('[inv2] executor == auditor');
   }
   task.agents.audit_agent_id = result.agent_id;
   task.audit = {
@@ -225,46 +360,60 @@ function recordRefute(task, result, at) {
   finding.refute = refute;
   if (result.verdict === 'refuted') {
     finding.class = 'follow-up';
-    task[source].verdict = hasBlockingFinding(task[source]) ? 'needs-work' : 'pass';
+    const outcome = judgmentSources(task).find((item) => item.source === source)?.outcome;
+    outcome.verdict = hasBlockingFinding(outcome) ? 'needs-work' : 'pass';
   }
 
   if (activeFindings.some(({ finding: item }) => item.class === 'blocking' && !item.refute)) return;
 
-  const kickbacks = [];
   const hasSurvivor = activeFindings.some(({ finding: item }) => item.refute?.verdict === 'survives');
   if (hasSurvivor && isPendingCouncilRecovery(task)) {
     blockCouncilRecovery(task);
     return;
   }
   if (hasSurvivor && task.convergence === undefined) {
-    task.convergence = structuredClone(DEFAULT_CONVERGENCE);
+    task.convergence = defaultConvergence(task);
   }
-  for (const convergenceStage of ['review', 'audit']) {
-    const survivors = activeFindings.filter(({ source: itemSource, finding: item }) => (
-      (itemSource === 'audit' ? 'audit' : 'review') === convergenceStage
+
+  const survivorGroups = [...new Set(
+    judgmentSources(task).map(({ source }) => source === 'review2' ? 'review' : source),
+  )].map((convergenceStage) => ({
+    convergenceStage,
+    counter: task.convergence?.stages?.[convergenceStage],
+    survivors: activeFindings.filter(({ source: itemSource, finding: item }) => (
+      (itemSource === 'review2' ? 'review' : itemSource) === convergenceStage
       && item.class === 'blocking'
       && item.refute?.verdict === 'survives'
-    ));
-    if (!survivors.length) continue;
-    const counter = task.convergence.stages[convergenceStage];
-    if (counter.blockingKickbacks >= task.convergence.cap) {
-      if (task.convergence.council.convened !== true && task.convergence.council.stage === null) {
-        task.convergence.council.stage = convergenceStage;
-      }
-      continue;
+    )),
+  })).filter(({ survivors }) => survivors.length > 0);
+  const capped = survivorGroups.find(({ counter }) => (
+    counter.blockingKickbacks >= task.convergence.cap
+  ));
+  if (capped) {
+    if (task.convergence.council.convened !== true && task.convergence.council.stage === null) {
+      task.convergence.council.stage = capped.convergenceStage;
     }
+    settleJudgments(task);
+    return;
+  }
+
+  const kickbacks = survivorGroups.map(({ convergenceStage, counter, survivors }) => {
     counter.blockingKickbacks += 1;
     const destination = survivors
       .map(({ finding: item }) => item.kickTo)
       .sort((left, right) => KICKBACK_STAGE_ORDER.indexOf(left) - KICKBACK_STAGE_ORDER.indexOf(right))[0];
-    kickbacks.push({
+    return {
       from: convergenceStage,
       to: destination,
       reason: survivors.map(({ finding: item }) => item.what).join('; '),
       at,
-    });
-  }
+    };
+  });
   if (!kickbacks.length) {
+    if (hasFalseVerificationPostcondition(task)) {
+      kickFalseVerificationToExecute(task, at);
+      return;
+    }
     settleJudgments(task);
     return;
   }
@@ -277,10 +426,16 @@ function recordRefute(task, result, at) {
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} council */
 function assertCouncilInput(task, council) {
-  const requiredReviews = task.complexity === 'simple' ? 1 : 2;
-  const reviews = [task.review, task.review2].filter((outcome) => outcome?.reviewer_agent_id);
-  if (reviews.length !== requiredReviews || (task.audit.required && !task.audit.audit_agent_id)) {
-    throw new Error('[record-transition] council requires every active judgment return');
+  if (isOperation(task)) {
+    if (!task.verification?.verifier_agent_id || (task.audit.required && !task.audit.audit_agent_id)) {
+      throw new Error('[record-transition] council requires every active judgment return');
+    }
+  } else {
+    const requiredReviews = task.complexity === 'simple' ? 1 : 2;
+    const reviews = [task.review, task.review2].filter((outcome) => outcome?.reviewer_agent_id);
+    if (reviews.length !== requiredReviews || (task.audit.required && !task.audit.audit_agent_id)) {
+      throw new Error('[record-transition] council requires every active judgment return');
+    }
   }
   const blockers = judgmentSources(task).flatMap(({ source, outcome }) => (
     (outcome?.findings ?? [])
@@ -329,18 +484,23 @@ function recordCouncil(task, result, at) {
 
   task.convergence.council = council;
   if (council.verdict === 'ship') {
+    if (hasFalseVerificationPostcondition(task)) {
+      kickFalseVerificationToExecute(task, at);
+      return;
+    }
     task.stage = 'done';
     task.status = 'done';
     return;
   }
   const survivors = council.findings.filter((/** @type {any} */ finding) => finding.survived);
+  const destination = isOperation(task) ? 'execute' : 'implement';
   task.kickbacks = [...task.kickbacks, {
     from: council.stage,
-    to: 'implement',
+    to: destination,
     reason: `Council block: ${survivors.map((/** @type {any} */ finding) => finding.summary).join('; ')}`,
     at,
   }];
-  task.stage = 'implement';
+  task.stage = destination;
   task.status = 'in_progress';
 }
 
@@ -368,12 +528,11 @@ function recordCouncilRecovery(task, council) {
   if (!isPreservedCouncilBlock(pending, council)) {
     throw new Error('[record-transition] council recovery must preserve the recorded block');
   }
-  if (task.stage === 'implement') {
-    throw new Error('[record-transition] council recovery requires a separately recorded scoped implementation');
+  const recoveryStage = isOperation(task) ? 'execute' : 'implement';
+  if (task.stage === recoveryStage) {
+    throw new Error(`[record-transition] council recovery requires a separately recorded scoped ${recoveryStage}`);
   }
   if (council.outcome === 'scoped-fix-shipped') {
-    const requiredReviews = task.complexity === 'simple' ? 1 : 2;
-    const reviews = [task.review, task.review2].filter((outcome) => outcome?.reviewer_agent_id);
     const currentJudgments = judgmentSources(task).map(({ outcome }) => outcome).filter(Boolean);
     if (currentJudgments.some((outcome) => !isConsistentJudgment(outcome))) {
       throw new Error('[record-transition] current persisted judgment is inconsistent with its blocking findings');
@@ -381,20 +540,33 @@ function recordCouncilRecovery(task, council) {
     if (currentJudgments.some(isFailingJudgment)) {
       throw new Error('[record-transition] current recovery judgment did not pass');
     }
-    const judgmentsPass = reviews.length === requiredReviews
-      && reviews.every(isPassingJudgment)
-      && (!task.audit.required || isPassingJudgment(task.audit));
-    const scopedImplementer = task.implement?.agent_id;
-    const hasScopedImplementation = task.judgmentHistory?.length > 0
-      && task.implement?.result === 'green'
-      && typeof scopedImplementer === 'string'
-      && task.agents.implementer_agent_id === scopedImplementer;
-    if (!hasScopedImplementation) {
-      throw new Error('[record-transition] scoped recovery requires a current recorded implementation');
+    let judgmentsPass;
+    let hasScopedChange;
+    if (isOperation(task)) {
+      judgmentsPass = isPassingJudgment(task.verification)
+        && (!task.audit.required || isPassingJudgment(task.audit));
+      hasScopedChange = task.judgmentHistory?.length > 0
+        && task.execution?.result === 'executed'
+        && typeof task.execution?.executor_agent_id === 'string'
+        && task.agents.executor_agent_id === task.execution.executor_agent_id;
+    } else {
+      const requiredReviews = task.complexity === 'simple' ? 1 : 2;
+      const reviews = [task.review, task.review2].filter((outcome) => outcome?.reviewer_agent_id);
+      judgmentsPass = reviews.length === requiredReviews
+        && reviews.every(isPassingJudgment)
+        && (!task.audit.required || isPassingJudgment(task.audit));
+      const scopedImplementer = task.implement?.agent_id;
+      hasScopedChange = task.judgmentHistory?.length > 0
+        && task.implement?.result === 'green'
+        && typeof scopedImplementer === 'string'
+        && task.agents.implementer_agent_id === scopedImplementer;
+      const gate = task.tests?.gate;
+      if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
+        throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
+      }
     }
-    const gate = task.tests?.gate;
-    if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
-      throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
+    if (!hasScopedChange) {
+      throw new Error('[record-transition] scoped recovery requires a current recorded change');
     }
     if (!judgmentsPass) {
       throw new Error('[record-transition] scoped council completion requires current recovery judgments to pass');
@@ -419,6 +591,12 @@ function recordCouncilRecovery(task, council) {
 
 /** @param {MutableRecordTask} task */
 function judgmentSources(task) {
+  if (isOperation(task)) {
+    return [
+      { source: 'verify', outcome: task.verification },
+      { source: 'audit', outcome: task.audit },
+    ];
+  }
   return [
     { source: 'review', outcome: task.review },
     { source: 'review2', outcome: task.review2 },
@@ -454,8 +632,20 @@ function invalidateVerification(task) {
 export function transitionTask(task, stage, result) {
   const at = now();
   const next = /** @type {any} */ (structuredClone(task));
-  const isJudgment = stage === 'review' || stage === 'audit';
-  if (stage === 'implement' && next.status === 'blocked'
+  const operation = isOperation(next);
+  const allowedStages = operation
+    ? ['plan', 'execute', 'verify', 'audit', 'refute', 'council']
+    : ['plan', 'implement', 'refactor', 'review', 'audit', 'refute', 'council'];
+  if (!allowedStages.includes(stage)) {
+    throw new Error(`[record-transition] ${operation ? 'operation' : 'code'} task cannot record ${stage}`);
+  }
+  if (stage === 'plan' && operation !== isOperationPlanReturn(result)) {
+    throw new Error('[record-transition] plan return does not match the locked task category');
+  }
+  const isJudgment = stage === 'audit' || (operation ? stage === 'verify' : stage === 'review');
+  const recoveryStage = operation ? 'execute' : 'implement';
+  const isLegacyCodePlanResume = !operation && stage === 'plan' && next.stage === 'test';
+  if (stage === recoveryStage && next.status === 'blocked'
     && next.convergence?.council?.outcome === 'blocked-to-operator') {
     throw new Error('[record-transition] task is blocked after failed council recovery');
   }
@@ -463,20 +653,111 @@ export function transitionTask(task, stage, result) {
     throw new Error(`[record-identity] refute agent ${result.agent_id} violates specialist separation`);
   }
   if (isJudgment || stage === 'refute') assertCurrentJudgment(next, result);
-  if (!isJudgment && stage !== 'refute' && stage !== 'council' && next.stage !== stage) {
+  if (!isJudgment && stage !== 'refute' && stage !== 'council' && next.stage !== stage && !isLegacyCodePlanResume) {
     throw new Error(`[record-transition] task is at ${next.stage}, not ${stage}`);
   }
-  if (isJudgment && !['review', 'audit', 'done'].includes(next.stage)) {
+  const judgmentStages = operation ? ['verify', 'audit', 'done'] : ['review', 'audit', 'done'];
+  if (isJudgment && !judgmentStages.includes(next.stage)) {
     throw new Error(`[record-transition] task is at ${next.stage}, not ${stage}`);
+  }
+  if (isJudgment) {
+    const destinations = operation ? ['capture', 'plan', 'execute'] : ['capture', 'plan', 'implement', 'refactor'];
+    if (result.findings.some((/** @type {any} */ finding) => !destinations.includes(finding.kickTo))) {
+      throw new Error('[record-transition] finding kickback does not match the locked task category');
+    }
   }
   next.updatedAt = at;
 
   if (stage === 'plan') {
-    next.tests.authored_by_agent_id = result.agent_id;
     next.complexity = result.complexity;
     next.audit.required = result.auditRequired;
-    next.plan = { result: result.result, slices: result.slices, testFiles: result.testFiles, redRun: result.redRun, escalation: result.escalation, refactorOpportunity: result.refactorOpportunity };
-    next.stage = result.result === 'escalation' ? 'capture' : 'implement';
+    if (operation) {
+      if (result.result === 'escalation') {
+        next.plan = {
+          result: result.result,
+          slices: result.slices,
+          escalation: result.escalation,
+        };
+        next.stage = 'plan';
+      } else {
+        next.plan = {
+          result: result.result,
+          slices: result.slices,
+          runbook: result.runbook,
+          preconditions: result.preconditions,
+          recoveryBoundary: result.recoveryBoundary,
+          approvalBoundary: result.approvalBoundary,
+          requiresApproval: result.requiresApproval,
+          postconditions: result.postconditions,
+          verificationSeams: result.verificationSeams,
+          escalation: result.escalation,
+        };
+        next.stage = 'execute';
+      }
+    } else {
+      next.tests.authored_by_agent_id = result.agent_id;
+      next.plan = {
+        result: result.result,
+        slices: result.slices,
+        testFiles: result.testFiles,
+        redRun: result.redRun,
+        escalation: result.escalation,
+        refactorOpportunity: result.refactorOpportunity,
+      };
+      next.stage = result.result === 'escalation' ? 'capture' : 'implement';
+    }
+  } else if (stage === 'execute') {
+    const isScopedCouncilFix = isPendingCouncilRecovery(next);
+    const pendingApproval = next.execution?.result === 'approval-required'
+      ? next.execution.approvalRequired
+      : null;
+    const parentGrant = pendingApproval === null ? undefined : next.execution?.approval;
+    const plannedApproval = canonicalPlanApprovalBoundary(next);
+    if (plannedApproval !== null
+      && ((result.result === 'approval-required' && result.approvalRequired !== plannedApproval)
+        || (result.result === 'executed'
+          && (pendingApproval !== plannedApproval || parentGrant?.mutation !== plannedApproval)))) {
+      throw new Error('[record-approval] request and parent grant must match the planned canonical batch');
+    }
+    if (result.result === 'executed' && next.plan?.requiresApproval === true && pendingApproval === null) {
+      throw new Error('[record-approval] approval-gated plan requires a parent grant');
+    }
+    if (result.result === 'executed' && pendingApproval !== null && parentGrant === undefined) {
+      throw new Error('[record-approval] parent grant is required for the pending request');
+    }
+    if (parentGrant !== undefined && parentGrant.mutation !== pendingApproval) {
+      throw new Error('[record-approval] parent grant does not match the exact mutation request');
+    }
+    next.agents.executor_agent_id = result.agent_id;
+    next.execution = {
+      result: result.result,
+      executor_agent_id: result.agent_id,
+      actions: result.actions,
+      evidence: result.evidence,
+      approvalRequired: result.approvalRequired,
+      ...(result.result === 'executed' && parentGrant !== undefined ? { approval: parentGrant } : {}),
+    };
+    if (isScopedCouncilFix && result.result === 'kickback') {
+      blockCouncilRecovery(next);
+      return /** @type {TaskJson} */ (next);
+    }
+
+    if (result.result === 'kickback') {
+      next.kickbacks = [...next.kickbacks, {
+        from: 'execute',
+        to: result.kickback.to,
+        reason: result.kickback.reason,
+        at,
+      }];
+      next.stage = result.kickback.to;
+    } else if (result.result === 'approval-required') {
+      next.stage = 'execute';
+    } else {
+      if (isScopedCouncilFix) archiveAndResetJudgments(next, at);
+      else resetJudgmentsAfterFix(next, at);
+      next.verification ??= { verdict: null, verifier_agent_id: null, postconditions: [], findings: [], evidence: [] };
+      next.stage = 'verify';
+    }
   } else if (stage === 'implement') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
     next.agents.implementer_agent_id = result.agent_id;
@@ -501,6 +782,7 @@ export function transitionTask(task, stage, result) {
     invalidateVerification(next);
     next.stage = 'review';
   } else if (stage === 'review') recordReview(next, result);
+  else if (stage === 'verify') recordVerify(next, result);
   else if (stage === 'audit') recordAudit(next, result);
   else if (stage === 'refute') recordRefute(next, result, at);
   else recordCouncil(next, result, at);
@@ -567,7 +849,7 @@ export async function updateTask(root, id, update, options = {}) {
     const { taskDir, taskPath } = await locateTask(root, id, tasks);
     const task = await readTask(taskDir, root);
     const candidate = update(task);
-    if (task.status !== 'done' && candidate.status === 'done') {
+    if (task.status !== 'done' && candidate.status === 'done' && !isOperation(candidate)) {
       const gate = candidate.tests?.gate;
       if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
         throw new Error('[record-transition] terminal completion requires a present clean green verification gate');
@@ -604,6 +886,132 @@ export async function updateTask(root, id, update, options = {}) {
     if (violations.length) throw new Error(violations[0]);
     await writeTask(taskDir, candidate);
     return candidate;
+  });
+}
+
+/** @param {string} root @param {string} id */
+async function readLocatedTask(root, id) {
+  try {
+    await assertStoreContained(root);
+  } catch (error) {
+    throw new Error(`[record-task] ${/** @type {Error} */ (error).message}`);
+  }
+  const tasks = await collectTasks(root);
+  const { taskDir } = await locateTask(root, id, tasks);
+  return readTask(taskDir, root);
+}
+
+/** @param {MutableRecordTask} task */
+function operationApprovalBoundary(task) {
+  if (!isOperation(task)) throw new Error('[operation-apply] tracked execute requires an operation task');
+  if (task.stage !== 'execute') {
+    throw new Error('[operation-apply] operation task is not at execute');
+  }
+  if (task.status !== 'in_progress') {
+    throw new Error('[operation-apply] operation task is not active');
+  }
+  const violations = taskSchemaViolations(task, { lite: true });
+  if (task.plan?.result !== 'plan' || typeof task.plan.requiresApproval !== 'boolean' || violations.length) {
+    throw new Error(`[operation-apply] malformed completed operation plan${violations[0] ? `: ${violations[0]}` : ''}`);
+  }
+  if (task.plan.requiresApproval === false) return null;
+  return parseCanonicalOperationBatch(task.plan.approvalBoundary).canonical;
+}
+
+/** @param {string} root @param {string} id */
+export async function getOperationApprovalBoundary(root, id) {
+  if (typeof id !== 'string' || id.trim().length === 0) {
+    throw new Error('[operation-apply] task id is required');
+  }
+  return operationApprovalBoundary(await readLocatedTask(root, id));
+}
+
+/** @param {string} root @param {string} id */
+export async function getApprovedOperationBoundary(root, id) {
+  if (typeof id !== 'string' || id.trim().length === 0) {
+    throw new Error('[operation-apply] task id is required');
+  }
+  const task = /** @type {MutableRecordTask} */ (await readLocatedTask(root, id));
+  const boundary = operationApprovalBoundary(task);
+  if (boundary === null) throw new Error('[operation-apply] operation task is not approval-gated');
+  const execution = task.execution;
+  if (execution?.result !== 'approval-required' || execution.approvalRequired !== boundary) {
+    throw new Error('[operation-apply] pending request does not match the completed plan');
+  }
+  const grant = execution.approval;
+  if (grant?.mutation !== boundary || typeof grant.grantedBy !== 'string' || !isIsoDateTime(grant.grantedAt)) {
+    throw new Error('[operation-apply] parent grant is missing or does not match the pending request');
+  }
+  const retained = task.approvals?.some((/** @type {any} */ approval) => (
+    approval?.mutation === grant.mutation
+    && approval?.grantedBy === grant.grantedBy
+    && approval?.grantedAt === grant.grantedAt
+  )) === true;
+  if (!retained) throw new Error('[operation-apply] parent grant is stale or not retained');
+  return boundary;
+}
+
+/** @param {string} root @param {string} id */
+export async function getVerificationSeams(root, id) {
+  const task = await readLocatedTask(root, id);
+  const seams = task.category === 'operation' && task.plan?.result === 'plan'
+    ? task.plan.verificationSeams
+    : null;
+  if (!Array.isArray(seams) || !seams.every((seam) => typeof seam === 'string' && seam.length > 0)) {
+    throw new Error('[verify-query] task has no completed operation plan verification seams');
+  }
+  return [...seams];
+}
+
+/** @param {string} root @param {string} id */
+export async function getPendingApproval(root, id) {
+  const task = await readLocatedTask(root, id);
+  const pending = task.category === 'operation'
+    && task.stage === 'execute'
+    && task.execution?.result === 'approval-required'
+    ? task.execution.approvalRequired
+    : null;
+  if (typeof pending !== 'string' || pending.length === 0) {
+    throw new Error('[record-approval] no active pending exact request');
+  }
+  const plannedApproval = canonicalPlanApprovalBoundary(/** @type {MutableRecordTask} */ (task));
+  if (plannedApproval !== null && pending !== plannedApproval) {
+    throw new Error('[record-approval] pending request does not match the planned canonical batch');
+  }
+  return pending;
+}
+
+/** @param {string} root @param {string} id @param {string} grantedBy @param {string} mutation */
+export async function recordApproval(root, id, grantedBy, mutation) {
+  if (typeof grantedBy !== 'string' || grantedBy.trim().length === 0) {
+    throw new Error('[record-approval] operator identity is required');
+  }
+  return updateTask(root, id, (task) => {
+    const next = /** @type {any} */ (structuredClone(task));
+    const pending = next.category === 'operation'
+      && next.stage === 'execute'
+      && next.execution?.result === 'approval-required'
+      ? next.execution.approvalRequired
+      : null;
+    if (typeof pending !== 'string' || pending.length === 0) {
+      throw new Error('[record-approval] no active pending exact request');
+    }
+    const plannedApproval = canonicalPlanApprovalBoundary(next);
+    if (plannedApproval !== null && pending !== plannedApproval) {
+      throw new Error('[record-approval] pending request does not match the planned canonical batch');
+    }
+    if (mutation !== pending) {
+      throw new Error('[record-approval] exact mutation does not match the pending request');
+    }
+    if (next.execution.approval !== undefined) {
+      throw new Error('[record-approval] pending request already has an operator grant');
+    }
+    const grantedAt = now();
+    const grant = { mutation: pending, grantedBy, grantedAt };
+    next.execution.approval = grant;
+    next.approvals = [...(next.approvals ?? []), grant];
+    next.updatedAt = grantedAt;
+    return /** @type {TaskJson} */ (next);
   });
 }
 
