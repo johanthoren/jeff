@@ -20,7 +20,6 @@ import {
   isSameApproval,
   latestApprovalRequest,
   nextOperationExecutionCycle,
-  OPERATION_STATE_VERSION,
 } from './operation-state.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
@@ -112,8 +111,12 @@ function haveActiveBlockersSurvivedRefute(task) {
 /** @param {MutableRecordTask} task @param {string} at */
 function judgmentHistoryEntry(task, at) {
   if (isOperation(task)) {
+    const cycle = currentOperationCycle(task);
+    const historyCycle = task.judgmentHistory?.length ?? 0;
     return {
-      cycle: currentOperationCycle(task),
+      cycle: hasBoundPendingApprovalRequest(task) && cycle === historyCycle + 1
+        ? historyCycle
+        : cycle,
       at,
       verification: task.verification,
       audit: task.audit,
@@ -193,10 +196,10 @@ function settleJudgments(task) {
     const blockingAudit = hasBlockingFinding(task.audit);
     task.status = 'in_progress';
     if (isAwaitingCouncil(task)) task.stage = task.convergence.council.stage;
+    else if (!task.verification?.verifier_agent_id) task.stage = 'verify';
     else if (blockingAudit) task.stage = 'audit';
-    else if (blockingVerification || !task.verification?.verifier_agent_id) task.stage = 'verify';
+    else if (blockingVerification) task.stage = 'verify';
     else if (task.audit.required && !task.audit.audit_agent_id) task.stage = 'audit';
-    else if (isPendingCouncilRecovery(task)) task.stage = task.convergence.council.stage;
     else {
       task.stage = 'done';
       task.status = 'done';
@@ -663,7 +666,6 @@ export function transitionTask(task, stage, result) {
   const at = now();
   const next = /** @type {any} */ (structuredClone(task));
   const operation = isOperation(next);
-  if (operation) next.operationStateVersion = OPERATION_STATE_VERSION;
   const allowedStages = operation
     ? ['plan', 'execute', 'verify', 'audit', 'refute', 'council']
     : ['plan', 'implement', 'refactor', 'review', 'audit', 'refute', 'council'];
