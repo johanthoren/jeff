@@ -1430,6 +1430,60 @@ test('issue 107 council recovery requires fresh execution and verification ident
   });
 });
 
+test('issue 107 operation recording establishes authoritative operationStateVersion', async () => {
+  const unmarked = operationTask();
+  delete unmarked.operationStateVersion;
+  const { root, taskDir } = await makeRoot(unmarked);
+  try {
+    assert.equal(Object.hasOwn(await readTask(taskDir), 'operationStateVersion'), false);
+
+    const planned = await recordSpecialistReturn(root, 'plan', '18', operationPlanReturn());
+    assert.equal(planned.operationStateVersion, 1);
+    assert.equal(planned.stage, 'execute');
+
+    const executed = await recordSpecialistReturn(root, 'execute', '18', executeReturn());
+    assert.equal(executed.operationStateVersion, 1);
+    assert.equal(executed.execution.cycle, 0);
+    assert.match(executed.execution.recordedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+    const persisted = await readTask(taskDir);
+    assert.equal(persisted.operationStateVersion, 1);
+
+    // Authoritative execution provenance engages only after the marker is set:
+    // strip cycle/recordedAt from a marked ledger and the write must fail closed.
+    await writeFile(
+      join(taskDir, 'task.json'),
+      `${JSON.stringify({
+        ...persisted,
+        execution: {
+          result: 'executed',
+          executor_agent_id: 'executor',
+          actions: ['Moved the bounded registry entry.'],
+          evidence: [{ command: 'inspect registry transition', output: 'transition complete' }],
+          approvalRequired: null,
+        },
+        stage: 'verify',
+        verification: {
+          verdict: null,
+          verifier_agent_id: null,
+          postconditions: [],
+          findings: [],
+          evidence: [],
+        },
+      }, null, 2)}\n`,
+      'utf8',
+    );
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'verify', '18', verifyReturn()),
+      /\[operation-version\].*cycle.*recordedAt|authoritative execution requires cycle and recordedAt/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 105 recovery refuting a failed scoped postcondition does not open another execute cycle', async () => {
   const { root, taskDir } = await makeRoot(operationCouncilTask());
   const finding = blockingFinding({

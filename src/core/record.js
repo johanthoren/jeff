@@ -20,6 +20,7 @@ import {
   isSameApproval,
   latestApprovalRequest,
   nextOperationExecutionCycle,
+  OPERATION_STATE_VERSION,
 } from './operation-state.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
@@ -701,6 +702,15 @@ export function transitionTask(task, stage, result) {
     }
   }
   next.updatedAt = at;
+  if (operation) {
+    if (next.operationStateVersion !== undefined
+      && next.operationStateVersion !== OPERATION_STATE_VERSION) {
+      throw new Error(
+        `[record-transition] unsupported operationStateVersion ${String(next.operationStateVersion)}`,
+      );
+    }
+    next.operationStateVersion = OPERATION_STATE_VERSION;
+  }
 
   if (stage === 'plan') {
     next.complexity = result.complexity;
@@ -963,6 +973,15 @@ export async function recordApproval(root, id, grantedBy) {
   }
   return updateTask(root, id, (task) => {
     const next = /** @type {any} */ (structuredClone(task));
+    if (next.category === 'operation') {
+      if (next.operationStateVersion !== undefined
+        && next.operationStateVersion !== OPERATION_STATE_VERSION) {
+        throw new Error(
+          `[record-approval] unsupported operationStateVersion ${String(next.operationStateVersion)}`,
+        );
+      }
+      next.operationStateVersion = OPERATION_STATE_VERSION;
+    }
     const pending = next.category === 'operation'
       && next.stage === 'execute'
       && next.execution?.result === 'approval-required'
