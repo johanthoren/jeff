@@ -200,6 +200,7 @@ function settleJudgments(task) {
     else if (blockingAudit) task.stage = 'audit';
     else if (blockingVerification) task.stage = 'verify';
     else if (task.audit.required && !task.audit.audit_agent_id) task.stage = 'audit';
+    else if (isPendingCouncilRecovery(task)) task.stage = task.convergence.council.stage;
     else {
       task.stage = 'done';
       task.status = 'done';
