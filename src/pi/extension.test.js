@@ -279,6 +279,39 @@ test('issue 105 extension registers status and dispatch without a host-specific 
   assert.deepEqual([...tools.keys()], ['cook_dispatch']);
 });
 
+test('issue 105 recovery Pi returns the exact approval boundary to the parent', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-approval-projection-'));
+  const approvalBoundary = 'Rewrite source entry exactly.\nThen create the destination entry exactly once.';
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    const returned = specialistReturn('execute', { approvalRequired: approvalBoundary });
+    const tool = registeredDispatchTool({
+      dispatchRoleSession: async () => ({
+        stage: 'execute',
+        agent_id: returned.agent_id,
+        brain: { provider: 'local', model: 'test-model', effort: 'high' },
+        transcript: JSON.stringify(returned),
+      }),
+    });
+    const result = await tool.execute(
+      'call-approval',
+      { stage: 'execute', brief: 'Return the exact approval request.' },
+      undefined,
+      undefined,
+      { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+    );
+
+    assert.equal(result.details.approvalRequired, approvalBoundary);
+    assert.equal(JSON.parse(result.content[0].text).approvalRequired, approvalBoundary);
+    assert.equal(
+      JSON.parse(renderDispatchResult(result, { expanded: true })).approvalRequired,
+      approvalBoundary,
+    );
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
 
 test('cook_dispatch parses and projects every specialist result across model and TUI surfaces', async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-display-'));

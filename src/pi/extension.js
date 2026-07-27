@@ -28,12 +28,6 @@ function displayText(value) {
   }
   return text;
 }
-/** @param {unknown} value */
-function displayApproval(value) {
-  if (typeof value !== 'string') return '';
-  return makeWellFormed([...value].filter((character) => !DISPLAY_CONTROL.test(character)).join(''));
-}
-
 
 /** @param {unknown} values */
 function displayTexts(values) {
@@ -83,7 +77,7 @@ function displayProjection(result) {
             reason: displayText(result.kickback.reason),
           },
         } : {}),
-        ...(result.approvalRequired ? { approvalRequired: displayApproval(result.approvalRequired) } : {}),
+        ...(typeof result.approvalRequired === 'string' ? { approvalRequired: result.approvalRequired } : {}),
       };
     case 'verify':
       return {

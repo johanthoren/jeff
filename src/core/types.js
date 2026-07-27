@@ -17,6 +17,41 @@
 /** @typedef {'shipped' | 'scoped-fix-shipped' | 'blocked-to-operator' | null} CouncilOutcome */
 /** @typedef {TaskStage | 'verify'} KickbackSource */
 
+/** @typedef {{command: string, output: string}} Evidence */
+/** @typedef {{command: string, recommendation: 'PASS' | 'REVIEW' | 'BLOCK', reportPath: string}} AuditScan */
+/** @typedef {'secrets' | 'injection_sql' | 'injection_command' | 'path_traversal' | 'insecure_deserialization' | 'weak_crypto' | 'dynamic_execution' | 'tls_transport' | 'xss' | 'sensitive_logging' | 'insecure_permissions'} AuditCategory */
+/** @typedef {'covered_with_hits' | 'covered_no_hits' | 'not_covered'} AuditCoverageStatus */
+/** @typedef {{category: AuditCategory, status: AuditCoverageStatus}} AuditCoverage */
+
+/**
+ * @typedef {Object} Refute
+ * @property {string} agent_id
+ * @property {'review' | 'review2' | 'verify' | 'audit'} source
+ * @property {string} finding
+ * @property {'survives' | 'refuted'} verdict
+ * @property {string} rationale
+ * @property {Evidence[]} evidence
+ */
+
+/**
+ * @typedef {Object} Finding
+ * @property {string} file
+ * @property {number} line
+ * @property {'critical' | 'high' | 'medium' | 'low'} severity
+ * @property {'blocking' | 'follow-up'} class
+ * @property {'capture' | 'plan' | 'implement' | 'refactor' | 'execute'} kickTo
+ * @property {string} what
+ * @property {string} why
+ * @property {string | null} [cwe]
+ * @property {Refute} [refute]
+ */
+
+/**
+ * @typedef {Omit<Finding, 'kickTo'> & {
+ *   kickTo: 'capture' | 'plan' | 'execute'
+ * }} OperationFinding
+ */
+
 /**
  * @typedef {Object} Review
  * @property {ReviewVerdict} verdict
@@ -28,8 +63,12 @@
  * @typedef {Object} Audit
  * @property {boolean} required
  * @property {AuditVerdict} verdict
+ * @property {AuditVerdict} [reportedVerdict]
  * @property {string | null} audit_agent_id
- * @property {unknown[]} evidence
+ * @property {Finding[]} [findings]
+ * @property {Evidence[]} evidence
+ * @property {AuditScan} [scan]
+ * @property {AuditCoverage[]} [coverage]
  */
 
 /**
@@ -120,10 +159,16 @@
  * @typedef {Object} CouncilFinding
  * @property {string} id
  * @property {string} summary
- * @property {'review' | 'review2' | 'verify' | 'audit'} [source]
+ * @property {'review' | 'review2' | 'audit'} [source]
  * @property {number} blockingVotes
  * @property {boolean} survived
  * @property {number | string | null} followupTaskId
+ */
+
+/**
+ * @typedef {Omit<CouncilFinding, 'source'> & {
+ *   source: 'verify' | 'audit'
+ * }} OperationCouncilFinding
  */
 
 /**
@@ -137,10 +182,28 @@
  * @typedef {Object} OperationConvergence
  * @property {number} cap
  * @property {{verify: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
- * @property {{convened: boolean, stage: 'verify' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {{convened: boolean, stage: 'verify' | 'audit' | null, members: CouncilMember[], findings: OperationCouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  */
 
 /** @typedef {CodeConvergence | OperationConvergence} Convergence */
+
+/**
+ * @typedef {Object} OperationVerification
+ * @property {ReviewVerdict} verdict
+ * @property {'pass' | 'needs-work'} [reportedVerdict]
+ * @property {string | null} verifier_agent_id
+ * @property {Array<{postcondition: string, ok: boolean, evidence: string}>} postconditions
+ * @property {OperationFinding[]} findings
+ * @property {Evidence[]} evidence
+ */
+
+/**
+ * @typedef {Object} OperationJudgmentHistory
+ * @property {string} at
+ * @property {OperationVerification} verification
+ * @property {Audit} audit
+ * @property {{verifier_agent_id: string | null, audit_agent_id: string | null}} agents
+ */
 
 /**
  * The canonical per-task state persisted to `task.json`. `id` is numeric in
@@ -165,9 +228,11 @@
  * @property {Review} [review]
  * @property {Review | null} [review2]
  * @property {Audit} audit
- * @property {{result: 'executed' | 'kickback' | 'approval-required', executor_agent_id: string | null, actions: string[], evidence: unknown[], approvalRequired: string | null, approval?: Approval}} [execution]
+ * @property {{result: 'executed' | 'kickback' | 'approval-required', executor_agent_id: string | null, actions: string[], evidence: Evidence[], approvalRequired: string | null, approval?: Approval}} [execution]
  * @property {Approval[]} [approvals]
- * @property {{verdict: ReviewVerdict, verifier_agent_id: string | null, postconditions: Array<{postcondition: string, ok: boolean, evidence: string}>, findings: unknown[], evidence: unknown[]}} [verification]
+ * @property {OperationVerification} [verification]
+ * @property {Refute[]} [refutes]
+ * @property {OperationJudgmentHistory[]} [judgmentHistory]
  * @property {unknown[]} commits
  * @property {Kickback[]} kickbacks
  * @property {string | null} blockedReason

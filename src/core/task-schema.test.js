@@ -6,6 +6,51 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateStore } from './validate-store.js';
+const AUDIT_CATEGORIES = [
+  'secrets',
+  'injection_sql',
+  'injection_command',
+  'path_traversal',
+  'insecure_deserialization',
+  'weak_crypto',
+  'dynamic_execution',
+  'tls_transport',
+  'xss',
+  'sensitive_logging',
+  'insecure_permissions',
+];
+
+/** @param {string} [status] */
+function auditCoverage(status = 'covered_no_hits') {
+  return AUDIT_CATEGORIES.map((category) => ({ category, status }));
+}
+
+/** @param {Record<string, any>} [overrides] */
+function operationFinding(overrides = {}) {
+  return {
+    file: 'src/core/record.js',
+    line: 10,
+    severity: 'high',
+    class: 'blocking',
+    kickTo: 'execute',
+    what: 'The destination registry contains two entries.',
+    why: 'The independently observed duplicate violates the planned postcondition.',
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, any>} finding @param {Record<string, any>} [overrides] */
+function operationRefute(finding, overrides = {}) {
+  return {
+    agent_id: 'verify-refuter',
+    source: 'verify',
+    finding: `${finding.file}:${finding.line} ${finding.what}`,
+    verdict: 'survives',
+    rationale: 'The duplicate is independently observable.',
+    evidence: [{ command: 'inspect registry', output: 'two entries' }],
+    ...overrides,
+  };
+}
 
 async function makeStore(mode = 'lite') {
   const root = await mkdtemp(join(tmpdir(), 'jeff-task-schema-test-'));
@@ -247,6 +292,61 @@ test('issue 101 category defaults historical tasks to code and keeps both graphs
       });
       assert.equal(result.ok, true, result.stderr.join('\n'));
     });
+  }
+
+  /** @type {Array<[string, (task: Record<string, any>) => Record<string, any>]>} */
+  const codeStateCases = [
+    ['execution', (task) => ({
+      ...task,
+      execution: {
+        result: 'executed',
+        executor_agent_id: null,
+        actions: ['Inspected the operation boundary.'],
+        evidence: [{ command: 'inspect boundary', output: 'boundary is stable' }],
+        approvalRequired: null,
+      },
+    })],
+    ['verification', (task) => ({
+      ...task,
+      verification: {
+        verdict: null,
+        verifier_agent_id: null,
+        postconditions: [],
+        findings: [],
+        evidence: [],
+      },
+    })],
+    ['approval history', (task) => ({ ...task, approvals: [] })],
+    ['executor identity', (task) => ({
+      ...task,
+      agents: { ...task.agents, executor_agent_id: 'executor' },
+    })],
+    ['verifier identity', (task) => ({
+      ...task,
+      agents: { ...task.agents, verifier_agent_id: 'verifier' },
+    })],
+  ];
+  for (const [, addState] of codeStateCases) {
+    for (const task of [canonicalTask(), canonicalTask({ category: 'code' })]) {
+      const result = await verdictFor(addState(task));
+      assertNamedFailure(result, '[category-stage]');
+    }
+  }
+
+  /** @type {Array<[string, Record<string, any>]>} */
+  const operationCodeStateCases = [
+    ['identity', {
+      ...operation,
+      agents: { ...operation.agents, implementer_agent_id: 'implementer' },
+    }],
+    ['outcome', {
+      ...operation,
+      tests: { authored_by_agent_id: 'plan-agent', green: false, evidence: [] },
+    }],
+  ];
+  for (const [, task] of operationCodeStateCases) {
+    const result = await verdictFor(task);
+    assertNamedFailure(result, '[category-stage]');
   }
 
   await t.test('operation kickback cannot target a code stage', async () => {
@@ -550,6 +650,309 @@ test('issue 101 cycle 2: operation auditor identity is ledger-bound and differs 
     });
     assertNamedFailure(result, '[inv2]');
   });
+});
+
+test('issue 105 recovery approval-required state retains requesting executor provenance', async () => {
+  const completed = completedOperationTask();
+  const approvalBoundary = 'Rewrite the shared release registry entry from source to destination.';
+  const pending = canonicalOperationTask({
+    plan: {
+      ...completed.plan,
+      requiresApproval: true,
+      approvalBoundary,
+    },
+    execution: {
+      result: 'approval-required',
+      executor_agent_id: null,
+      actions: ['Captured the recoverable pre-mutation state.'],
+      evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
+      approvalRequired: approvalBoundary,
+    },
+  });
+
+  const result = await verdictFor(pending);
+  assert.equal(result.ok, false, 'an approval request without a requesting executor must not validate');
+  assert.match(result.stderr.join('\n'), /executor/i);
+});
+
+test('issue 105 recovery persisted operation judgments retain strict findings, refutes, and audit proof', async (t) => {
+  const completed = completedOperationTask();
+  const finding = operationFinding();
+  const refute = operationRefute(finding);
+  const judged = completedOperationTask({
+    status: 'in_progress',
+    stage: 'verify',
+    verification: {
+      ...completed.verification,
+      verdict: 'needs-work',
+      reportedVerdict: 'needs-work',
+      findings: [{ ...finding, refute }],
+    },
+    refutes: [refute],
+  });
+  const judgedControl = await verdictFor(judged);
+  assert.equal(judgedControl.ok, true, judgedControl.stderr.join('\n'));
+
+  const wrongSourceRefute = operationRefute(finding, { source: 'review' });
+  /** @type {Array<[string, Record<string, any>]>} */
+  const malformedJudgments = [
+    ['verification finding item', {
+      ...judged,
+      verification: { ...judged.verification, findings: [{}] },
+      refutes: [],
+    }],
+    ['operation finding destination', {
+      ...judged,
+      verification: {
+        ...judged.verification,
+        findings: [{ ...finding, kickTo: 'implement', refute }],
+      },
+    }],
+    ['source-bound finding refute', {
+      ...judged,
+      verification: {
+        ...judged.verification,
+        findings: [{ ...finding, refute: wrongSourceRefute }],
+      },
+      refutes: [wrongSourceRefute],
+    }],
+    ['retained refute item', { ...judged, refutes: [{}] }],
+    ['retained attached refute', { ...judged, refutes: [] }],
+  ];
+  for (const [name, task] of malformedJudgments) {
+    await t.test(`rejects malformed ${name}`, async () => {
+      const result = await verdictFor(task);
+      assert.equal(result.ok, false, `${name} must fail persisted validation`);
+    });
+  }
+
+  const audited = completedOperationTask({
+    agents: {
+      ...completed.agents,
+      audit_agent_id: 'operation-auditor',
+    },
+    audit: {
+      required: true,
+      verdict: 'pass',
+      audit_agent_id: 'operation-auditor',
+      findings: [],
+      evidence: [{ command: 'inspect operation boundary', output: 'no findings' }],
+      scan: {
+        command: 'review-security --json',
+        recommendation: 'PASS',
+        reportPath: 'scratchpads/operation-audit.md',
+      },
+      coverage: auditCoverage(),
+    },
+  });
+  const auditedControl = await verdictFor(audited);
+  assert.equal(auditedControl.ok, true, auditedControl.stderr.join('\n'));
+
+  /** @param {string} field */
+  const withoutAuditField = (field) => {
+    const task = structuredClone(audited);
+    delete task.audit[field];
+    return task;
+  };
+  /** @type {Array<[string, Record<string, any>]>} */
+  const malformedAudits = [
+    ['nonempty evidence', {
+      ...audited,
+      audit: { ...audited.audit, evidence: [] },
+    }],
+    ['findings container', withoutAuditField('findings')],
+    ['finding item', {
+      ...audited,
+      audit: { ...audited.audit, findings: [{}] },
+    }],
+    ['scan record', withoutAuditField('scan')],
+    ['scan field', {
+      ...audited,
+      audit: { ...audited.audit, scan: { ...audited.audit.scan, command: '' } },
+    }],
+    ['coverage record', withoutAuditField('coverage')],
+    ['complete coverage', {
+      ...audited,
+      audit: { ...audited.audit, coverage: auditCoverage().slice(1) },
+    }],
+    ['coverage item', {
+      ...audited,
+      audit: {
+        ...audited.audit,
+        coverage: [
+          { ...auditCoverage()[0], status: 'unchecked' },
+          ...auditCoverage().slice(1),
+        ],
+      },
+    }],
+    ['verifier/auditor separation', {
+      ...audited,
+      agents: { ...audited.agents, audit_agent_id: audited.agents.verifier_agent_id },
+      audit: { ...audited.audit, audit_agent_id: audited.agents.verifier_agent_id },
+    }],
+  ];
+  for (const [name, task] of malformedAudits) {
+    await t.test(`rejects required audit without ${name}`, async () => {
+      const result = await verdictFor(task);
+      assert.equal(result.ok, false, `required audit without ${name} must not satisfy done`);
+    });
+  }
+});
+
+test('issue 105 recovery persisted councils require source-bound refutes and one scoped recovery', async (t) => {
+  const completed = completedOperationTask();
+  const finding = operationFinding();
+  const refute = operationRefute(finding);
+  const members = [
+    { agent_id: 'operation-integrity', lens: 'integrity', temperature: 0.3 },
+    { agent_id: 'operation-security', lens: 'security', temperature: 0.7 },
+    { agent_id: 'operation-pragmatist', lens: 'pragmatist', temperature: 1 },
+  ];
+  const stages = {
+    verify: { blockingKickbacks: 2 },
+    audit: { blockingKickbacks: 0 },
+  };
+  const initialShip = completedOperationTask({
+    verification: {
+      ...completed.verification,
+      verdict: 'needs-work',
+      reportedVerdict: 'needs-work',
+      findings: [{ ...finding, refute }],
+    },
+    refutes: [refute],
+    convergence: {
+      cap: 2,
+      stages,
+      council: {
+        convened: true,
+        stage: 'verify',
+        members,
+        findings: [{
+          id: 'F1',
+          summary: finding.what,
+          source: 'verify',
+          blockingVotes: 1,
+          survived: false,
+          followupTaskId: '#28',
+        }],
+        verdict: 'ship',
+        outcome: 'shipped',
+      },
+    },
+  });
+  const initialControl = await verdictFor(initialShip);
+  assert.equal(initialControl.ok, true, initialControl.stderr.join('\n'));
+
+  const withoutAttachedRefute = structuredClone(initialShip);
+  delete withoutAttachedRefute.verification.findings[0].refute;
+  const wrongSource = structuredClone(initialShip);
+  wrongSource.verification.findings[0].refute.source = 'audit';
+  wrongSource.refutes[0].source = 'audit';
+  /** @type {Array<[string, Record<string, any>]>} */
+  const invalidInitialShips = [
+    ['an attached source-bound refute', withoutAttachedRefute],
+    ['the retained top-level refute', { ...initialShip, refutes: [] }],
+    ['a valid retained refute item', { ...initialShip, refutes: [{}] }],
+    ['matching refute source provenance', wrongSource],
+  ];
+  for (const [name, task] of invalidInitialShips) {
+    await t.test(`initial council ship rejects without ${name}`, async () => {
+      const result = await verdictFor(task);
+      assert.equal(result.ok, false, `initial council ship without ${name} must not validate`);
+    });
+  }
+
+  const historicalVerification = {
+    ...completed.verification,
+    verdict: 'needs-work',
+    reportedVerdict: 'needs-work',
+    verifier_agent_id: 'initial-verifier',
+    findings: [{ ...finding, refute }],
+  };
+  const scopedRecovery = completedOperationTask({
+    agents: {
+      executor_agent_id: 'scoped-executor',
+      verifier_agent_id: 'fresh-verifier',
+      audit_agent_id: null,
+    },
+    execution: {
+      ...completed.execution,
+      executor_agent_id: 'scoped-executor',
+    },
+    verification: {
+      ...completed.verification,
+      verifier_agent_id: 'fresh-verifier',
+    },
+    refutes: [refute],
+    judgmentHistory: [{
+      at: '2026-07-12T01:00:00Z',
+      verification: historicalVerification,
+      audit: {
+        required: false,
+        verdict: 'na',
+        audit_agent_id: null,
+        findings: [],
+        evidence: [],
+      },
+      agents: {
+        verifier_agent_id: 'initial-verifier',
+        audit_agent_id: null,
+      },
+    }],
+    kickbacks: [{
+      from: 'verify',
+      to: 'execute',
+      reason: `Council block: ${finding.what}`,
+      at: '2026-07-12T01:00:00Z',
+    }],
+    convergence: {
+      cap: 2,
+      stages,
+      council: {
+        convened: true,
+        stage: 'verify',
+        members,
+        findings: [{
+          id: 'F1',
+          summary: finding.what,
+          source: 'verify',
+          blockingVotes: 2,
+          survived: true,
+          followupTaskId: null,
+        }],
+        verdict: 'block',
+        outcome: 'scoped-fix-shipped',
+      },
+    },
+  });
+  const scopedControl = await verdictFor(scopedRecovery);
+  assert.equal(scopedControl.ok, true, scopedControl.stderr.join('\n'));
+
+  const withoutHistory = structuredClone(scopedRecovery);
+  delete withoutHistory.judgmentHistory;
+  const malformedHistory = {
+    ...scopedRecovery,
+    judgmentHistory: [{}],
+  };
+  const staleVerifier = structuredClone(scopedRecovery);
+  staleVerifier.agents.verifier_agent_id = 'initial-verifier';
+  staleVerifier.verification.verifier_agent_id = 'initial-verifier';
+  const historyWithoutRefute = structuredClone(scopedRecovery);
+  delete historyWithoutRefute.judgmentHistory[0].verification.findings[0].refute;
+  /** @type {Array<[string, Record<string, any>]>} */
+  const invalidScopedRecoveries = [
+    ['judgment history', withoutHistory],
+    ['valid judgment history', malformedHistory],
+    ['the council-to-execute kickback', { ...scopedRecovery, kickbacks: [] }],
+    ['fresh reassessment verifier', staleVerifier],
+    ['historical source-bound refute', historyWithoutRefute],
+  ];
+  for (const [name, task] of invalidScopedRecoveries) {
+    await t.test(`scoped-fix-shipped rejects without ${name}`, async () => {
+      const result = await verdictFor(task);
+      assert.equal(result.ok, false, `scoped-fix-shipped without ${name} must not validate`);
+    });
+  }
 });
 
 test('issue 95 persisted plan refactor opportunity preserves omission and validates present values', async (t) => {

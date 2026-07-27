@@ -135,28 +135,108 @@ function isSameApproval(left, right) {
     && left.grantedAt === right.grantedAt;
 }
 
+/** @param {any} left @param {any} right */
+function isSameRefute(left, right) {
+  return isType(left, 'object')
+    && isType(right, 'object')
+    && left.agent_id === right.agent_id
+    && left.source === right.source
+    && left.finding === right.finding
+    && left.verdict === right.verdict
+    && left.rationale === right.rationale
+    && Array.isArray(left.evidence)
+    && Array.isArray(right.evidence)
+    && left.evidence.length === right.evidence.length
+    && left.evidence.every((/** @type {any} */ item, /** @type {number} */ index) => (
+      item?.command === right.evidence[index]?.command
+      && item?.output === right.evidence[index]?.output
+    ));
+}
+
+/** @param {any} task @param {string} source @param {any} finding */
+function hasRetainedSourceRefute(task, source, finding) {
+  const refute = finding?.refute;
+  return refute?.source === source
+    && refute.verdict === 'survives'
+    && refute.finding === `${finding.file}:${finding.line} ${finding.what}`
+    && Array.isArray(task.refutes)
+    && task.refutes.some((/** @type {any} */ retained) => isSameRefute(retained, refute));
+}
+
+/** @param {any} task @param {any} [verification] @param {any} [audit] */
+function operationBlockers(task, verification = task.verification, audit = task.audit) {
+  return [
+    ['verify', verification],
+    ['audit', audit],
+  ].flatMap(([source, outcome]) => (
+    (outcome?.findings ?? [])
+      .filter((/** @type {any} */ finding) => finding.class === 'blocking')
+      .map((/** @type {any} */ finding) => ({
+        source,
+        finding,
+        key: `${source}\0${finding.what}`,
+        proven: hasRetainedSourceRefute(task, source, finding),
+      }))
+  ));
+}
+
 /** @param {any} task */
 function isExactOperationCouncilShip(task) {
   const council = task.convergence?.council;
   if (council?.convened !== true || council.verdict !== 'ship' || council.outcome !== 'shipped') {
     return false;
   }
-  const blockers = [
-    ['verify', task.verification],
-    ['audit', task.audit],
-  ].flatMap(([source, outcome]) => (
-    (outcome?.findings ?? [])
-      .filter((/** @type {any} */ finding) => finding.class === 'blocking')
-      .map((/** @type {any} */ finding) => `${source}\0${finding.what}`)
-  ));
+  const blockers = operationBlockers(task);
   const resolved = council.findings
     .filter((/** @type {any} */ finding) => finding.survived === false)
     .map((/** @type {any} */ finding) => `${finding.source}\0${finding.summary}`);
+  const blockerKeys = blockers.map(({ key }) => key);
   return blockers.length > 0
-    && blockers.length === resolved.length
-    && new Set(blockers).size === blockers.length
+    && blockers.every(({ proven }) => proven)
+    && blockerKeys.length === resolved.length
+    && new Set(blockerKeys).size === blockerKeys.length
     && new Set(resolved).size === resolved.length
-    && blockers.every((/** @type {string} */ finding) => resolved.includes(finding));
+    && blockerKeys.every((finding) => resolved.includes(finding));
+}
+
+/** @param {any} task */
+function hasScopedOperationCouncilProof(task) {
+  const council = task.convergence?.council;
+  const survivors = council?.findings?.filter((/** @type {any} */ finding) => finding.survived === true) ?? [];
+  const expectedReason = `Council block: ${survivors.map((/** @type {any} */ finding) => finding.summary).join('; ')}`;
+  const councilKickbacks = (task.kickbacks ?? []).filter((/** @type {any} */ kickback) => (
+    kickback.from === council?.stage
+    && kickback.to === 'execute'
+    && kickback.reason === expectedReason
+  ));
+  if (councilKickbacks.length !== 1 || !Array.isArray(task.judgmentHistory)) return false;
+
+  const councilKeys = council.findings.map((/** @type {any} */ finding) => `${finding.source}\0${finding.summary}`);
+  const history = task.judgmentHistory.at(-1);
+  if (!history) return false;
+  const blockers = operationBlockers(task, history.verification, history.audit);
+  const blockerKeys = blockers.map(({ key }) => key);
+  if (blockers.length === 0
+    || !blockers.every(({ proven }) => proven)
+    || blockerKeys.length !== councilKeys.length
+    || new Set(blockerKeys).size !== blockerKeys.length
+    || new Set(councilKeys).size !== councilKeys.length
+    || !blockerKeys.every((finding) => councilKeys.includes(finding))
+    || Date.parse(history.at) < Date.parse(councilKickbacks[0].at)) {
+    return false;
+  }
+
+  const historicalIds = new Set([
+    history.agents?.verifier_agent_id,
+    history.agents?.audit_agent_id,
+  ].filter((agentId) => typeof agentId === 'string'));
+  const currentIds = [
+    task.verification?.verifier_agent_id,
+    task.audit?.audit_agent_id,
+  ].filter((agentId) => agentId !== null && agentId !== undefined);
+  return typeof task.verification?.verifier_agent_id === 'string'
+    && new Set(currentIds).size === currentIds.length
+    && currentIds.every((agentId) => typeof agentId === 'string' && !historicalIds.has(agentId));
 }
 
 /** @param {any} outcome @param {boolean} exactCouncilShip */
@@ -267,7 +347,8 @@ export function runInvariants(tasks, { lite }) {
       if ((hasVerdict && (au === null || outcomeAuditor === null))
         || (au === null) !== (outcomeAuditor === null)
         || (au !== null && outcomeAuditor !== null && au !== outcomeAuditor)
-        || (ex !== null && (au === ex || outcomeAuditor === ex))) {
+        || (ex !== null && (au === ex || outcomeAuditor === ex))
+        || (vr !== null && (au === vr || outcomeAuditor === vr))) {
         out.push(`task ${id}: audit outcome identity does not match its separated auditor [inv2]`);
       }
     }
@@ -332,7 +413,11 @@ export function runInvariants(tasks, { lite }) {
         && hasNonemptyEvidence(t.verification?.evidence);
       const auditPass = t.audit?.required === true
         ? typeof t.audit.audit_agent_id === 'string'
+          && t.audit.audit_agent_id === au
+          && au !== ex
+          && au !== vr
           && isResolvedOperationJudgment(t.audit, exactCouncilShip)
+          && hasNonemptyEvidence(t.audit.evidence)
         : t.audit?.verdict === 'pass' || t.audit?.verdict === 'na';
       if (!executionPass || !verificationPass || !auditPass) {
         out.push(`task ${id}: done operation requires executed actions/evidence, independent passing verification, and conditional audit pass [inv4]`);
@@ -567,6 +652,11 @@ function convergenceChecks(t, id, ids, out) {
     }
   }
 
+  if (t.category === 'operation' && t.status === 'done' && conv
+    && cl.verdict === 'block' && cl.outcome === 'scoped-fix-shipped'
+    && !hasScopedOperationCouncilProof(t)) {
+    out.push(`task ${id}: scoped-fix-shipped requires retained council and fresh recovery proof [inv11]`);
+  }
   // inv11: block resolution / done-gate.
   if (conv && cl.verdict === 'block' && cl.outcome === 'blocked-to-operator' && t.status !== 'blocked') {
     out.push(`task ${id}: council blocked-to-operator requires status == blocked [inv11]`);

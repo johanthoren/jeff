@@ -158,6 +158,17 @@ function assertCurrentJudgment(task, result) {
   if (isPendingCouncilRecovery(task) && builderId === result.agent_id) {
     throw new Error(`[record-identity] recovery judge ${result.agent_id} violates specialist separation`);
   }
+  if (isPendingCouncilRecovery(task) && isOperation(task)) {
+    const previousAgents = task.judgmentHistory?.at(-1)?.agents;
+    const previousAgentId = result.stage === 'verify'
+      ? previousAgents?.verifier_agent_id
+      : result.stage === 'audit'
+        ? previousAgents?.audit_agent_id
+        : null;
+    if (previousAgentId === result.agent_id) {
+      throw new Error(`[record-identity] recovery ${result.stage} must use a fresh identity, not the previous judge`);
+    }
+  }
   const currentAgentIds = [
     task.review?.reviewer_agent_id,
     task.review2?.reviewer_agent_id,
@@ -371,10 +382,12 @@ function recordRefute(task, result, at) {
   }
 
   if (activeFindings.some(({ finding: item }) => item.class === 'blocking' && !item.refute)) return;
-
   const hasSurvivor = activeFindings.some(({ finding: item }) => item.refute?.verdict === 'survives');
-  if (hasSurvivor && isPendingCouncilRecovery(task)) {
+
+  const pendingRecovery = isPendingCouncilRecovery(task);
+  if (pendingRecovery && (hasSurvivor || hasFalseVerificationPostcondition(task))) {
     blockCouncilRecovery(task);
+    if (!hasSurvivor) task.blockedReason = FALSE_VERIFICATION_REASON;
     return;
   }
   if (hasSurvivor && task.convergence === undefined) {
@@ -741,6 +754,13 @@ export function transitionTask(task, stage, result) {
         || parentGrant.grantedBy === result.agent_id)) {
       throw new Error('[record-approval] executor identity cannot supply operator provenance');
     }
+    if (pendingExecution?.executor_agent_id === result.agent_id) {
+      throw new Error('[record-identity] approval re-fire requires a fresh executor, not the previous requester');
+    }
+    if (isScopedCouncilFix && !pendingExecution
+      && next.agents.executor_agent_id === result.agent_id) {
+      throw new Error('[record-identity] council recovery requires a fresh executor, not the previous executor');
+    }
     next.agents.executor_agent_id = result.agent_id;
     next.execution = {
       result: result.result,
@@ -924,6 +944,10 @@ export async function recordApproval(root, id, grantedBy) {
     }
     if (next.execution.approval !== undefined) {
       throw new Error('[record-approval] pending request already has a stale operator grant');
+    }
+    if (typeof next.execution.executor_agent_id !== 'string'
+      || next.execution.executor_agent_id.length === 0) {
+      throw new Error('[record-approval] executor identity is required for request provenance');
     }
     if (grantedBy === next.execution.executor_agent_id) {
       throw new Error('[record-approval] executor identity cannot supply operator provenance');
