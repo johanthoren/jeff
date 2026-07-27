@@ -629,6 +629,12 @@ test('issue 101 cycle 2: operation auditor identity is ledger-bound and differs 
       audit_agent_id: 'operation-auditor',
       findings: [],
       evidence: [{ command: 'inspect operation boundary', output: 'no findings' }],
+      scan: {
+        command: 'review-security --json',
+        recommendation: 'PASS',
+        reportPath: 'scratchpads/operation-audit.md',
+      },
+      coverage: auditCoverage(),
     },
   });
   const accepted = await verdictFor(audited);
