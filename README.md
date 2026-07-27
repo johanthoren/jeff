@@ -11,6 +11,10 @@ specialist contexts carry each stage; enforced separation keeps builders from
 signing off their own work; durable evidence records what happened; and
 deterministic gates decide whether the plate can leave the pass.
 
+Jeff is a cooperative workflow protocol for one trusted operator and friendly
+agents, not a security sandbox. It validates the ledger and stage contracts; it
+does not claim to confine tools supplied by every host.
+
 You run the kitchen: you call the order, you get the last word. Jeff works the
 pass: takes the order, fires the line, holds the standard, lets nothing out
 until it's worthy. A plan, a failing test, the smallest change to green. A
@@ -35,10 +39,13 @@ For bounded operation tasks, the alternate path is:
 Operation tasks do not use code-task test scaffolding, implementation, refactor,
 review, or the full-suite gate. Done retains the operation plan and requires
 nonempty execution evidence, exact ordered independent verification of every
-planned postcondition, and an audit pass when audit is required. Pi supplies
-fixed plan-bound Git/HTTPS reads and a parent-only exact approval UI. Hosts that
-cannot narrow verification or authenticate parent approval fail closed; the
-executor can neither supply nor rewrite a grant.
+planned postcondition, and an audit pass when audit is required. When a plan
+requires approval, the executor stops with the exact operator-facing request.
+After you approve it, Jeff records the matching grant through host-neutral
+`cook approve <id> <operator>` and re-fires execute. Execute and verify otherwise
+use ordinary host-native stage dispatch. Host tool differences are not a
+cross-host security guarantee, and executor evidence never replaces independent
+verification.
 
 - **Capture:** Jeff pins the order down with you: what *done* means, what's out
   of scope, before a pan gets hot.

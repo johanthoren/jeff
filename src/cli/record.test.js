@@ -171,7 +171,7 @@ function operationPlanReturn(overrides = {}) {
     runbook: ['Confirm the source entry, then move it to the destination.'],
     preconditions: ['The source entry exists exactly once.'],
     recoveryBoundary: 'Before the shared registry write, restore the captured source entry.',
-    approvalBoundary: 'The shared registry write requires approval for that exact mutation.',
+    approvalBoundary: 'Rewrite the shared release registry entry from source to destination.',
     requiresApproval: false,
     postconditions: ['The source is absent and the destination exists exactly once.'],
     verificationSeams: ['Read the source and destination entries independently.'],
@@ -832,8 +832,8 @@ test('issue 101 cycle 2: operation plans durably escalate without advancing exec
   }
 });
 
-test('issue 101 cycle 2: parent records exact approval before approval-gated execution', async (t) => {
-  const mutation = 'Rewrite the shared release registry entry from source to destination.';
+test('issue 105 cooperative approval binds plan, request, parent grant, and re-fired execution', async (t) => {
+  const approvalBoundary = operationPlanReturn().approvalBoundary;
   const priorApproval = {
     mutation: 'Publish the preceding release registry entry.',
     grantedBy: 'Chef',
@@ -844,14 +844,14 @@ test('issue 101 cycle 2: parent records exact approval before approval-gated exe
   async function requestedOperation(overrides = {}) {
     const fixture = await makeRoot(operationTask({
       stage: 'execute',
-      plan: operationPlanState({ requiresApproval: true }),
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
       ...overrides,
     }));
     await recordSpecialistReturn(fixture.root, 'execute', '18', executeReturn('executor', {
       result: 'approval-required',
       actions: ['Captured the recoverable pre-mutation state.'],
       evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
-      approvalRequired: mutation,
+      approvalRequired: approvalBoundary,
     }));
     return fixture;
   }
@@ -859,7 +859,7 @@ test('issue 101 cycle 2: parent records exact approval before approval-gated exe
   await t.test('approval-gated plans cannot execute before a parent grant', async () => {
     const { root, taskDir } = await makeRoot(operationTask({
       stage: 'execute',
-      plan: operationPlanState({ requiresApproval: true }),
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
     }));
     try {
       const before = await readFile(join(taskDir, 'task.json'), 'utf8');
@@ -873,15 +873,35 @@ test('issue 101 cycle 2: parent records exact approval before approval-gated exe
     }
   });
 
-  await t.test('parent grant copies the pending bytes and remains append-only across re-fire', async () => {
+  await t.test('approval request must equal the planned operator-facing boundary', async () => {
+    const { root, taskDir } = await makeRoot(operationTask({
+      stage: 'execute',
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
+    }));
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'execute', '18', executeReturn('executor', {
+          result: 'approval-required',
+          approvalRequired: 'Delete the shared release registry entry.',
+        })),
+        /\[record-approval\].*match.*plan/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('parent grant copies the pending boundary and remains append-only across re-fire', async () => {
     const { root, taskDir } = await requestedOperation({ approvals: [priorApproval] });
     try {
-      await recordCore.recordApproval(root, '18', 'Chef', mutation);
+      await recordCore.recordApproval(root, '18', 'Chef');
 
       const approved = await readTask(taskDir);
       const grant = approved.approvals.at(-1);
       assert.deepEqual(approved.approvals.slice(0, -1), [priorApproval]);
-      assert.equal(grant.mutation, mutation);
+      assert.equal(grant.mutation, approvalBoundary);
       assert.equal(grant.grantedBy, 'Chef');
       assert.match(grant.grantedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
 
@@ -895,13 +915,14 @@ test('issue 101 cycle 2: parent records exact approval before approval-gated exe
     }
   });
 
-  await t.test('parent grant rejects a stale or different exact mutation atomically', async () => {
+  await t.test('stale duplicate grant rejects atomically', async () => {
     const { root, taskDir } = await requestedOperation();
     try {
+      await recordCore.recordApproval(root, '18', 'Chef');
       const before = await readFile(join(taskDir, 'task.json'), 'utf8');
       await assert.rejects(
-        recordCore.recordApproval(root, '18', 'Chef', 'Delete the shared release registry entry.'),
-        /\[record-approval\].*exact.*(?:request|mutation)/,
+        recordCore.recordApproval(root, '18', 'Chef'),
+        /\[record-approval\].*(?:already|stale).*grant/,
       );
       assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
     } finally {
@@ -916,7 +937,7 @@ test('issue 101 cycle 2: parent records exact approval before approval-gated exe
       await assert.rejects(
         recordSpecialistReturn(root, 'execute', '18', executeReturn('executor-fresh', {
           approval: {
-            mutation,
+            mutation: approvalBoundary,
             grantedBy: 'Chef',
             grantedAt: '2026-07-26T15:30:00Z',
           },
@@ -946,12 +967,12 @@ test('issue 101 cycle 2: parent records exact approval before approval-gated exe
   await t.test('parent grant without a pending exact request rejects atomically', async () => {
     const { root, taskDir } = await makeRoot(operationTask({
       stage: 'execute',
-      plan: operationPlanState({ requiresApproval: true }),
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
     }));
     try {
       const before = await readFile(join(taskDir, 'task.json'), 'utf8');
       await assert.rejects(
-        recordCore.recordApproval(root, '18', 'Chef', mutation),
+        recordCore.recordApproval(root, '18', 'Chef'),
         /\[record-approval\].*pending.*request/,
       );
       assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
@@ -960,14 +981,16 @@ test('issue 101 cycle 2: parent records exact approval before approval-gated exe
     }
   });
 
-  await t.test('execute children cannot reach approval through the public CLI', async () => {
+  await t.test('host-neutral CLI records the cooperative parent grant', async () => {
     const { root, taskDir } = await requestedOperation();
     try {
-      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
       const result = runCook(root, ['approve', '18', 'Chef']);
-      assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /unknown subcommand: approve/);
-      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      assert.equal(result.code, 0, result.stderr);
+
+      const approved = await readTask(taskDir);
+      assert.equal(approved.execution.approval.mutation, approvalBoundary);
+      assert.equal(approved.execution.approval.grantedBy, 'Chef');
+      assert.deepEqual(approved.approvals, [approved.execution.approval]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1461,6 +1484,7 @@ test('issue 101 cycle 2: scoped execute kickbacks terminate but an exact approva
     const mutation = 'Rewrite the exact council-scoped registry entry.';
     const task = operationCouncilTask();
     task.plan.requiresApproval = true;
+    task.plan.approvalBoundary = mutation;
     const { root } = await makeRoot(task);
     try {
       await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
@@ -1475,7 +1499,7 @@ test('issue 101 cycle 2: scoped execute kickbacks terminate but an exact approva
         ['in_progress', 'execute', null],
       );
 
-      await recordCore.recordApproval(root, '18', 'Chef', mutation);
+      await recordCore.recordApproval(root, '18', 'Chef');
       const resumed = await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor-resume'));
       assert.deepEqual([resumed.status, resumed.stage], ['in_progress', 'verify']);
       assert.equal(resumed.execution.approval.mutation, mutation);

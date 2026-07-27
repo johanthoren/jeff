@@ -3,11 +3,7 @@
 import { truncateToVisualLines } from '@earendil-works/pi-coding-agent';
 import { readConfig } from '../core/store.js';
 import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
-import {
-  getPendingApproval as readPendingApproval,
-  recordApproval as saveApproval,
-  recordSpecialistReturn,
-} from '../core/record.js';
+import { recordSpecialistReturn } from '../core/record.js';
 import { validateSpecialistReturn } from '../core/record-contract.js';
 
 const DISPLAY_ITEM_LIMIT = 8;
@@ -273,28 +269,12 @@ const DispatchParams = {
   },
 };
 
-const ApprovalParams = {
-  type: 'object',
-  required: ['taskId'],
-  additionalProperties: false,
-  properties: {
-    taskId: { type: 'string', description: 'Operation task awaiting exact parent approval' },
-  },
-};
-
-
 /**
  * @param {any} pi
- * @param {{
- *   dispatchRoleSession?: typeof runRoleSession,
- *   getPendingApproval?: typeof readPendingApproval,
- *   recordApproval?: typeof saveApproval,
- * }} [dependencies]
+ * @param {{ dispatchRoleSession?: typeof runRoleSession }} [dependencies]
  */
 export default function jeffExtension(pi, dependencies = {}) {
   const dispatchRoleSession = dependencies.dispatchRoleSession ?? runRoleSession;
-  const getPendingApproval = dependencies.getPendingApproval ?? readPendingApproval;
-  const recordApproval = dependencies.recordApproval ?? saveApproval;
   pi.registerCommand('jeff-status', {
     description: 'Report that the jeff Pi package is active',
     /**
@@ -303,39 +283,6 @@ export default function jeffExtension(pi, dependencies = {}) {
      */
     handler: async (_args, ctx) => {
       ctx.ui.notify('jeff Pi package active', 'info');
-    },
-  });
-
-  pi.registerTool({
-    name: 'cook_approve',
-    label: 'Cook Approve',
-    description: 'Ask the parent operator to approve the exact pending operation mutation.',
-    parameters: ApprovalParams,
-    /**
-     * @param {string} _toolCallId
-     * @param {{ taskId: string }} params
-     * @param {AbortSignal | undefined} _signal
-     * @param {unknown} _onUpdate
-     * @param {any} ctx
-     */
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      if (typeof ctx?.ui?.confirm !== 'function' || typeof ctx.ui.input !== 'function') {
-        throw new Error('cook_approve: parent approval UI is unavailable');
-      }
-      const mutation = await getPendingApproval(ctx.cwd, params.taskId);
-      const confirmed = await ctx.ui.confirm(
-        'Approve exact mutation?',
-        `The executor is stopped before this irreversible shared mutation:\n\n${mutation}`,
-      );
-      if (!confirmed) {
-        return { content: [{ type: 'text', text: 'Approval not recorded.' }], details: { recorded: false } };
-      }
-      const operator = await ctx.ui.input('Operator identity', 'Enter the identity granting this exact mutation.');
-      if (typeof operator !== 'string' || operator.trim().length === 0) {
-        return { content: [{ type: 'text', text: 'Approval not recorded.' }], details: { recorded: false } };
-      }
-      await recordApproval(ctx.cwd, params.taskId, operator, mutation);
-      return { content: [{ type: 'text', text: 'Approval recorded.' }], details: { recorded: true } };
     },
   });
 

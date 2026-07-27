@@ -250,7 +250,7 @@ test('issue 95 plan projection exposes a named refactor opportunity', () => {
   assert.equal(display.refactorOpportunity, opportunity);
 });
 
-test('extension registers /jeff-status plus parent dispatch and approval tools', () => {
+test('issue 105 extension registers status and dispatch without a host-specific approval adapter', () => {
   const commands = new Map();
   const tools = new Map();
   const pi = {
@@ -276,85 +276,9 @@ test('extension registers /jeff-status plus parent dispatch and approval tools',
   assert.deepEqual(tools.get('cook_dispatch').parameters.properties.stage.enum, [
     'plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute',
   ]);
-  assert.equal(tools.has('cook_approve'), true);
-  assert.deepEqual(tools.get('cook_approve').parameters.required, ['taskId']);
-  assert.deepEqual(Object.keys(tools.get('cook_approve').parameters.properties), ['taskId']);
+  assert.deepEqual([...tools.keys()], ['cook_dispatch']);
 });
 
-test('issue 101 cycle 2: parent approval UI authenticates the exact pending mutation', async (t) => {
-  const mutation = 'Rewrite the exact shared registry entry from source to destination.';
-
-  await t.test('confirmed mutation is recorded with parent-entered operator identity', async () => {
-    /** @type {any[]} */
-    const recorded = [];
-    const tool = registeredTools({
-      getPendingApproval: async (
-        /** @type {string} */ root,
-        /** @type {string} */ taskId,
-      ) => {
-        assert.deepEqual([root, taskId], ['/repo', '18']);
-        return mutation;
-      },
-      recordApproval: async (
-        /** @type {string} */ root,
-        /** @type {string} */ taskId,
-        /** @type {string} */ operator,
-        /** @type {string} */ exactMutation,
-      ) => { recorded.push([root, taskId, operator, exactMutation]); },
-    }).get('cook_approve');
-    /** @type {Array<{ title: string, message: string }>} */
-    const prompts = [];
-    assert.ok(tool, '[parent-approval] cook_approve tool is not registered');
-
-    const result = await tool.execute(
-      'approval-call',
-      { taskId: '18' },
-      undefined,
-      undefined,
-      {
-        cwd: '/repo',
-        ui: {
-          confirm: async (/** @type {string} */ title, /** @type {string} */ message) => {
-            prompts.push({ title, message });
-            return true;
-          },
-          input: async (/** @type {string} */ title, /** @type {string} */ message) => {
-            prompts.push({ title, message });
-            return 'Chef';
-          },
-        },
-      },
-    );
-
-    assert.deepEqual(recorded, [['/repo', '18', 'Chef', mutation]]);
-    assert.equal(prompts.some(({ message }) => message.includes(mutation)), true);
-    assert.match(result.content[0].text, /approval recorded/i);
-  });
-
-  await t.test('declined mutation cannot update the ledger', async () => {
-    let recorded = false;
-    const tool = registeredTools({
-      getPendingApproval: async () => mutation,
-      recordApproval: async () => { recorded = true; },
-    }).get('cook_approve');
-    assert.ok(tool, '[parent-approval] cook_approve tool is not registered');
-
-    await tool.execute(
-      'approval-call',
-      { taskId: '18' },
-      undefined,
-      undefined,
-      {
-        cwd: '/repo',
-        ui: {
-          confirm: async () => false,
-          input: assert.fail,
-        },
-      },
-    );
-    assert.equal(recorded, false);
-  });
-});
 
 test('cook_dispatch parses and projects every specialist result across model and TUI surfaces', async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-display-'));

@@ -22,7 +22,7 @@ import { adoptPlan, planSection, planCheck, planAppend, isIssueRef, planIssueOp 
 import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
 import { git, indiffReport } from '../core/git.js';
-import { recordSpecialistFile } from '../core/record.js';
+import { recordApproval, recordSpecialistFile } from '../core/record.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -70,6 +70,7 @@ function usageReport() {
       '  validate     Check .jeff state against the schema and invariants.',
       '  verify       Run the configured full-suite gate.',
       '  record       Record a specialist or council result.',
+      '  approve <id> <operator>  Grant the exact pending operation request.',
       '  baseline check [<hash>]  Check the green, clean baseline log.',
       '  ls           List tasks.',
       '  status       Report in-flight tasks and backlog health.',
@@ -146,6 +147,20 @@ async function main() {
     if (rest[0]?.startsWith('-')) process.stderr.write(`cook: verify: unknown option '${rest[0]}'\n`);
     else process.stderr.write(`cook: verify: unexpected argument '${rest[0]}'\n`);
     return process.exit(1);
+  }
+
+  if (sub === 'approve') {
+    if (rest.length !== 2) {
+      process.stderr.write('cook: usage: cook approve <id> <operator>\n');
+      return process.exit(1);
+    }
+    try {
+      await recordApproval(root, rest[0], rest[1]);
+      return emit({ code: 0, stdout: [`cook: recorded approval for task ${rest[0]}`], stderr: [] });
+    } catch (error) {
+      process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
+      return process.exit(1);
+    }
   }
 
 

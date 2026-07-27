@@ -9,7 +9,6 @@ import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
 import { activeRefuterAgentIds, forbiddenCouncilAgentIds, isRefuteAgentForbidden } from './identity-policy.js';
-import { parseCanonicalOperationBatch } from './operation-batch.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 /** @typedef {Record<string, any>} MutableRecordTask */
@@ -37,13 +36,20 @@ function isOperationPlanReturn(result) {
 }
 
 /** @param {MutableRecordTask} task */
-function canonicalPlanApprovalBoundary(task) {
+function plannedApprovalBoundary(task) {
   if (!isOperation(task) || task.plan?.requiresApproval !== true) return null;
-  try {
-    return parseCanonicalOperationBatch(task.plan.approvalBoundary).canonical;
-  } catch {
-    return null;
-  }
+  return typeof task.plan.approvalBoundary === 'string' ? task.plan.approvalBoundary : null;
+}
+
+/** @param {any} left @param {any} right */
+function isSameApproval(left, right) {
+  return left !== null
+    && right !== null
+    && typeof left === 'object'
+    && typeof right === 'object'
+    && left.mutation === right.mutation
+    && left.grantedBy === right.grantedBy
+    && left.grantedAt === right.grantedAt;
 }
 
 /** @param {MutableRecordTask} task */
@@ -708,25 +714,32 @@ export function transitionTask(task, stage, result) {
     }
   } else if (stage === 'execute') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
-    const pendingApproval = next.execution?.result === 'approval-required'
-      ? next.execution.approvalRequired
-      : null;
-    const parentGrant = pendingApproval === null ? undefined : next.execution?.approval;
-    const plannedApproval = canonicalPlanApprovalBoundary(next);
-    if (plannedApproval !== null
-      && ((result.result === 'approval-required' && result.approvalRequired !== plannedApproval)
-        || (result.result === 'executed'
-          && (pendingApproval !== plannedApproval || parentGrant?.mutation !== plannedApproval)))) {
-      throw new Error('[record-approval] request and parent grant must match the planned canonical batch');
+    const pendingExecution = next.execution?.result === 'approval-required' ? next.execution : null;
+    const pendingApproval = pendingExecution?.approvalRequired ?? null;
+    const parentGrant = pendingExecution?.approval;
+    const plannedApproval = plannedApprovalBoundary(next);
+    if (result.result === 'approval-required' && result.approvalRequired !== plannedApproval) {
+      throw new Error('[record-approval] approval request must match the planned operator-facing boundary');
     }
-    if (result.result === 'executed' && next.plan?.requiresApproval === true && pendingApproval === null) {
-      throw new Error('[record-approval] approval-gated plan requires a parent grant');
+    if (result.result === 'executed' && next.plan?.requiresApproval === true
+      && pendingApproval !== plannedApproval) {
+      throw new Error('[record-approval] approval-gated plan requires a matching request and parent grant');
     }
     if (result.result === 'executed' && pendingApproval !== null && parentGrant === undefined) {
       throw new Error('[record-approval] parent grant is required for the pending request');
     }
     if (parentGrant !== undefined && parentGrant.mutation !== pendingApproval) {
-      throw new Error('[record-approval] parent grant does not match the exact mutation request');
+      throw new Error('[record-approval] parent grant does not match the exact pending request');
+    }
+    if (parentGrant !== undefined
+      && (!Array.isArray(next.approvals)
+        || !next.approvals.some((/** @type {any} */ approval) => isSameApproval(approval, parentGrant)))) {
+      throw new Error('[record-approval] parent grant is stale or not retained');
+    }
+    if (parentGrant !== undefined
+      && (parentGrant.grantedBy === pendingExecution?.executor_agent_id
+        || parentGrant.grantedBy === result.agent_id)) {
+      throw new Error('[record-approval] executor identity cannot supply operator provenance');
     }
     next.agents.executor_agent_id = result.agent_id;
     next.execution = {
@@ -889,100 +902,9 @@ export async function updateTask(root, id, update, options = {}) {
   });
 }
 
-/** @param {string} root @param {string} id */
-async function readLocatedTask(root, id) {
-  try {
-    await assertStoreContained(root);
-  } catch (error) {
-    throw new Error(`[record-task] ${/** @type {Error} */ (error).message}`);
-  }
-  const tasks = await collectTasks(root);
-  const { taskDir } = await locateTask(root, id, tasks);
-  return readTask(taskDir, root);
-}
 
-/** @param {MutableRecordTask} task */
-function operationApprovalBoundary(task) {
-  if (!isOperation(task)) throw new Error('[operation-apply] tracked execute requires an operation task');
-  if (task.stage !== 'execute') {
-    throw new Error('[operation-apply] operation task is not at execute');
-  }
-  if (task.status !== 'in_progress') {
-    throw new Error('[operation-apply] operation task is not active');
-  }
-  const violations = taskSchemaViolations(task, { lite: true });
-  if (task.plan?.result !== 'plan' || typeof task.plan.requiresApproval !== 'boolean' || violations.length) {
-    throw new Error(`[operation-apply] malformed completed operation plan${violations[0] ? `: ${violations[0]}` : ''}`);
-  }
-  if (task.plan.requiresApproval === false) return null;
-  return parseCanonicalOperationBatch(task.plan.approvalBoundary).canonical;
-}
-
-/** @param {string} root @param {string} id */
-export async function getOperationApprovalBoundary(root, id) {
-  if (typeof id !== 'string' || id.trim().length === 0) {
-    throw new Error('[operation-apply] task id is required');
-  }
-  return operationApprovalBoundary(await readLocatedTask(root, id));
-}
-
-/** @param {string} root @param {string} id */
-export async function getApprovedOperationBoundary(root, id) {
-  if (typeof id !== 'string' || id.trim().length === 0) {
-    throw new Error('[operation-apply] task id is required');
-  }
-  const task = /** @type {MutableRecordTask} */ (await readLocatedTask(root, id));
-  const boundary = operationApprovalBoundary(task);
-  if (boundary === null) throw new Error('[operation-apply] operation task is not approval-gated');
-  const execution = task.execution;
-  if (execution?.result !== 'approval-required' || execution.approvalRequired !== boundary) {
-    throw new Error('[operation-apply] pending request does not match the completed plan');
-  }
-  const grant = execution.approval;
-  if (grant?.mutation !== boundary || typeof grant.grantedBy !== 'string' || !isIsoDateTime(grant.grantedAt)) {
-    throw new Error('[operation-apply] parent grant is missing or does not match the pending request');
-  }
-  const retained = task.approvals?.some((/** @type {any} */ approval) => (
-    approval?.mutation === grant.mutation
-    && approval?.grantedBy === grant.grantedBy
-    && approval?.grantedAt === grant.grantedAt
-  )) === true;
-  if (!retained) throw new Error('[operation-apply] parent grant is stale or not retained');
-  return boundary;
-}
-
-/** @param {string} root @param {string} id */
-export async function getVerificationSeams(root, id) {
-  const task = await readLocatedTask(root, id);
-  const seams = task.category === 'operation' && task.plan?.result === 'plan'
-    ? task.plan.verificationSeams
-    : null;
-  if (!Array.isArray(seams) || !seams.every((seam) => typeof seam === 'string' && seam.length > 0)) {
-    throw new Error('[verify-query] task has no completed operation plan verification seams');
-  }
-  return [...seams];
-}
-
-/** @param {string} root @param {string} id */
-export async function getPendingApproval(root, id) {
-  const task = await readLocatedTask(root, id);
-  const pending = task.category === 'operation'
-    && task.stage === 'execute'
-    && task.execution?.result === 'approval-required'
-    ? task.execution.approvalRequired
-    : null;
-  if (typeof pending !== 'string' || pending.length === 0) {
-    throw new Error('[record-approval] no active pending exact request');
-  }
-  const plannedApproval = canonicalPlanApprovalBoundary(/** @type {MutableRecordTask} */ (task));
-  if (plannedApproval !== null && pending !== plannedApproval) {
-    throw new Error('[record-approval] pending request does not match the planned canonical batch');
-  }
-  return pending;
-}
-
-/** @param {string} root @param {string} id @param {string} grantedBy @param {string} mutation */
-export async function recordApproval(root, id, grantedBy, mutation) {
+/** @param {string} root @param {string} id @param {string} grantedBy */
+export async function recordApproval(root, id, grantedBy) {
   if (typeof grantedBy !== 'string' || grantedBy.trim().length === 0) {
     throw new Error('[record-approval] operator identity is required');
   }
@@ -996,15 +918,15 @@ export async function recordApproval(root, id, grantedBy, mutation) {
     if (typeof pending !== 'string' || pending.length === 0) {
       throw new Error('[record-approval] no active pending exact request');
     }
-    const plannedApproval = canonicalPlanApprovalBoundary(next);
-    if (plannedApproval !== null && pending !== plannedApproval) {
-      throw new Error('[record-approval] pending request does not match the planned canonical batch');
-    }
-    if (mutation !== pending) {
-      throw new Error('[record-approval] exact mutation does not match the pending request');
+    const plannedApproval = plannedApprovalBoundary(next);
+    if (plannedApproval === null || pending !== plannedApproval) {
+      throw new Error('[record-approval] pending request does not match the planned approval boundary');
     }
     if (next.execution.approval !== undefined) {
-      throw new Error('[record-approval] pending request already has an operator grant');
+      throw new Error('[record-approval] pending request already has a stale operator grant');
+    }
+    if (grantedBy === next.execution.executor_agent_id) {
+      throw new Error('[record-approval] executor identity cannot supply operator provenance');
     }
     const grantedAt = now();
     const grant = { mutation: pending, grantedBy, grantedAt };

@@ -126,6 +126,15 @@ function hasNonemptyEvidence(evidence) {
     ));
 }
 
+/** @param {any} left @param {any} right */
+function isSameApproval(left, right) {
+  return isType(left, 'object')
+    && isType(right, 'object')
+    && left.mutation === right.mutation
+    && left.grantedBy === right.grantedBy
+    && left.grantedAt === right.grantedAt;
+}
+
 /** @param {any} task */
 function isExactOperationCouncilShip(task) {
   const council = task.convergence?.council;
@@ -236,6 +245,10 @@ export function runInvariants(tasks, { lite }) {
         out.push(`task ${id}: execution outcome identity does not match its executor [inv2]`);
       }
     }
+    if (t.category === 'operation' && isType(t.execution?.approval, 'object')
+      && t.execution.approval.grantedBy === ex) {
+      out.push(`task ${id}: executor supplied operator approval provenance (${jqStr(ex)}) [inv2]`);
+    }
     if (ex !== null && ex === vr) {
       out.push(`task ${id}: executor == verifier (${jqStr(ex)}) [inv2]`);
     }
@@ -280,13 +293,15 @@ export function runInvariants(tasks, { lite }) {
     // inv4: done-gate quality invariant
     if (t.status === 'done' && t.category === 'operation') {
       const executionApproval = t.execution?.approval;
-      const retainedExecutionApproval = executionApproval === undefined
-        ? t.plan?.requiresApproval === false
-        : Array.isArray(t.approvals) && t.approvals.some((/** @type {any} */ approval) => (
-          approval?.mutation === executionApproval.mutation
-          && approval?.grantedBy === executionApproval.grantedBy
-          && approval?.grantedAt === executionApproval.grantedAt
-        ));
+      const retainedExecutionApproval = t.plan?.requiresApproval === false
+        ? executionApproval === undefined
+        : t.plan?.requiresApproval === true
+          && executionApproval?.mutation === t.plan.approvalBoundary
+          && executionApproval?.grantedBy !== ex
+          && Array.isArray(t.approvals)
+          && t.approvals.some((/** @type {any} */ approval) => (
+            isSameApproval(approval, executionApproval)
+          ));
       const executionPass = t.execution?.result === 'executed'
         && t.execution?.approvalRequired === null
         && t.execution?.executor_agent_id === ex

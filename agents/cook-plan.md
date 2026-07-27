@@ -20,8 +20,8 @@ For a `code` task:
 
 For an `operation` task:
 - Define nonempty `runbook`, `preconditions`, `recoveryBoundary`, `approvalBoundary`, deterministic `postconditions`, and `verificationSeams`. Set `requiresApproval:true` when execution may cross an irreversible shared-mutation boundary; otherwise set it to `false`.
-- For `requiresApproval:true`, make `approvalBoundary` the canonical argv batch: a nonempty ordered array whose actions contain exactly `program` (a nonempty string) and `args` (an array of strings). Rebuild every action as `{program,args}` and use the exact bytes from `JSON.stringify(batch)`, with action and argv order preserved and no shell syntax. Those same bytes are the later `approvalRequired` request and parent grant.
-- Name Git and external reads with canonical fixed seams: `git-head`, `git-status`, `git-ref <target>`, `git-tree <target>`, `git-object <target>`, or `https-get <url>`. Never put a free-form shell command in a seam.
+- For `requiresApproval:true`, make `approvalBoundary` concise, exact operator-facing text that names the shared mutation boundary. The later `approval-required` request and recorded grant must match it byte-for-byte.
+- Name deterministic verification methods or observation points in `verificationSeams`. They are not a fixed query language; give a fresh verifier enough detail to check them with the host-native tools available.
 - Do not author tests, manufacture RED, name test files, or return a refactor opportunity. The verifier, not execution evidence, owns sign-off.
 
 Hard rules:
@@ -43,7 +43,7 @@ End your final message with exactly this strict JSON object, filled in, followed
 For an operation task return:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"plan","result":"plan","complexity":"complex","auditRequired":true,"slices":["<slice>"],"runbook":["<step>"],"preconditions":["<precondition>"],"recoveryBoundary":"<boundary>","approvalBoundary":"[{\"program\":\"git\",\"args\":[\"push\",\"origin\",\"refs/heads/release\"]}]","requiresApproval":true,"postconditions":["<postcondition>"],"verificationSeams":["<seam>"],"escalation":null}
+{"agent_id":"<dispatch id>","stage":"plan","result":"plan","complexity":"complex","auditRequired":true,"slices":["<slice>"],"runbook":["<step>"],"preconditions":["<precondition>"],"recoveryBoundary":"<boundary>","approvalBoundary":"Rewrite the shared release registry entry from source to destination.","requiresApproval":true,"postconditions":["<postcondition>"],"verificationSeams":["Read the source and destination entries independently."],"escalation":null}
 ```
 
 For an unresolved operation fork return:

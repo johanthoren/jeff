@@ -4,14 +4,14 @@
 
 ## 1. Goal
 
-Reliable long-running autonomous sessions that solve **atomic tasks one at a time** to tackle large projects, for a **single trusted Chef** on frontier models. Jeff is a model-native quality control plane: fresh specialist contexts, enforced separation, durable evidence, and deterministic gates make the method inspectable. Current dogfood stamp: GPT-5.6 Sol in July 2026. That stamp records operating experience, not a compatibility floor or routing rule. The system conveys a disciplined *way of working* to a capable LLM and defends against known model failure modes:
+Reliable long-running autonomous sessions that solve **atomic tasks one at a time** to tackle large projects, for a **single trusted Chef** working with friendly frontier agents. Jeff is a model-native quality control plane: fresh specialist contexts, enforced separation, durable evidence, and deterministic gates make the method inspectable. It is a cooperative workflow protocol, not a security sandbox. Current dogfood stamp: GPT-5.6 Sol in July 2026. That stamp records operating experience, not a compatibility floor or routing rule. The system conveys a disciplined *way of working* to a capable LLM and defends against known model failure modes:
 
 - momentum bias (wanting to keep going; declaring "done" prematurely)
 - skipped verification
 - intelligence degradation as context bloats
 - insufficient thinking effort for judgment-heavy stages
 
-This is **not** a trust / anti-forgery system (single Chef, nothing public). It is a **separation-and-completeness** system: the right-sized fresh-context specialist performs each stage, a *different* fresh-context specialist judges it, and a mechanical validator guarantees the separation and completeness are real.
+This is **not** a trust, anti-forgery, or hostile-child containment system. Host tool isolation is not a cross-host invariant. It is a **separation-and-completeness** system: the right-sized fresh-context specialist performs each stage, a *different* fresh-context specialist judges it, and a mechanical validator guarantees the recorded separation and completeness are real.
 
 ## 2. Principles
 
@@ -41,11 +41,11 @@ Capture is shared, then the locked category selects one closed graph:
 - Code: `capture → plan → implement → conditional refactor → review + conditional audit → done`.
 - Operation: `capture → plan → execute → verify + conditional audit → done`.
 
-Code planning owns tests and targeted RED. Operation planning owns a bounded runbook, preconditions, recovery and approval boundaries, explicit `requiresApproval`, deterministic postconditions, and canonical verification seams. A genuine unresolved operation fork can persist a minimal escalation at plan without creating execution state. Execute records actions and evidence and stops before an unapproved exact irreversible shared mutation. The executor can request approval but cannot attest it. Pi's parent-only approval UI records the exact pending bytes and operator identity through `cook_approve`; Claude Code and Codex fail closed until they have an equivalent parent-authenticated channel.
+Code planning owns tests and targeted RED. Operation planning owns a bounded runbook, preconditions, recovery and exact operator-facing approval boundaries, explicit `requiresApproval`, deterministic postconditions, and verification methods. A genuine unresolved operation fork can persist a minimal escalation at plan without creating execution state. Execute records actions and evidence. When approval is required, the executor returns a request equal to the planned boundary and stops by role contract. After the Chef approves it, Jeff records the active request through `cook approve <id> <operator>` and re-fires execute. The executor cannot return or serve as the provenance of a grant.
 
 `capture` is the highest-leverage stage and runs in the orchestrator session. All later active stages dispatch fresh specialists. Code retains its immutable checkpoint and full-suite gate. Operations intentionally do not manufacture that code gate. Their completion retains the plan and requires nonempty action/evidence records plus exact ordered, all-true, evidenced verification of `plan.postconditions`. Resolved follow-ups, refutes, and exact source-bound council demotions remain durable.
 
-Operation verification is capability-gated before dispatch. Pi narrows the child to read-only file tools plus fixed plan-bound Git/HTTPS queries. Claude Code fails closed for a named Git or external-state seam its read-only tools cannot satisfy. Codex fails closed for operation verification because its generic child cannot be mechanically narrowed. Execution evidence is never substituted for an independent query.
+Operation execute and verify use ordinary host-native stage dispatch. Role contracts guide cooperative agents; they do not mechanically confine host tools. A verifier independently applies the plan's deterministic methods and reports `needs-work` when a required method is unavailable. Execution evidence is never substituted for independent observation.
 
 ## 5. Model inheritance and effort
 
@@ -85,11 +85,12 @@ still judge whether the spec and implementation are good.
 ## 8. Commands
 
 The checked-JS entry point implements the complete public CLI surface:
-`validate`, `verify`, `record`, `baseline check`, `ls`, `status`, `show`, `init`,
-`lite`, `on`, `plan section|check|append`, `indiff`, `deinit`, `flavor`,
-`profile`, `doctor`, and help routing. Parent approval is a Pi host tool, not a
-public CLI verb. The header and dispatch in `src/cli/cook.js` are the source of
-truth for the verb set.
+`validate`, `verify`, `record`, `approve`, `baseline check`, `ls`, `status`,
+`show`, `init`, `lite`, `on`, `plan section|check|append`, `indiff`, `deinit`,
+`flavor`, `profile`, `doctor`, and help routing. `cook approve <id> <operator>`
+atomically copies the active pending operation request into append-only grant
+history. The header and dispatch in `src/cli/cook.js` are the source of truth
+for the verb set.
 
 ## 9. Ambient entry
 

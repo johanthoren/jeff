@@ -214,6 +214,37 @@ function validateApproval(value, field, out) {
   requireField(out, `${field}.grantedAt`, isIsoDateTime(value.grantedAt));
 }
 
+/** @param {any} left @param {any} right */
+function isSameApproval(left, right) {
+  return isType(left, 'object')
+    && isType(right, 'object')
+    && left.mutation === right.mutation
+    && left.grantedBy === right.grantedBy
+    && left.grantedAt === right.grantedAt;
+}
+
+/** @param {any} task @param {string[]} out */
+function validateOperationApproval(task, out) {
+  if (task.plan?.result !== 'plan' || !isType(task.execution, 'object')) return;
+  const requiresApproval = task.plan.requiresApproval === true;
+  const planned = task.plan.approvalBoundary;
+  const execution = task.execution;
+  const grant = execution.approval;
+
+  if (execution.result === 'approval-required') {
+    requireField(out, 'execution.approvalRequired', requiresApproval
+      && execution.approvalRequired === planned);
+  }
+  if (grant !== undefined) {
+    requireField(out, 'execution.approval.mutation', requiresApproval
+      && grant?.mutation === planned);
+    requireField(out, 'execution.approval.grantedBy provenance',
+      grant?.grantedBy !== execution.executor_agent_id);
+    requireField(out, 'execution.approval retained', Array.isArray(task.approvals)
+      && task.approvals.some((/** @type {any} */ approval) => isSameApproval(approval, grant)));
+  }
+}
+
 /** @param {any} value @param {string} field @param {string[]} out */
 function validateEscalation(value, field, out) {
   const keys = ['fork', 'options'];
@@ -349,6 +380,7 @@ export function taskSchemaViolations(task, { lite }) {
       task.approvals.forEach((approval, index) => validateApproval(approval, `approvals[${index}]`, out));
     }
   }
+  if (operation) validateOperationApproval(task, out);
   if (operation) {
     const codeIdentity = [
       task.agents?.implementer_agent_id,

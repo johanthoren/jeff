@@ -129,7 +129,7 @@ function completedOperationTask(overrides = {}) {
       runbook: ['Confirm the source entry, then move it to the destination.'],
       preconditions: ['The source entry exists exactly once.'],
       recoveryBoundary: 'Before the shared registry write, restore the captured source entry.',
-      approvalBoundary: 'The shared registry write requires approval when it is irreversible.',
+      approvalBoundary: 'Rewrite the shared release registry entry from source to destination.',
       requiresApproval: false,
       postconditions: ['The registry has exactly one destination entry.'],
       verificationSeams: ['Read the source and destination entries independently.'],
@@ -441,21 +441,23 @@ test('issue 101 surviving blocker: persisted operation action and evidence conte
   }
 });
 
-test('issue 101 irreversible operation done gate requires an exact retained operator approval', async (t) => {
+test('issue 105 persisted cooperative approval is plan-bound, retained, and operator-originated', async (t) => {
   const mutation = 'Rewrite the shared release registry entry from source to destination.';
   const approval = {
     mutation,
     grantedBy: 'Chef',
     grantedAt: '2026-07-26T15:30:00Z',
   };
+  const completed = completedOperationTask();
   const approved = completedOperationTask({
     plan: {
-      ...completedOperationTask().plan,
+      ...completed.plan,
+      approvalBoundary: mutation,
       requiresApproval: true,
     },
     approvals: [approval],
     execution: {
-      ...completedOperationTask().execution,
+      ...completed.execution,
       approval,
     },
   });
@@ -475,6 +477,21 @@ test('issue 101 irreversible operation done gate requires an exact retained oper
       ...approved,
       approvals: [],
     }, '[inv4]'],
+    ['grant does not match the planned approval boundary', {
+      ...approved,
+      plan: {
+        ...approved.plan,
+        approvalBoundary: 'Delete the shared release registry entry.',
+      },
+    }, '[inv4]'],
+    ['executor identity cannot be the recorded operator provenance', {
+      ...approved,
+      approvals: [{ ...approval, grantedBy: approved.agents.executor_agent_id }],
+      execution: {
+        ...approved.execution,
+        approval: { ...approval, grantedBy: approved.agents.executor_agent_id },
+      },
+    }, '[inv2]'],
     ['different granted mutation', {
       ...approved,
       approvals: [{ ...approval, mutation: 'Delete the shared release registry entry.' }],
