@@ -231,6 +231,7 @@ function verifyReturn(agentId = 'verifier', overrides = {}) {
 function operationTask(overrides = {}) {
   return {
     schemaVersion: 1,
+    operationStateVersion: 1,
     id: 18,
     slug: 'record-operation',
     title: 'Record operation',
@@ -274,6 +275,8 @@ function readyOperation(auditRequired = false, overrides = {}) {
     execution: {
       result: 'executed',
       executor_agent_id: 'executor',
+      cycle: 0,
+      recordedAt: '2026-07-12T00:20:00Z',
       actions: ['Moved the bounded registry entry.'],
       evidence: [{ command: 'inspect registry transition', output: 'transition complete' }],
       approvalRequired: null,
@@ -832,12 +835,19 @@ test('issue 101 cycle 2: operation plans durably escalate without advancing exec
   }
 });
 
-test('issue 105 cooperative approval binds plan, request, parent grant, and re-fired execution', async (t) => {
+test('issue 107 cooperative approval retains request, grant, and re-fire ordering', async (t) => {
   const approvalBoundary = operationPlanReturn().approvalBoundary;
   const priorApproval = {
     mutation: 'Publish the preceding release registry entry.',
     grantedBy: 'Chef',
     grantedAt: '2026-07-26T15:00:00Z',
+  };
+  const priorRequest = {
+    id: 0,
+    mutation: priorApproval.mutation,
+    requestedBy: 'prior-requester',
+    requestedAt: '2026-07-26T14:50:00Z',
+    cycle: 0,
   };
 
   /** @param {Record<string, any>} [overrides] */
@@ -909,7 +919,10 @@ test('issue 105 cooperative approval binds plan, request, parent grant, and re-f
   });
 
   await t.test('parent grant copies the pending boundary and remains append-only across re-fire', async () => {
-    const { root, taskDir } = await requestedOperation({ approvals: [priorApproval] });
+    const { root, taskDir } = await requestedOperation({
+      approvalRequests: [priorRequest],
+      approvals: [priorApproval],
+    });
     try {
       await recordCore.recordApproval(root, '18', 'Chef');
 
@@ -919,12 +932,25 @@ test('issue 105 cooperative approval binds plan, request, parent grant, and re-f
       assert.equal(grant.mutation, approvalBoundary);
       assert.equal(grant.grantedBy, 'Chef');
       assert.match(grant.grantedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+      assert.equal(approved.approvalRequests.length, 2);
+      assert.deepEqual(approved.approvalRequests[0], priorRequest);
+      const request = approved.approvalRequests.at(-1);
+      assert.equal(request.id, 1);
+      assert.equal(request.mutation, approvalBoundary);
+      assert.equal(request.requestedBy, 'executor');
+      assert.equal(request.cycle, 0);
+      assert.equal(approved.execution.approvalRequestId, request.id);
+      assert.ok(Date.parse(request.requestedAt) <= Date.parse(grant.grantedAt));
 
       await recordSpecialistReturn(root, 'execute', '18', executeReturn('executor-fresh'));
       const recorded = await readTask(taskDir);
       assert.deepEqual([recorded.status, recorded.stage], ['in_progress', 'verify']);
       assert.deepEqual(recorded.execution.approval, grant);
       assert.deepEqual(recorded.approvals, [priorApproval, grant]);
+      assert.deepEqual(recorded.approvalRequests, [priorRequest, request]);
+      assert.equal(recorded.execution.approvalRequestId, request.id);
+      assert.equal(recorded.execution.cycle, request.cycle);
+      assert.ok(Date.parse(grant.grantedAt) <= Date.parse(recorded.execution.recordedAt));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1303,7 +1329,7 @@ function operationCouncilReturn(outcome = null, survived = true) {
   };
 }
 
-test('issue 101 operation council block buys a scoped execute cycle, not implementation', async () => {
+test('issue 107 operation council records its trigger cycle and baseline executor', async () => {
   const { root, taskDir } = await makeRoot(operationCouncilTask());
   try {
     await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
@@ -1315,12 +1341,14 @@ test('issue 101 operation council block buys a scoped execute cycle, not impleme
       [recorded.kickbacks.at(-1).from, recorded.kickbacks.at(-1).to],
       ['verify', 'execute'],
     );
+    assert.equal(recorded.convergence.council.cycle, 0);
+    assert.equal(recorded.convergence.council.executor_agent_id, 'executor');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('issue 105 recovery council re-fire requires fresh execution and verification identities', async (t) => {
+test('issue 107 council recovery requires fresh execution and verification identities', async (t) => {
   await t.test('scoped executor differs from the initial executor', async () => {
     const { root, taskDir } = await makeRoot(operationCouncilTask());
     try {
@@ -1331,6 +1359,55 @@ test('issue 105 recovery council re-fire requires fresh execution and verificati
         /\[record-identity\].*(?:fresh|reuse|previous)/i,
       );
       assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const resumeAgent of ['executor', 'scoped-requester']) {
+    await t.test(`approval-mediated recovery rejects ${resumeAgent}`, async () => {
+      const mutation = 'Rewrite the exact council-scoped registry entry.';
+      const task = operationCouncilTask();
+      task.plan.requiresApproval = true;
+      task.plan.approvalBoundary = mutation;
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+        await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-requester', {
+          result: 'approval-required',
+          actions: ['Captured the scoped rollback state.'],
+          evidence: [{ command: 'inspect recovery boundary', output: 'rollback state captured' }],
+          approvalRequired: mutation,
+        }));
+        await recordCore.recordApproval(root, '18', 'Chef');
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordSpecialistReturn(root, 'execute', '18', executeReturn(resumeAgent)),
+          /\[record-identity\].*(?:fresh|reuse|previous|requester)/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await t.test('one scoped execution records adjacent cycle provenance', async () => {
+    const { root } = await makeRoot(operationCouncilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+      const recorded = await recordSpecialistReturn(
+        root,
+        'execute',
+        '18',
+        executeReturn('scoped-executor'),
+      );
+      assert.equal(recorded.convergence.council.cycle, 0);
+      assert.equal(recorded.convergence.council.executor_agent_id, 'executor');
+      assert.equal(recorded.judgmentHistory.length, 1);
+      assert.equal(recorded.judgmentHistory[0].cycle, 0);
+      assert.equal(recorded.execution.cycle, 1);
+      assert.match(recorded.execution.recordedAt, /^\d{4}-\d{2}-\d{2}T/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

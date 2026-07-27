@@ -9,10 +9,18 @@ import { validateSpecialistReturn } from '../core/record-contract.js';
 const DISPLAY_ITEM_LIMIT = 8;
 const DISPLAY_TEXT_LIMIT = 96;
 const DISPLAY_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/u;
+const APPROVAL_LITERAL_UNSAFE = /[\u007f-\u009f\u2028\u2029\uD800-\uDFFF\p{Bidi_Control}]/gu;
 
 /** @param {string} value */
 function makeWellFormed(value) {
   return value.replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD');
+}
+
+/** @param {string} value */
+function approvalLiteral(value) {
+  return JSON.stringify(value).replace(APPROVAL_LITERAL_UNSAFE, (character) => (
+    `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
+  ));
 }
 
 /** @param {unknown} value */
@@ -200,7 +208,7 @@ function compactDispatchLine(details) {
     return `${stage}: ${status} | ${details.escalation.fork} (${details.escalation.options.join(', ')})`;
   }
   if (stage === 'execute' && details.approvalRequired) {
-    return `${stage}: ${status} | ${details.approvalRequired}`;
+    return `${stage}: ${status} | ${approvalLiteral(details.approvalRequired)}`;
   }
   if (stage === 'execute' && details.kickback) {
     return `${stage}: ${status} to ${details.kickback.to} | ${details.kickback.reason}`;

@@ -79,6 +79,15 @@
  */
 
 /**
+ * @typedef {Object} ApprovalRequest
+ * @property {number} id
+ * @property {string} mutation
+ * @property {string} requestedBy
+ * @property {string} requestedAt
+ * @property {number} cycle
+ */
+
+/**
  * @typedef {Object} PlanEscalation
  * @property {string} fork
  * @property {string[]} options
@@ -182,7 +191,7 @@
  * @typedef {Object} OperationConvergence
  * @property {number} cap
  * @property {{verify: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
- * @property {{convened: boolean, stage: 'verify' | 'audit' | null, members: CouncilMember[], findings: OperationCouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, members: CouncilMember[], findings: OperationCouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  */
 
 /** @typedef {CodeConvergence | OperationConvergence} Convergence */
@@ -199,6 +208,7 @@
 
 /**
  * @typedef {Object} OperationJudgmentHistory
+ * @property {number} [cycle]
  * @property {string} at
  * @property {OperationVerification} verification
  * @property {Audit} audit
@@ -211,6 +221,7 @@
  *
  * @typedef {Object} CanonicalTaskJson
  * @property {1} schemaVersion
+ * @property {1} [operationStateVersion]
  * @property {number | string} id
  * @property {string} slug
  * @property {string} title
@@ -228,7 +239,8 @@
  * @property {Review} [review]
  * @property {Review | null} [review2]
  * @property {Audit} audit
- * @property {{result: 'executed' | 'kickback' | 'approval-required', executor_agent_id: string | null, actions: string[], evidence: Evidence[], approvalRequired: string | null, approval?: Approval}} [execution]
+ * @property {{result: 'executed' | 'kickback' | 'approval-required', executor_agent_id: string | null, cycle?: number, recordedAt?: string, approvalRequestId?: number, actions: string[], evidence: Evidence[], approvalRequired: string | null, approval?: Approval}} [execution]
+ * @property {ApprovalRequest[]} [approvalRequests]
  * @property {Approval[]} [approvals]
  * @property {OperationVerification} [verification]
  * @property {Refute[]} [refutes]

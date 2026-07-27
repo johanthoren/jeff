@@ -8,7 +8,20 @@ import { git, treeDirty } from './git.js';
 import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
-import { activeRefuterAgentIds, forbiddenCouncilAgentIds, isRefuteAgentForbidden } from './identity-policy.js';
+import {
+  activeRefuterAgentIds,
+  archivedJudgeAgentIds,
+  forbiddenCouncilAgentIds,
+  isRefuteAgentForbidden,
+} from './identity-policy.js';
+import {
+  currentOperationCycle,
+  hasBoundPendingApprovalRequest,
+  isSameApproval,
+  latestApprovalRequest,
+  nextOperationExecutionCycle,
+  OPERATION_STATE_VERSION,
+} from './operation-state.js';
 
 /** @typedef {import('./types.js').TaskJson} TaskJson */
 /** @typedef {Record<string, any>} MutableRecordTask */
@@ -41,16 +54,6 @@ function plannedApprovalBoundary(task) {
   return typeof task.plan.approvalBoundary === 'string' ? task.plan.approvalBoundary : null;
 }
 
-/** @param {any} left @param {any} right */
-function isSameApproval(left, right) {
-  return left !== null
-    && right !== null
-    && typeof left === 'object'
-    && typeof right === 'object'
-    && left.mutation === right.mutation
-    && left.grantedBy === right.grantedBy
-    && left.grantedAt === right.grantedAt;
-}
 
 /** @param {MutableRecordTask} task */
 function isAwaitingCouncil(task) {
@@ -110,6 +113,7 @@ function haveActiveBlockersSurvivedRefute(task) {
 function judgmentHistoryEntry(task, at) {
   if (isOperation(task)) {
     return {
+      cycle: currentOperationCycle(task),
       at,
       verification: task.verification,
       audit: task.audit,
@@ -134,7 +138,9 @@ function judgmentHistoryEntry(task, at) {
 
 /** @param {MutableRecordTask} task */
 function activeJudgmentCycle(task) {
-  return task.judgmentHistory?.length ?? 0;
+  return isOperation(task)
+    ? currentOperationCycle(task)
+    : task.judgmentHistory?.length ?? 0;
 }
 
 /** @param {MutableRecordTask} task */
@@ -159,14 +165,13 @@ function assertCurrentJudgment(task, result) {
     throw new Error(`[record-identity] recovery judge ${result.agent_id} violates specialist separation`);
   }
   if (isPendingCouncilRecovery(task) && isOperation(task)) {
-    const previousAgents = task.judgmentHistory?.at(-1)?.agents;
-    const previousAgentId = result.stage === 'verify'
-      ? previousAgents?.verifier_agent_id
-      : result.stage === 'audit'
-        ? previousAgents?.audit_agent_id
-        : null;
-    if (previousAgentId === result.agent_id) {
-      throw new Error(`[record-identity] recovery ${result.stage} must use a fresh identity, not the previous judge`);
+    const priorRecoveryIds = new Set([
+      ...archivedJudgeAgentIds(task),
+      ...(task.convergence.council.members ?? [])
+        .map((/** @type {any} */ member) => member.agent_id),
+    ]);
+    if (priorRecoveryIds.has(result.agent_id)) {
+      throw new Error(`[record-identity] recovery ${result.stage} must use a fresh identity, not a previous judge or council member`);
     }
   }
   const currentAgentIds = [
@@ -488,8 +493,9 @@ function recordCouncil(task, result, at) {
     recordCouncilRecovery(task, council);
     return;
   }
-  if (pending.stage !== council.stage || !counter || counter.blockingKickbacks < task.convergence.cap) {
-    throw new Error(`[record-transition] ${council.stage} council is not active`);
+  if (pending.stage !== council.stage || !counter
+    || counter.blockingKickbacks !== task.convergence.cap) {
+    throw new Error(`[record-transition] ${council.stage} council is not active at the exact cap`);
   }
   assertCouncilInput(task, council);
   const forbidden = forbiddenCouncilAgentIds(task);
@@ -501,7 +507,11 @@ function recordCouncil(task, result, at) {
     throw new Error('[record-transition] initial council block must have outcome null');
   }
 
-  task.convergence.council = council;
+  task.convergence.council = {
+    ...council,
+    cycle: activeJudgmentCycle(task),
+    executor_agent_id: task.agents.executor_agent_id,
+  };
   if (council.verdict === 'ship') {
     if (hasFalseVerificationPostcondition(task)) {
       kickFalseVerificationToExecute(task, at);
@@ -525,9 +535,10 @@ function recordCouncil(task, result, at) {
 
 /** @param {Record<string, any>} pending @param {Record<string, any>} returned */
 function isPreservedCouncilBlock(pending, returned) {
+  const { cycle: _cycle, executor_agent_id: _executorAgentId, ...specialistFields } = pending;
   return pending.verdict === 'block'
     && pending.outcome === null
-    && isDeepStrictEqual(returned, { ...pending, outcome: returned.outcome });
+    && isDeepStrictEqual(returned, { ...specialistFields, outcome: returned.outcome });
 }
 
 /** @param {MutableRecordTask} task */
@@ -652,6 +663,7 @@ export function transitionTask(task, stage, result) {
   const at = now();
   const next = /** @type {any} */ (structuredClone(task));
   const operation = isOperation(next);
+  if (operation) next.operationStateVersion = OPERATION_STATE_VERSION;
   const allowedStages = operation
     ? ['plan', 'execute', 'verify', 'audit', 'refute', 'council']
     : ['plan', 'implement', 'refactor', 'review', 'audit', 'refute', 'council'];
@@ -731,11 +743,12 @@ export function transitionTask(task, stage, result) {
     const pendingApproval = pendingExecution?.approvalRequired ?? null;
     const parentGrant = pendingExecution?.approval;
     const plannedApproval = plannedApprovalBoundary(next);
+    const executionCycle = nextOperationExecutionCycle(next);
     if (result.result === 'approval-required' && result.approvalRequired !== plannedApproval) {
       throw new Error('[record-approval] approval request must match the planned operator-facing boundary');
     }
     if (result.result === 'executed' && next.plan?.requiresApproval === true
-      && pendingApproval !== plannedApproval) {
+      && (pendingApproval !== plannedApproval || !hasBoundPendingApprovalRequest(next))) {
       throw new Error('[record-approval] approval-gated plan requires a matching request and parent grant');
     }
     if (result.result === 'executed' && pendingApproval !== null && parentGrant === undefined) {
@@ -745,8 +758,7 @@ export function transitionTask(task, stage, result) {
       throw new Error('[record-approval] parent grant does not match the exact pending request');
     }
     if (parentGrant !== undefined
-      && (!Array.isArray(next.approvals)
-        || !next.approvals.some((/** @type {any} */ approval) => isSameApproval(approval, parentGrant)))) {
+      && !isSameApproval(next.approvals?.at(-1), parentGrant)) {
       throw new Error('[record-approval] parent grant is stale or not retained');
     }
     if (parentGrant !== undefined
@@ -757,14 +769,34 @@ export function transitionTask(task, stage, result) {
     if (pendingExecution?.executor_agent_id === result.agent_id) {
       throw new Error('[record-identity] approval re-fire requires a fresh executor, not the previous requester');
     }
-    if (isScopedCouncilFix && !pendingExecution
-      && next.agents.executor_agent_id === result.agent_id) {
+    if (isScopedCouncilFix
+      && next.convergence.council.executor_agent_id === result.agent_id) {
       throw new Error('[record-identity] council recovery requires a fresh executor, not the previous executor');
+    }
+    if (result.result === 'executed') {
+      if (isScopedCouncilFix) archiveAndResetJudgments(next, at);
+      else resetJudgmentsAfterFix(next, at);
+    }
+
+    let approvalRequestId = pendingExecution?.approvalRequestId;
+    if (result.result === 'approval-required') {
+      const request = {
+        id: next.approvalRequests?.length ?? 0,
+        mutation: result.approvalRequired,
+        requestedBy: result.agent_id,
+        requestedAt: at,
+        cycle: executionCycle,
+      };
+      next.approvalRequests = [...(next.approvalRequests ?? []), request];
+      approvalRequestId = request.id;
     }
     next.agents.executor_agent_id = result.agent_id;
     next.execution = {
       result: result.result,
       executor_agent_id: result.agent_id,
+      cycle: executionCycle,
+      recordedAt: at,
+      ...(approvalRequestId === undefined ? {} : { approvalRequestId }),
       actions: result.actions,
       evidence: result.evidence,
       approvalRequired: result.approvalRequired,
@@ -786,8 +818,6 @@ export function transitionTask(task, stage, result) {
     } else if (result.result === 'approval-required') {
       next.stage = 'execute';
     } else {
-      if (isScopedCouncilFix) archiveAndResetJudgments(next, at);
-      else resetJudgmentsAfterFix(next, at);
       next.verification ??= { verdict: null, verifier_agent_id: null, postconditions: [], findings: [], evidence: [] };
       next.stage = 'verify';
     }
@@ -942,17 +972,20 @@ export async function recordApproval(root, id, grantedBy) {
     if (plannedApproval === null || pending !== plannedApproval) {
       throw new Error('[record-approval] pending request does not match the planned approval boundary');
     }
+    if (!hasBoundPendingApprovalRequest(next)) {
+      throw new Error('[record-approval] pending request lacks exact executor provenance');
+    }
     if (next.execution.approval !== undefined) {
       throw new Error('[record-approval] pending request already has a stale operator grant');
     }
-    if (typeof next.execution.executor_agent_id !== 'string'
-      || next.execution.executor_agent_id.length === 0) {
-      throw new Error('[record-approval] executor identity is required for request provenance');
-    }
-    if (grantedBy === next.execution.executor_agent_id) {
+    const request = latestApprovalRequest(next);
+    if (grantedBy === request.requestedBy) {
       throw new Error('[record-approval] executor identity cannot supply operator provenance');
     }
     const grantedAt = now();
+    if (Date.parse(grantedAt) < Date.parse(request.requestedAt)) {
+      throw new Error('[record-approval] operator grant cannot precede its request');
+    }
     const grant = { mutation: pending, grantedBy, grantedAt };
     next.execution.approval = grant;
     next.approvals = [...(next.approvals ?? []), grant];

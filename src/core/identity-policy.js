@@ -1,8 +1,13 @@
 // @ts-check
 
+/** @param {unknown} value */
+export function isAgentId(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
 /** @param {unknown[]} values */
 function agentIds(values) {
-  return values.filter((value) => typeof value === 'string' && value !== '');
+  return values.filter(isAgentId);
 }
 
 /** @param {Record<string, any>} task */
@@ -22,10 +27,32 @@ function activeAgentIds(task) {
 }
 
 /** @param {Record<string, any>} task */
+export function archivedJudgeAgentIds(task) {
+  return Array.isArray(task.judgmentHistory)
+    ? task.judgmentHistory.flatMap((/** @type {any} */ entry) => agentIds(Object.values(entry?.agents ?? {})))
+    : [];
+}
+
+/** @param {Record<string, any>} task */
 export function activeRefuterAgentIds(task) {
   return [task.review, task.review2, task.verification, task.audit]
     .flatMap((/** @type {any} */ outcome) => outcome?.findings ?? [])
     .flatMap((/** @type {any} */ finding) => agentIds([finding.refute?.agent_id]));
+}
+
+/** @param {Record<string, any>} task */
+function archivedRefuterAgentIds(task) {
+  return Array.isArray(task.judgmentHistory)
+    ? task.judgmentHistory
+      .flatMap((/** @type {any} */ entry) => [entry?.review, entry?.review2, entry?.verification, entry?.audit])
+      .flatMap((/** @type {any} */ outcome) => outcome?.findings ?? [])
+      .flatMap((/** @type {any} */ finding) => agentIds([finding.refute?.agent_id]))
+    : [];
+}
+
+/** @param {unknown} judgeAgentId @param {unknown} refuteAgentId */
+export function isSourceRefuteAgentForbidden(judgeAgentId, refuteAgentId) {
+  return isAgentId(judgeAgentId) && judgeAgentId === refuteAgentId;
 }
 
 /** @param {Record<string, any>} task */
@@ -41,4 +68,13 @@ export function isRefuteAgentForbidden(task, agentId) {
   return forbiddenRefuteAgentIds(task).has(agentId);
 }
 
-export const forbiddenCouncilAgentIds = forbiddenRefuteAgentIds;
+/** @param {Record<string, any>} task */
+export function forbiddenCouncilAgentIds(task) {
+  const archived = task.category === 'operation'
+    ? [...archivedJudgeAgentIds(task), ...archivedRefuterAgentIds(task)]
+    : [];
+  return new Set([
+    ...forbiddenRefuteAgentIds(task),
+    ...archived,
+  ]);
+}

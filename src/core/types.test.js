@@ -56,6 +56,7 @@ void canonicalTask;
 /** @type {import('./types.js').TaskJson} */
 const operationTask = {
   schemaVersion: 1,
+  operationStateVersion: 1,
   id: 'op-28',
   slug: 'bounded-registry-transition',
   title: 'Bounded registry transition',
@@ -87,19 +88,29 @@ const operationTask = {
   execution: {
     result: 'executed',
     executor_agent_id: 'scoped-executor',
+    cycle: 1,
+    recordedAt: '2026-07-12T01:00:00.000Z',
+    approvalRequestId: 0,
     actions: ['Moved the bounded registry entry.'],
     evidence: [{ command: 'inspect registry transition', output: 'transition complete' }],
     approvalRequired: null,
     approval: {
       mutation: 'Rewrite the shared registry entry from source to destination.',
       grantedBy: 'Chef',
-      grantedAt: '2026-07-12T00:30:00.000Z',
+      grantedAt: '2026-07-12T00:55:00.000Z',
     },
   },
+  approvalRequests: [{
+    id: 0,
+    mutation: 'Rewrite the shared registry entry from source to destination.',
+    requestedBy: 'approval-requester',
+    requestedAt: '2026-07-12T00:50:00.000Z',
+    cycle: 1,
+  }],
   approvals: [{
     mutation: 'Rewrite the shared registry entry from source to destination.',
     grantedBy: 'Chef',
-    grantedAt: '2026-07-12T00:30:00.000Z',
+    grantedAt: '2026-07-12T00:55:00.000Z',
   }],
   verification: {
     verdict: 'pass',
@@ -146,6 +157,7 @@ const operationTask = {
     evidence: [{ command: 'inspect registry', output: 'two entries' }],
   }],
   judgmentHistory: [{
+    cycle: 0,
     at: '2026-07-12T00:45:00.000Z',
     verification: {
       verdict: 'needs-work',
@@ -222,6 +234,8 @@ const operationTask = {
     council: {
       convened: true,
       stage: 'verify',
+      cycle: 0,
+      executor_agent_id: 'initial-executor',
       members: [
         { agent_id: 'operation-integrity', lens: 'integrity', temperature: 0.3 },
         { agent_id: 'operation-security', lens: 'security', temperature: 0.7 },

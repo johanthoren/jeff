@@ -14,7 +14,13 @@
  */
 
 import { isType } from './validate.js';
-import { forbiddenCouncilAgentIds } from './identity-policy.js';
+import { archivedJudgeAgentIds, forbiddenCouncilAgentIds, isAgentId } from './identity-policy.js';
+import {
+  hasCompletedApprovalProvenance,
+  isAuthoritativeOperation,
+  isOperationCycle,
+  isSameApproval,
+} from './operation-state.js';
 
 /**
  * jq's `a // b`: yield `b` when `a` is null, false, or absent.
@@ -126,14 +132,6 @@ function hasNonemptyEvidence(evidence) {
     ));
 }
 
-/** @param {any} left @param {any} right */
-function isSameApproval(left, right) {
-  return isType(left, 'object')
-    && isType(right, 'object')
-    && left.mutation === right.mutation
-    && left.grantedBy === right.grantedBy
-    && left.grantedAt === right.grantedAt;
-}
 
 /** @param {any} left @param {any} right */
 function isSameRefute(left, right) {
@@ -226,17 +224,43 @@ function hasScopedOperationCouncilProof(task) {
     return false;
   }
 
-  const historicalIds = new Set([
-    history.agents?.verifier_agent_id,
-    history.agents?.audit_agent_id,
-  ].filter((agentId) => typeof agentId === 'string'));
   const currentIds = [
     task.verification?.verifier_agent_id,
     task.audit?.audit_agent_id,
   ].filter((agentId) => agentId !== null && agentId !== undefined);
-  return typeof task.verification?.verifier_agent_id === 'string'
+  const latestHistoricalIds = new Set([
+    history.agents?.verifier_agent_id,
+    history.agents?.audit_agent_id,
+  ].filter(isAgentId));
+  const basicFreshness = isAgentId(task.verification?.verifier_agent_id)
     && new Set(currentIds).size === currentIds.length
-    && currentIds.every((agentId) => typeof agentId === 'string' && !historicalIds.has(agentId));
+    && currentIds.every((agentId) => isAgentId(agentId) && !latestHistoricalIds.has(agentId));
+  if (!isAuthoritativeOperation(task)) return basicFreshness;
+
+  const historicalIds = new Set(archivedJudgeAgentIds(task));
+  const councilMemberIds = new Set(
+    (council.members ?? []).map((/** @type {any} */ member) => member.agent_id),
+  );
+  const councilHistory = task.judgmentHistory.filter((/** @type {any} */ entry) => (
+    entry?.cycle === council.cycle
+  ));
+  const laterHistory = task.judgmentHistory.some((/** @type {any} */ entry) => (
+    isOperationCycle(entry?.cycle) && entry.cycle > council.cycle
+  ));
+  return basicFreshness
+    && isOperationCycle(council.cycle)
+    && isAgentId(council.executor_agent_id)
+    && councilHistory.length === 1
+    && history === councilHistory[0]
+    && !laterHistory
+    && task.execution?.cycle === council.cycle + 1
+    && task.judgmentHistory.length === task.execution.cycle
+    && isAgentId(task.execution?.executor_agent_id)
+    && task.execution.executor_agent_id === task.agents?.executor_agent_id
+    && task.execution.executor_agent_id !== council.executor_agent_id
+    && Date.parse(task.execution.recordedAt) >= Date.parse(history.at)
+    && [...historicalIds].every((agentId) => !councilMemberIds.has(agentId))
+    && currentIds.every((agentId) => !historicalIds.has(agentId) && !councilMemberIds.has(agentId));
 }
 
 /** @param {any} outcome @param {boolean} exactCouncilShip */
@@ -377,16 +401,18 @@ export function runInvariants(tasks, { lite }) {
       const retainedExecutionApproval = t.plan?.requiresApproval === false
         ? executionApproval === undefined
         : t.plan?.requiresApproval === true
-          && executionApproval?.mutation === t.plan.approvalBoundary
-          && executionApproval?.grantedBy !== ex
-          && Array.isArray(t.approvals)
-          && t.approvals.some((/** @type {any} */ approval) => (
-            isSameApproval(approval, executionApproval)
-          ));
+          && (isAuthoritativeOperation(t)
+            ? hasCompletedApprovalProvenance(t)
+            : executionApproval?.mutation === t.plan.approvalBoundary
+              && executionApproval?.grantedBy !== ex
+              && Array.isArray(t.approvals)
+              && t.approvals.some((/** @type {any} */ approval) => (
+                isSameApproval(approval, executionApproval)
+              )));
       const executionPass = t.execution?.result === 'executed'
         && t.execution?.approvalRequired === null
         && t.execution?.executor_agent_id === ex
-        && ex !== null
+        && isAgentId(ex)
         && Array.isArray(t.execution?.actions)
         && t.execution.actions.length > 0
         && t.execution.actions.every((/** @type {any} */ action) => typeof action === 'string' && action.length > 0)
@@ -406,13 +432,13 @@ export function runInvariants(tasks, { lite }) {
         ));
       const exactCouncilShip = isExactOperationCouncilShip(t);
       const verificationPass = t.verification?.verifier_agent_id === vr
-        && vr !== null
+        && isAgentId(vr)
         && vr !== ex
         && exactPostconditions
         && isResolvedOperationJudgment(t.verification, exactCouncilShip)
         && hasNonemptyEvidence(t.verification?.evidence);
       const auditPass = t.audit?.required === true
-        ? typeof t.audit.audit_agent_id === 'string'
+        ? isAgentId(t.audit.audit_agent_id)
           && t.audit.audit_agent_id === au
           && au !== ex
           && au !== vr
@@ -655,7 +681,7 @@ function convergenceChecks(t, id, ids, out) {
   if (t.category === 'operation' && t.status === 'done' && conv
     && cl.verdict === 'block' && cl.outcome === 'scoped-fix-shipped'
     && !hasScopedOperationCouncilProof(t)) {
-    out.push(`task ${id}: scoped-fix-shipped requires retained council and fresh recovery proof [inv11]`);
+    out.push(`task ${id}: scoped-fix-shipped requires exactly one fresh adjacent recovery [operation-recovery] [inv11]`);
   }
   // inv11: block resolution / done-gate.
   if (conv && cl.verdict === 'block' && cl.outcome === 'blocked-to-operator' && t.status !== 'blocked') {

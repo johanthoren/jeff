@@ -1,5 +1,16 @@
 // @ts-check
 
+import { isAgentId, isSourceRefuteAgentForbidden } from './identity-policy.js';
+import {
+  hasBoundPendingApprovalRequest,
+  hasCompletedApprovalProvenance,
+  isAuthoritativeOperation,
+  isAwaitingScopedOperationExecution,
+  isOperationCycle,
+  isSameApproval,
+  latestApprovalRequest,
+  OPERATION_STATE_VERSION,
+} from './operation-state.js';
 import { isOneOf, isType } from './validate.js';
 
 const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
@@ -311,12 +322,18 @@ function validateOperationFindings(value, field, source, task, out) {
 
 /**
  * @param {any} task
- * @param {(source: 'verify' | 'audit', finding: any) => void} visit
+ * @param {(source: 'verify' | 'audit', finding: any, judgeAgentId: unknown) => void} visit
  */
 function forEachOperationFinding(task, visit) {
-  const visitOutcome = (/** @type {'verify' | 'audit'} */ source, /** @type {any} */ outcome) => {
+  const visitOutcome = (
+    /** @type {'verify' | 'audit'} */ source,
+    /** @type {any} */ outcome,
+  ) => {
     if (!Array.isArray(outcome?.findings)) return;
-    outcome.findings.forEach((/** @type {any} */ finding) => visit(source, finding));
+    const judgeAgentId = source === 'verify'
+      ? outcome.verifier_agent_id
+      : outcome.audit_agent_id;
+    outcome.findings.forEach((/** @type {any} */ finding) => visit(source, finding, judgeAgentId));
   };
   visitOutcome('verify', task.verification);
   visitOutcome('audit', task.audit);
@@ -355,17 +372,35 @@ function validateApproval(value, field, out) {
   requireField(out, `${field}.grantedAt`, isIsoDateTime(value.grantedAt));
 }
 
-/** @param {any} left @param {any} right */
-function isSameApproval(left, right) {
-  return isType(left, 'object')
-    && isType(right, 'object')
-    && left.mutation === right.mutation
-    && left.grantedBy === right.grantedBy
-    && left.grantedAt === right.grantedAt;
-}
 
 /** @param {any} task @param {string[]} out */
-function validateOperationApproval(task, out) {
+function validateApprovalRequests(task, out) {
+  if (task.approvalRequests === undefined) return;
+  requireField(out, 'approvalRequests', Array.isArray(task.approvalRequests));
+  if (!Array.isArray(task.approvalRequests)) return;
+  task.approvalRequests.forEach((/** @type {any} */ request, /** @type {number} */ index) => {
+    const field = `approvalRequests[${index}]`;
+    const keys = ['id', 'mutation', 'requestedBy', 'requestedAt', 'cycle'];
+    requireField(out, field, isType(request, 'object')
+      && Object.keys(request).length === keys.length
+      && keys.every((key) => Object.hasOwn(request, key)));
+    if (!isType(request, 'object')) return;
+    requireField(out, `${field}.id`, request.id === index);
+    requireField(out, `${field}.mutation`, isNonemptyString(request.mutation));
+    requireField(out, `${field}.requestedBy`, isAgentId(request.requestedBy));
+    requireField(out, `${field}.requestedAt`, isIsoDateTime(request.requestedAt));
+    requireField(out, `${field}.cycle`, isOperationCycle(request.cycle));
+    const previous = task.approvalRequests[index - 1];
+    if (previous !== undefined) {
+      requireField(out, `${field}.requestedAt ordering`,
+        Date.parse(previous.requestedAt) <= Date.parse(request.requestedAt));
+      requireField(out, `${field}.cycle ordering`, previous.cycle <= request.cycle);
+    }
+  });
+}
+
+/** @param {any} task @param {string[]} out @param {boolean} authoritative */
+function validateOperationApproval(task, out, authoritative) {
   if (task.plan?.result !== 'plan' || !isType(task.execution, 'object')) return;
   const requiresApproval = task.plan.requiresApproval === true;
   const planned = task.plan.approvalBoundary;
@@ -376,6 +411,9 @@ function validateOperationApproval(task, out) {
     requireField(out, 'execution.approvalRequired', requiresApproval
       && execution.approvalRequired === planned);
     requireField(out, 'execution.executor_agent_id provenance', isNonemptyString(execution.executor_agent_id));
+    if (authoritative && !hasBoundPendingApprovalRequest(task)) {
+      out.push('[approval-provenance] pending approval must retain its exact latest request');
+    }
   }
   if (grant !== undefined) {
     requireField(out, 'execution.approval.mutation', requiresApproval
@@ -384,6 +422,19 @@ function validateOperationApproval(task, out) {
       grant?.grantedBy !== execution.executor_agent_id);
     requireField(out, 'execution.approval retained', Array.isArray(task.approvals)
       && task.approvals.some((/** @type {any} */ approval) => isSameApproval(approval, grant)));
+    if (authoritative) {
+      const request = latestApprovalRequest(task);
+      if (request === undefined
+        || request.requestedBy === grant.grantedBy
+        || Date.parse(request.requestedAt) > Date.parse(grant.grantedAt)) {
+        out.push('[approval-provenance] operator grant must follow and differ from its exact requester');
+      }
+    }
+  }
+  if (authoritative && execution.result === 'executed' && requiresApproval
+    && !isAwaitingScopedOperationExecution(task)
+    && !hasCompletedApprovalProvenance(task)) {
+    out.push('[approval-provenance] completed approval must bind the latest request, grant, and execution');
   }
 }
 
@@ -401,8 +452,8 @@ function validateEscalation(value, field, out) {
 }
 
 
-/** @param {any} value @param {string[]} out */
-function validateExecution(value, out) {
+/** @param {any} value @param {string[]} out @param {boolean} authoritative */
+function validateExecution(value, out, authoritative) {
   if (value === undefined) return;
   requireField(out, 'execution', isType(value, 'object'));
   if (!isType(value, 'object')) return;
@@ -418,6 +469,12 @@ function validateExecution(value, out) {
   requireField(out, 'execution.approvalRequired', value.approvalRequired === null
     || (typeof value.approvalRequired === 'string' && value.approvalRequired.length > 0));
   if (value.approval !== undefined) validateApproval(value.approval, 'execution.approval', out);
+  if (value.approvalRequestId !== undefined) {
+    requireField(out, 'execution.approvalRequestId', isOperationCycle(value.approvalRequestId));
+  }
+  if (authoritative && (!isOperationCycle(value.cycle) || !isIsoDateTime(value.recordedAt))) {
+    out.push('[operation-version] authoritative execution requires cycle and recordedAt provenance');
+  }
 }
 
 /** @param {any} value @param {string} field @param {string[]} out @param {any} task */
@@ -510,8 +567,8 @@ function validateAudit(value, field, out, operation, task) {
   }
 }
 
-/** @param {any} task @param {string[]} out */
-function validateJudgmentHistory(task, out) {
+/** @param {any} task @param {string[]} out @param {boolean} authoritative */
+function validateJudgmentHistory(task, out, authoritative) {
   if (task.judgmentHistory === undefined) return;
   requireField(out, 'judgmentHistory', Array.isArray(task.judgmentHistory)
     && task.judgmentHistory.length > 0);
@@ -520,6 +577,7 @@ function validateJudgmentHistory(task, out) {
     const field = `judgmentHistory[${index}]`;
     requireField(out, field, isType(entry, 'object'));
     if (!isType(entry, 'object')) return;
+    if (authoritative) requireField(out, `${field}.cycle`, entry.cycle === index);
     requireField(out, `${field}.at`, isIsoDateTime(entry.at));
     validateVerification(entry.verification, `${field}.verification`, out, task);
     validateAudit(entry.audit, `${field}.audit`, out, true, task);
@@ -539,6 +597,88 @@ function validateJudgmentHistory(task, out) {
   });
 }
 
+/** @param {any} task @param {string[]} out */
+function validateOperationVersion(task, out) {
+  if (task.category === 'operation') {
+    if (task.operationStateVersion !== undefined
+      && task.operationStateVersion !== OPERATION_STATE_VERSION) {
+      out.push(`[operation-version] unsupported operationStateVersion ${String(task.operationStateVersion)}`);
+    }
+  } else if (task.operationStateVersion !== undefined) {
+    out.push('[category-stage] code task contains operation-only state');
+  }
+}
+
+/** @param {any} task @param {string[]} out */
+function validateOperationState(task, out) {
+  const planComplete = task.plan?.result === 'plan';
+  const executionComplete = task.execution?.result === 'executed';
+  const verificationComplete = task.verification?.verdict === 'pass'
+    || task.verification?.verdict === 'needs-work';
+  const terminalMatches = (task.status === 'done') === (task.stage === 'done');
+  const escalationAtPlan = task.plan?.result !== 'escalation' || task.stage === 'plan';
+  const predecessorComplete = task.stage === 'capture' || task.stage === 'plan'
+    || (task.stage === 'execute' && planComplete)
+    || (task.stage === 'verify' && planComplete && executionComplete)
+    || (task.stage === 'audit' && planComplete && executionComplete && verificationComplete)
+    || (task.stage === 'done' && planComplete && executionComplete && verificationComplete);
+  if (!terminalMatches || !escalationAtPlan || !predecessorComplete) {
+    out.push('[operation-state] operation stage must retain its exact predecessor state');
+  }
+}
+
+/** @param {any} task @param {string[]} out */
+function validateOperationIdentities(task, out) {
+  const ids = [
+    task.agents?.executor_agent_id,
+    task.agents?.verifier_agent_id,
+    task.agents?.audit_agent_id,
+  ];
+  const recorded = [
+    [task.execution !== undefined, task.agents?.executor_agent_id, task.execution?.executor_agent_id],
+    [task.verification?.verdict !== null && task.verification?.verdict !== undefined,
+      task.agents?.verifier_agent_id, task.verification?.verifier_agent_id],
+    [task.audit?.audit_agent_id !== null || task.audit?.verdict !== 'na',
+      task.agents?.audit_agent_id, task.audit?.audit_agent_id],
+  ];
+  if (ids.some((agentId) => agentId !== null && !isAgentId(agentId))
+    || recorded.some(([occupied, ledgerId, outcomeId]) => (
+      occupied && (!isAgentId(ledgerId) || !isAgentId(outcomeId))
+    ))) {
+    out.push('[operation-identity] recorded operation identities must be nonempty and null only while vacant');
+  }
+}
+
+/** @param {any} task @param {string[]} out */
+function validateOperationAuditState(task, out) {
+  if (task.audit?.required === true && task.audit.verdict === 'na'
+    && task.audit.audit_agent_id !== null) {
+    out.push('[operation-audit] required audit na is valid only as the vacant placeholder');
+  }
+}
+
+/** @param {any} task @param {string[]} out */
+function validateOperationCouncil(task, out) {
+  const council = task.convergence?.council;
+  if (council?.convened !== true) return;
+  const counter = task.convergence?.stages?.[council.stage]?.blockingKickbacks;
+  if (!isOperationCycle(council.cycle)
+    || !isAgentId(council.executor_agent_id)
+    || counter !== task.convergence?.cap) {
+    out.push('[operation-council] convened council requires its exact capped source and baseline provenance');
+  }
+}
+
+/** @param {any} task @param {string[]} out */
+function validateOperationRefuteIdentities(task, out) {
+  let invalid = false;
+  forEachOperationFinding(task, (_source, finding, judgeAgentId) => {
+    if (isSourceRefuteAgentForbidden(judgeAgentId, finding?.refute?.agent_id)) invalid = true;
+  });
+  if (invalid) {
+    out.push('[operation-refute-identity] source judge cannot refute its own operation finding');
+  }
+}
 /**
  * Validate one persisted task at the trust boundary. Unknown properties remain
  * tolerated so documented historical fields can be read without migration.
@@ -556,6 +696,8 @@ export function taskSchemaViolations(task, { lite }) {
   requireField(out, 'title', typeof task.title === 'string');
   requireField(out, 'status', isOneOf(task.status, STATUSES));
   const operation = task.category === 'operation';
+  const authoritativeOperation = isAuthoritativeOperation(task);
+  validateOperationVersion(task, out);
   requireField(out, 'category', task.category === undefined || isOneOf(task.category, ['code', 'operation']));
   requireField(out, 'stage', isOneOf(task.stage, STAGES));
   requireField(out, 'priority', isOneOf(task.priority, PRIORITIES));
@@ -611,7 +753,7 @@ export function taskSchemaViolations(task, { lite }) {
     }
   }
   validateAgents(task.agents, out, operation);
-  validateExecution(task.execution, out);
+  validateExecution(task.execution, out, authoritativeOperation);
   validateVerification(task.verification, 'verification', out, task);
   if (task.approvals !== undefined) {
     requireField(out, 'approvals', Array.isArray(task.approvals));
@@ -619,8 +761,9 @@ export function taskSchemaViolations(task, { lite }) {
       task.approvals.forEach((approval, index) => validateApproval(approval, `approvals[${index}]`, out));
     }
   }
-  if (operation) validateOperationApproval(task, out);
-  if (operation) validateJudgmentHistory(task, out);
+  if (authoritativeOperation) validateApprovalRequests(task, out);
+  if (operation) validateOperationApproval(task, out, authoritativeOperation);
+  if (operation) validateJudgmentHistory(task, out, authoritativeOperation);
   if (operation) {
     const codeIdentity = [
       task.agents?.implementer_agent_id,
@@ -662,5 +805,12 @@ export function taskSchemaViolations(task, { lite }) {
   }
   if (task.convergence !== undefined) validateConvergence(task.convergence, out, operation);
   if (operation) validateOperationRefutes(task, out);
+  if (authoritativeOperation) {
+    validateOperationState(task, out);
+    validateOperationIdentities(task, out);
+    validateOperationAuditState(task, out);
+    validateOperationCouncil(task, out);
+    validateOperationRefuteIdentities(task, out);
+  }
   return out;
 }

@@ -279,9 +279,10 @@ test('issue 105 extension registers status and dispatch without a host-specific 
   assert.deepEqual([...tools.keys()], ['cook_dispatch']);
 });
 
-test('issue 105 recovery Pi returns the exact approval boundary to the parent', async () => {
+test('issue 107 Pi compact approval display is exact and terminal-safe', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-approval-projection-'));
-  const approvalBoundary = 'Rewrite source entry exactly.\nThen create the destination entry exactly once.';
+  const approvalBoundary = 'Rewrite source entry exactly.\nThen use \u001b[31mred\u202e\uD800 exactly once.';
+  const safeApprovalLiteral = '"Rewrite source entry exactly.\\nThen use \\u001b[31mred\\u202e\\ud800 exactly once."';
   try {
     await mkdir(join(cwd, '.jeff'));
     await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
@@ -308,6 +309,16 @@ test('issue 105 recovery Pi returns the exact approval boundary to the parent', 
       JSON.parse(renderDispatchResult(result, { expanded: true })).approvalRequired,
       approvalBoundary,
     );
+
+    const compact = renderDispatchResult(result).trimEnd();
+    const separator = compact.indexOf(' | ');
+    assert.notEqual(separator, -1);
+    const visibleApproval = compact.slice(separator + 3);
+    assert.equal(visibleApproval, safeApprovalLiteral);
+    assert.equal(JSON.parse(visibleApproval), approvalBoundary);
+    assert.equal(compact.split('\n').length, 1);
+    assert.doesNotMatch(compact, /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/u);
+    assert.doesNotThrow(() => encodeURIComponent(compact));
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
