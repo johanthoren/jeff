@@ -358,7 +358,7 @@ EOF
 # judgment about what each remaining rule protects, and is review-owned.
 # ===========================================================================
 
-@test "#120 AC2: the review role names the bundled skill path it delegates to" {
+@test "#120 AC2 / #128 AC4: the review role names skills/testing/SKILL.md, the path its cuts depend on" {
   # The review station runs with Read, Grep, Glob and no skill loader, so it can
   # reach a bundled skill only through an explicit path. A bare skill name is
   # not a pointer: a delegated rule behind one is unreachable at dispatch, and
@@ -366,7 +366,13 @@ EOF
   # The link guard above owns the other half (a named path must resolve); this
   # owns the pointer existing at all.
   #
-  # RED now: agents/cook-review.md names the `testing` skill but no path to it.
-  grep -qE 'skills/[A-Za-z0-9._/-]+\.md' "$REPO/agents/cook-review.md" \
-    || { echo "agents/cook-review.md names no bundled skill path; a Read/Grep/Glob station cannot reach what it delegates"; return 1; }
+  # #128 AC4 pins the literal target instead of the path class. The class form
+  # went green on skills/code-standards/SKILL.md (added at :15 when the #120
+  # refactor harmonized the pointer form), so deleting the testing delegation,
+  # the single coverage argument for the four rules #120 cut from this role,
+  # no longer moved the assertion. Marker discipline is unchanged: a path is an
+  # identifier of exactly the class the #117 block above admits, and any
+  # rewording around it still satisfies this.
+  grep -qF 'skills/testing/SKILL.md' "$REPO/agents/cook-review.md" \
+    || { echo "agents/cook-review.md no longer names skills/testing/SKILL.md; the four test-integrity rules #120 delegated to the testing skill are unreachable from a Read/Grep/Glob station"; return 1; }
 }
