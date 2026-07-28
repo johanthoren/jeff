@@ -7,8 +7,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { recordSpecialistReturn as recordObservedSpecialistReturn } from '../core/record.js';
+import * as recordCore from '../core/record.js';
 import { runVerify } from '../core/verify.js';
+
+const { recordSpecialistReturn: recordObservedSpecialistReturn } = recordCore;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COOK_JS = join(HERE, 'cook.js');
@@ -155,6 +157,146 @@ function planReturn(overrides = {}) {
     escalation: null,
     ...overrides,
   };
+}
+
+/** @param {Record<string, any>} [overrides] @returns {Record<string, any>} */
+function operationPlanReturn(overrides = {}) {
+  return {
+    agent_id: 'operation-plan-agent',
+    stage: 'plan',
+    result: 'plan',
+    complexity: 'complex',
+    auditRequired: false,
+    slices: ['Reconcile the bounded registry state.'],
+    runbook: ['Confirm the source entry, then move it to the destination.'],
+    preconditions: ['The source entry exists exactly once.'],
+    recoveryBoundary: 'Before the shared registry write, restore the captured source entry.',
+    approvalBoundary: 'Rewrite the shared release registry entry from source to destination.',
+    requiresApproval: false,
+    postconditions: ['The source is absent and the destination exists exactly once.'],
+    verificationSeams: ['Read the source and destination entries independently.'],
+    escalation: null,
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, any>} [overrides] @returns {Record<string, any>} */
+function operationPlanState(overrides = {}) {
+  const returned = operationPlanReturn(overrides);
+  return {
+    result: returned.result,
+    slices: returned.slices,
+    runbook: returned.runbook,
+    preconditions: returned.preconditions,
+    recoveryBoundary: returned.recoveryBoundary,
+    approvalBoundary: returned.approvalBoundary,
+    requiresApproval: returned.requiresApproval,
+    postconditions: returned.postconditions,
+    verificationSeams: returned.verificationSeams,
+    escalation: returned.escalation,
+  };
+}
+
+function executeReturn(agentId = 'executor', overrides = {}) {
+  return {
+    agent_id: agentId,
+    stage: 'execute',
+    result: 'executed',
+    actions: ['Moved the bounded registry entry.'],
+    evidence: [{ command: 'inspect registry transition', output: 'source removed; destination created' }],
+    kickback: null,
+    approvalRequired: null,
+    ...overrides,
+  };
+}
+
+function verifyReturn(agentId = 'verifier', overrides = {}) {
+  return {
+    agent_id: agentId,
+    stage: 'verify',
+    cycle: 0,
+    verdict: 'pass',
+    postconditions: [{
+      postcondition: 'The source is absent and the destination exists exactly once.',
+      ok: true,
+      evidence: 'independent read found one destination and no source',
+    }],
+    findings: [],
+    evidence: [{ command: 'inspect registry postconditions', output: 'all postconditions satisfied' }],
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, any>} [overrides] @returns {any} */
+function operationTask(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    operationStateVersion: 1,
+    id: 18,
+    slug: 'record-operation',
+    title: 'Record operation',
+    category: 'operation',
+    status: 'in_progress',
+    stage: 'plan',
+    priority: 'p2',
+    deps: [],
+    complexity: 'simple',
+    createdAt: '2026-07-12T00:00:00Z',
+    updatedAt: '2026-07-12T00:00:00Z',
+    agents: {
+      executor_agent_id: null,
+      verifier_agent_id: null,
+      audit_agent_id: null,
+    },
+    audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+    commits: [],
+    kickbacks: [],
+    convergence: {
+      cap: 2,
+      stages: { verify: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
+      council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+    },
+    blockedReason: null,
+    abandonReason: null,
+    ...overrides,
+  };
+}
+
+/** @param {boolean} [auditRequired] @param {Record<string, any>} [overrides] @returns {any} */
+function readyOperation(auditRequired = false, overrides = {}) {
+  return operationTask({
+    stage: 'verify',
+    complexity: 'complex',
+    plan: operationPlanState(),
+    agents: {
+      ...operationTask().agents,
+      executor_agent_id: 'executor',
+    },
+    execution: {
+      result: 'executed',
+      executor_agent_id: 'executor',
+      cycle: 0,
+      recordedAt: '2026-07-12T00:20:00Z',
+      actions: ['Moved the bounded registry entry.'],
+      evidence: [{ command: 'inspect registry transition', output: 'transition complete' }],
+      approvalRequired: null,
+    },
+    verification: {
+      verdict: null,
+      verifier_agent_id: null,
+      postconditions: [],
+      findings: [],
+      evidence: [],
+    },
+    audit: {
+      required: auditRequired,
+      verdict: 'na',
+      audit_agent_id: null,
+      findings: [],
+      evidence: [],
+    },
+    ...overrides,
+  });
 }
 
 function implementReturn(agentId = 'implementer', overrides = {}) {
@@ -480,6 +622,1196 @@ test('record accepts the strict plan return and advances the task atomically', a
     assert.equal(task.audit.required, true);
     assert.equal(task.stage, 'implement');
     assert.equal(task.status, 'in_progress');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 101 CLI records the operation graph without manufacturing code-task gates', async () => {
+  const { root, taskDir } = await makeRoot(operationTask());
+  try {
+    let file = await writeReturn(root, operationPlanReturn());
+    let result = runCook(root, ['record', 'plan', '18', 'operation-plan-agent', file]);
+    let recorded = await readTask(taskDir);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(recorded.stage, 'execute');
+    assert.equal(Object.hasOwn(recorded.agents, 'implementer_agent_id'), false);
+    assert.equal(Object.hasOwn(recorded.agents, 'reviewer_agent_id'), false);
+    assert.equal(Object.hasOwn(recorded, 'tests'), false);
+    assert.equal(Object.hasOwn(recorded, 'review'), false);
+    assert.equal(Object.hasOwn(recorded, 'review2'), false);
+    assert.equal(recorded.plan.redRun, undefined);
+    assert.equal(recorded.plan.testFiles, undefined);
+    assert.equal(recorded.plan.refactorOpportunity, undefined);
+    assert.deepEqual(recorded.plan.runbook, operationPlanReturn().runbook);
+    assert.deepEqual(recorded.plan.verificationSeams, operationPlanReturn().verificationSeams);
+
+    file = await writeReturn(root, executeReturn());
+    result = runCook(root, ['record', 'execute', '18', 'executor', file]);
+    recorded = await readTask(taskDir);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(recorded.stage, 'verify');
+    assert.equal(recorded.agents.executor_agent_id, 'executor');
+    assert.deepEqual(recorded.execution.evidence, executeReturn().evidence);
+
+    file = await writeReturn(root, verifyReturn());
+    result = runCook(root, ['record', 'verify', '18', 'verifier', file]);
+    recorded = await readTask(taskDir);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual([recorded.status, recorded.stage], ['done', 'done']);
+    assert.equal(recorded.agents.verifier_agent_id, 'verifier');
+    assert.equal(Object.hasOwn(recorded, 'tests'), false);
+    assert.equal(Object.hasOwn(recorded, 'review'), false);
+    assert.equal(Object.hasOwn(recorded, 'review2'), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('builder returns require the active stage and preserve the legacy test-stage resume', async (t) => {
+  await t.test('execute at verify rejects atomically', async () => {
+    const approval = {
+      mutation: 'Rewrite the shared release registry entry from source to destination.',
+      grantedBy: 'Chef',
+      grantedAt: '2026-07-26T15:30:00Z',
+    };
+    const task = readyOperation(false, {
+      approvals: [approval],
+      execution: {
+        ...readyOperation().execution,
+        approval,
+      },
+    });
+    const { root, taskDir } = await makeRoot(task);
+    try {
+      const taskFile = join(taskDir, 'task.json');
+      const beforeBytes = await readFile(taskFile, 'utf8');
+      const before = JSON.parse(beforeBytes);
+
+      await assert.rejects(
+        recordSpecialistReturn(root, 'execute', '18', executeReturn('late-executor')),
+        /\[record-transition\] task is at verify, not execute/,
+      );
+
+      const afterBytes = await readFile(taskFile, 'utf8');
+      const after = JSON.parse(afterBytes);
+      assert.equal(afterBytes, beforeBytes);
+      assert.deepEqual(after.approvals, before.approvals);
+      assert.deepEqual(after.execution, before.execution);
+      assert.equal(after.stage, 'verify');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('legacy test stage resumes through plan', async () => {
+    const task = canonicalTask({
+      stage: 'test',
+      brains: { plan: { model: 'opus', effort: 'xhigh' } },
+      agents: {
+        plan_agent_id: 'legacy-plan',
+        test_author_agent_id: 'legacy-test-author',
+        implementer_agent_id: null,
+        reviewer_agent_id: null,
+        audit_agent_id: null,
+      },
+      review: { verdict: 'na', reviewer_agent_id: null, evidence: [] },
+    });
+    const { root, taskDir } = await makeRoot(task);
+    try {
+      await recordSpecialistReturn(
+        root,
+        'plan',
+        '18',
+        planReturn({ agent_id: 'Plan101Ordering' }),
+      );
+
+      const recorded = await readTask(taskDir);
+      assert.equal(recorded.stage, 'implement');
+      assert.equal(recorded.tests.authored_by_agent_id, 'Plan101Ordering');
+      assert.equal(recorded.agents.plan_agent_id, 'legacy-plan');
+      assert.equal(recorded.agents.test_author_agent_id, 'legacy-test-author');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 101 operation plan requires operational boundaries and rejects code-plan obligations atomically', async (t) => {
+  for (const field of [
+    'runbook',
+    'preconditions',
+    'recoveryBoundary',
+    'approvalBoundary',
+    'requiresApproval',
+    'postconditions',
+    'verificationSeams',
+  ]) {
+    await t.test(`missing ${field}`, async () => {
+      const { root, taskDir } = await makeRoot(operationTask());
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        const returned = operationPlanReturn();
+        delete returned[field];
+        const file = await writeReturn(root, returned);
+
+        const result = runCook(root, ['record', 'plan', '18', 'operation-plan-agent', file]);
+
+        assert.notEqual(result.code, 0);
+        assert.match(result.stderr, new RegExp(`\\[record-schema\\].*${field}`));
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  const wrongContracts = [
+    ['operation plan with code-test fields', operationTask(), {
+      ...operationPlanReturn(),
+      refactorOpportunity: null,
+      testFiles: ['src/cli/record.test.js'],
+      redRun: { command: 'node --test', output: 'red' },
+    }],
+    ['code task with operation plan', canonicalTask(), operationPlanReturn()],
+    ['operation task with code plan', operationTask(), planReturn()],
+  ];
+  for (const [name, task, returned] of wrongContracts) {
+    await t.test(name, async () => {
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        const file = await writeReturn(root, returned);
+        const result = runCook(root, ['record', 'plan', '18', returned.agent_id, file]);
+
+        assert.notEqual(result.code, 0);
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 101 cycle 2: operation plans durably escalate without advancing execution', async () => {
+  const { root, taskDir } = await makeRoot(operationTask());
+  try {
+    const escalation = {
+      agent_id: 'operation-plan-agent',
+      stage: 'plan',
+      result: 'escalation',
+      complexity: 'complex',
+      auditRequired: true,
+      slices: ['Resolve the registry ownership fork before choosing a runbook.'],
+      escalation: {
+        fork: 'The repository does not establish which registry is authoritative.',
+        options: ['Treat the local registry as authoritative.', 'Treat the remote registry as authoritative.'],
+      },
+    };
+
+    let recorded;
+    try {
+      recorded = await recordSpecialistReturn(root, 'plan', '18', escalation);
+    } catch (error) {
+      assert.fail(`[operation-plan-escalation] strict operation escalation was rejected: ${String(error)}`);
+    }
+
+    assert.deepEqual([recorded.status, recorded.stage], ['in_progress', 'plan']);
+    assert.deepEqual(recorded.plan, {
+      result: 'escalation',
+      slices: escalation.slices,
+      escalation: escalation.escalation,
+    });
+    assert.equal(recorded.execution, undefined);
+    assert.equal(recorded.agents.executor_agent_id, null);
+
+    const resumed = await recordSpecialistReturn(root, 'plan', '18', operationPlanReturn());
+    assert.deepEqual([resumed.status, resumed.stage, resumed.plan.result], ['in_progress', 'execute', 'plan']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 107 cooperative approval retains request, grant, and re-fire ordering', async (t) => {
+  const approvalBoundary = operationPlanReturn().approvalBoundary;
+  const priorApproval = {
+    mutation: 'Publish the preceding release registry entry.',
+    grantedBy: 'Chef',
+    grantedAt: '2026-07-26T15:00:00Z',
+  };
+  const priorRequest = {
+    id: 0,
+    mutation: priorApproval.mutation,
+    requestedBy: 'prior-requester',
+    requestedAt: '2026-07-26T14:50:00Z',
+    cycle: 0,
+  };
+
+  /** @param {Record<string, any>} [overrides] */
+  async function requestedOperation(overrides = {}) {
+    const fixture = await makeRoot(operationTask({
+      stage: 'execute',
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
+      ...overrides,
+    }));
+    await recordSpecialistReturn(fixture.root, 'execute', '18', executeReturn('executor', {
+      result: 'approval-required',
+      actions: ['Captured the recoverable pre-mutation state.'],
+      evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
+      approvalRequired: approvalBoundary,
+    }));
+    return fixture;
+  }
+
+  await t.test('approval-gated plans cannot execute before a parent grant', async () => {
+    const { root, taskDir } = await makeRoot(operationTask({
+      stage: 'execute',
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
+    }));
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'execute', '18', executeReturn()),
+        /\[record-approval\].*(?:approval|grant)/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('approval request must equal the planned operator-facing boundary', async () => {
+    const { root, taskDir } = await makeRoot(operationTask({
+      stage: 'execute',
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
+    }));
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'execute', '18', executeReturn('executor', {
+          result: 'approval-required',
+          approvalRequired: 'Delete the shared release registry entry.',
+        })),
+        /\[record-approval\].*match.*plan/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('approved re-fire requires an executor fresh from the requester', async () => {
+    const { root, taskDir } = await requestedOperation();
+    try {
+      await recordCore.recordApproval(root, '18', 'Chef');
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'execute', '18', executeReturn('executor')),
+        /\[record-identity\].*(?:fresh|reuse|previous)/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('parent grant copies the pending boundary and remains append-only across re-fire', async () => {
+    const { root, taskDir } = await requestedOperation({
+      approvalRequests: [priorRequest],
+      approvals: [priorApproval],
+    });
+    try {
+      await recordCore.recordApproval(root, '18', 'Chef');
+
+      const approved = await readTask(taskDir);
+      const grant = approved.approvals.at(-1);
+      assert.deepEqual(approved.approvals.slice(0, -1), [priorApproval]);
+      assert.equal(grant.mutation, approvalBoundary);
+      assert.equal(grant.grantedBy, 'Chef');
+      assert.match(grant.grantedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+      assert.equal(approved.approvalRequests.length, 2);
+      assert.deepEqual(approved.approvalRequests[0], priorRequest);
+      const request = approved.approvalRequests.at(-1);
+      assert.equal(request.id, 1);
+      assert.equal(request.mutation, approvalBoundary);
+      assert.equal(request.requestedBy, 'executor');
+      assert.equal(request.cycle, 0);
+      assert.equal(approved.execution.approvalRequestId, request.id);
+      assert.ok(Date.parse(request.requestedAt) <= Date.parse(grant.grantedAt));
+
+      await recordSpecialistReturn(root, 'execute', '18', executeReturn('executor-fresh'));
+      const recorded = await readTask(taskDir);
+      assert.deepEqual([recorded.status, recorded.stage], ['in_progress', 'verify']);
+      assert.deepEqual(recorded.execution.approval, grant);
+      assert.deepEqual(recorded.approvals, [priorApproval, grant]);
+      assert.deepEqual(recorded.approvalRequests, [priorRequest, request]);
+      assert.equal(recorded.execution.approvalRequestId, request.id);
+      assert.equal(recorded.execution.cycle, request.cycle);
+      assert.ok(Date.parse(grant.grantedAt) <= Date.parse(recorded.execution.recordedAt));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('stale duplicate grant rejects atomically', async () => {
+    const { root, taskDir } = await requestedOperation();
+    try {
+      await recordCore.recordApproval(root, '18', 'Chef');
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordCore.recordApproval(root, '18', 'Chef'),
+        /\[record-approval\].*(?:already|stale).*grant/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('executor cannot self-attest grant identity or time', async () => {
+    const { root, taskDir } = await requestedOperation();
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'execute', '18', executeReturn('executor-fresh', {
+          approval: {
+            mutation: approvalBoundary,
+            grantedBy: 'Chef',
+            grantedAt: '2026-07-26T15:30:00Z',
+          },
+        })),
+        /\[record-schema\].*approval/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('pending request without a parent grant rejects atomically', async () => {
+    const { root, taskDir } = await requestedOperation();
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'execute', '18', executeReturn('executor-fresh')),
+        /\[record-approval\].*grant.*required/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('parent grant without a pending exact request rejects atomically', async () => {
+    const { root, taskDir } = await makeRoot(operationTask({
+      stage: 'execute',
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
+    }));
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordCore.recordApproval(root, '18', 'Chef'),
+        /\[record-approval\].*pending.*request/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('parent cannot grant a persisted request without executor provenance', async () => {
+    const { root, taskDir } = await makeRoot(operationTask({
+      stage: 'execute',
+      plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
+      execution: {
+        result: 'approval-required',
+        executor_agent_id: null,
+        actions: ['Captured the recoverable pre-mutation state.'],
+        evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
+        approvalRequired: approvalBoundary,
+      },
+    }));
+    try {
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordCore.recordApproval(root, '18', 'Chef'),
+        /executor.*(?:identity|provenance)/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('host-neutral CLI records the cooperative parent grant', async () => {
+    const { root, taskDir } = await requestedOperation();
+    try {
+      const result = runCook(root, ['approve', '18', 'Chef']);
+      assert.equal(result.code, 0, result.stderr);
+
+      const approved = await readTask(taskDir);
+      assert.equal(approved.execution.approval.mutation, approvalBoundary);
+      assert.equal(approved.execution.approval.grantedBy, 'Chef');
+      assert.deepEqual(approved.approvals, [approved.execution.approval]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 101 execute can kick an operation back to capture or plan', async (t) => {
+  for (const destination of ['capture', 'plan']) {
+    await t.test(destination, async () => {
+      const { root, taskDir } = await makeRoot(operationTask({ stage: 'execute' }));
+      try {
+        await recordSpecialistReturn(root, 'execute', '18', executeReturn('executor', {
+          result: 'kickback',
+          actions: ['Inspected the bounded source state.'],
+          evidence: [{ command: 'inspect source state', output: 'precondition failed' }],
+          kickback: { to: destination, reason: 'The captured boundary is incomplete.' },
+        }));
+        const recorded = await readTask(taskDir);
+
+        assert.equal(recorded.stage, destination);
+        assert.deepEqual(
+          [recorded.kickbacks.at(-1).from, recorded.kickbacks.at(-1).to],
+          ['execute', destination],
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 101 surviving blocker: complex operation completes without code-review identities in either judgment order', async (t) => {
+  for (const order of [['verify', 'audit'], ['audit', 'verify']]) {
+    await t.test(order.join(' then '), async () => {
+      const { root, taskDir } = await makeRoot(readyOperation(true));
+      try {
+        for (const stage of order) {
+          await recordSpecialistReturn(
+            root,
+            stage,
+            '18',
+            stage === 'verify' ? verifyReturn() : auditReturn(),
+          );
+        }
+        const recorded = await readTask(taskDir);
+        assert.deepEqual([recorded.status, recorded.stage], ['done', 'done']);
+        assert.equal(recorded.verification.verifier_agent_id, 'verifier');
+        assert.equal(recorded.audit.audit_agent_id, 'auditor');
+        assert.equal(Object.hasOwn(recorded.agents, 'reviewer_agent_id'), false);
+        assert.equal(Object.hasOwn(recorded.agents, 'reviewer2_agent_id'), false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 101 operation verifier is separated from the executor atomically', async () => {
+  const task = readyOperation(false, {
+    agents: {
+      ...operationTask().agents,
+      executor_agent_id: 'same-agent',
+    },
+    execution: {
+      ...readyOperation().execution,
+      executor_agent_id: 'same-agent',
+    },
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'verify', '18', verifyReturn('same-agent')),
+      /\[inv2\]/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 101 surviving blocker: verification exactly covers planned postconditions atomically', async (t) => {
+  const planned = [
+    'AC1: The source is absent.',
+    'AC2: The destination exists exactly once.',
+  ];
+  const exact = planned.map((postcondition, index) => ({
+    postcondition,
+    ok: true,
+    evidence: `independent check ${index + 1} passed`,
+  }));
+  const task = readyOperation(false, {
+    plan: operationPlanState({ postconditions: planned }),
+  });
+
+  await t.test('one result per planned postcondition in plan order completes', async () => {
+    const { root } = await makeRoot(task);
+    try {
+      const recorded = await recordSpecialistReturn(
+        root,
+        'verify',
+        '18',
+        verifyReturn('verifier', { postconditions: exact }),
+      );
+      assert.deepEqual([recorded.status, recorded.stage], ['done', 'done']);
+      assert.deepEqual(recorded.verification.postconditions, exact);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  const mismatches = [
+    ['omitted', [exact[0]]],
+    ['duplicate', [exact[0], exact[0]]],
+    ['extra', [...exact, {
+      postcondition: 'AC3: The registry audit log is unchanged.',
+      ok: true,
+      evidence: 'independent check passed',
+    }]],
+    ['renamed', [exact[0], {
+      ...exact[1],
+      postcondition: 'AC2: A destination exists.',
+    }]],
+    ['reordered', [exact[1], exact[0]]],
+  ];
+  for (const [name, postconditions] of mismatches) {
+    await t.test(`${name} result rejects without recording`, async () => {
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordSpecialistReturn(
+            root,
+            'verify',
+            '18',
+            verifyReturn('verifier', { postconditions }),
+          ),
+          /\[record-transition\].*postconditions.*plan/,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 101 operation judgments retain refute and all category-valid kickbacks', async (t) => {
+  const cases = [
+    ['verify', 'capture'],
+    ['verify', 'plan'],
+    ['verify', 'execute'],
+    ['audit', 'execute'],
+  ];
+  for (const [source, destination] of cases) {
+    await t.test(`${source} to ${destination}`, async () => {
+      const finding = blockingFinding({
+        ...(source === 'audit' ? { cwe: 'CWE-20' } : {}),
+        kickTo: destination,
+        what: `${source} found an invalid ${destination} boundary.`,
+      });
+      const { root, taskDir } = await makeRoot(readyOperation(source === 'audit'));
+      try {
+        if (source === 'verify') {
+          await recordSpecialistReturn(root, source, '18', verifyReturn('verifier', {
+            verdict: 'needs-work',
+            postconditions: [{
+              postcondition: 'The source is absent and the destination exists exactly once.',
+              ok: false,
+              evidence: 'independent read found an invalid boundary',
+            }],
+            findings: [finding],
+          }));
+        } else {
+          await recordSpecialistReturn(root, source, '18', auditReturn('auditor', {
+            verdict: 'needs-work',
+            scan: { command: 'review-security --json', recommendation: 'BLOCK', reportPath: '/tmp/report.md' },
+            findings: [finding],
+          }));
+        }
+        await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn(`${source}-${destination}-refuter`, finding, { source }),
+        );
+        const recorded = await readTask(taskDir);
+
+        assert.equal(recorded.stage, destination);
+        assert.deepEqual(
+          [recorded.kickbacks.at(-1).from, recorded.kickbacks.at(-1).to],
+          [source, destination],
+        );
+        assert.equal(recorded.convergence.stages[source].blockingKickbacks, 1);
+        const outcome = source === 'verify' ? recorded.verification : recorded.audit;
+        assert.equal(outcome.findings[0].refute.verdict, 'survives');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+/** @returns {any} */
+function operationCouncilTask() {
+  const base = readyOperation();
+  const finding = {
+    ...blockingFinding({
+      kickTo: 'execute',
+      what: 'The destination registry contains two entries.',
+      why: 'The independently observed duplicate violates the planned postcondition.',
+    }),
+    refute: {
+      agent_id: 'verify-refuter',
+      source: 'verify',
+      finding: 'src/core/record.js:10 The destination registry contains two entries.',
+      verdict: 'survives',
+      rationale: 'The duplicate is independently observable.',
+      evidence: [{ command: 'inspect registry', output: 'two entries' }],
+    },
+  };
+  return readyOperation(false, {
+    agents: {
+      ...base.agents,
+      verifier_agent_id: 'verifier',
+    },
+    verification: {
+      verdict: 'needs-work',
+      reportedVerdict: 'needs-work',
+      verifier_agent_id: 'verifier',
+      postconditions: verifyReturn().postconditions,
+      findings: [finding],
+      evidence: [{ command: 'inspect registry', output: 'two entries' }],
+    },
+    refutes: [finding.refute],
+    convergence: {
+      cap: 2,
+      stages: { verify: { blockingKickbacks: 2 }, audit: { blockingKickbacks: 0 } },
+      council: { convened: false, stage: 'verify', members: [], findings: [], verdict: null, outcome: null },
+    },
+  });
+}
+
+/**
+ * @param {string | null} [outcome]
+ * @param {boolean} [survived]
+ * @returns {any}
+ */
+function operationCouncilReturn(outcome = null, survived = true) {
+  return {
+    stage: 'council',
+    council: {
+      convened: true,
+      stage: 'verify',
+      members: [
+        { agent_id: 'operation-integrity', lens: 'integrity', temperature: 0.3 },
+        { agent_id: 'operation-security', lens: 'security', temperature: 0.7 },
+        { agent_id: 'operation-pragmatist', lens: 'pragmatist', temperature: 1 },
+      ],
+      findings: [{
+        id: 'F1',
+        summary: 'The destination registry contains two entries.',
+        source: 'verify',
+        blockingVotes: survived ? 2 : 1,
+        survived,
+        followupTaskId: survived ? null : 18,
+      }],
+      verdict: survived ? 'block' : 'ship',
+      outcome,
+    },
+  };
+}
+
+test('issue 107 operation council records its trigger cycle and baseline executor', async () => {
+  const { root, taskDir } = await makeRoot(operationCouncilTask());
+  try {
+    await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+    const recorded = await readTask(taskDir);
+
+    assert.deepEqual([recorded.status, recorded.stage], ['in_progress', 'execute']);
+    assert.equal(recorded.implement, undefined);
+    assert.deepEqual(
+      [recorded.kickbacks.at(-1).from, recorded.kickbacks.at(-1).to],
+      ['verify', 'execute'],
+    );
+    assert.equal(recorded.convergence.council.cycle, 0);
+    assert.equal(recorded.convergence.council.executor_agent_id, 'executor');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 107 council recovery requires fresh execution and verification identities', async (t) => {
+  await t.test('scoped executor differs from the initial executor', async () => {
+    const { root, taskDir } = await makeRoot(operationCouncilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'execute', '18', executeReturn('executor')),
+        /\[record-identity\].*(?:fresh|reuse|previous)/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const resumeAgent of ['executor', 'scoped-requester']) {
+    await t.test(`approval-mediated recovery rejects ${resumeAgent}`, async () => {
+      const mutation = 'Rewrite the exact council-scoped registry entry.';
+      const task = operationCouncilTask();
+      task.plan.requiresApproval = true;
+      task.plan.approvalBoundary = mutation;
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+        await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-requester', {
+          result: 'approval-required',
+          actions: ['Captured the scoped rollback state.'],
+          evidence: [{ command: 'inspect recovery boundary', output: 'rollback state captured' }],
+          approvalRequired: mutation,
+        }));
+        await recordCore.recordApproval(root, '18', 'Chef');
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordSpecialistReturn(root, 'execute', '18', executeReturn(resumeAgent)),
+          /\[record-identity\].*(?:fresh|reuse|previous|requester)/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await t.test('one scoped execution records adjacent cycle provenance', async () => {
+    const { root } = await makeRoot(operationCouncilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+      const recorded = await recordSpecialistReturn(
+        root,
+        'execute',
+        '18',
+        executeReturn('scoped-executor'),
+      );
+      assert.equal(recorded.convergence.council.cycle, 0);
+      assert.equal(recorded.convergence.council.executor_agent_id, 'executor');
+      assert.equal(recorded.judgmentHistory.length, 1);
+      assert.equal(recorded.judgmentHistory[0].cycle, 0);
+      assert.equal(recorded.execution.cycle, 1);
+      assert.match(recorded.execution.recordedAt, /^\d{4}-\d{2}-\d{2}T/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('scoped verifier differs from the initial verifier', async () => {
+    const { root, taskDir } = await makeRoot(operationCouncilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+      await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor'));
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'verify', '18', verifyReturn('verifier', { cycle: 1 })),
+        /\[record-identity\].*(?:fresh|reuse|previous)/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 107 operation recording establishes authoritative operationStateVersion', async () => {
+  const unmarked = operationTask();
+  delete unmarked.operationStateVersion;
+  const { root, taskDir } = await makeRoot(unmarked);
+  try {
+    assert.equal(Object.hasOwn(await readTask(taskDir), 'operationStateVersion'), false);
+
+    const planned = await recordSpecialistReturn(root, 'plan', '18', operationPlanReturn());
+    assert.equal(planned.operationStateVersion, 1);
+    assert.equal(planned.stage, 'execute');
+
+    const executed = await recordSpecialistReturn(root, 'execute', '18', executeReturn());
+    assert.equal(executed.operationStateVersion, 1);
+    assert.equal(executed.execution.cycle, 0);
+    assert.match(executed.execution.recordedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+    const persisted = await readTask(taskDir);
+    assert.equal(persisted.operationStateVersion, 1);
+
+    // Authoritative execution provenance engages only after the marker is set:
+    // strip cycle/recordedAt from a marked ledger and the write must fail closed.
+    await writeFile(
+      join(taskDir, 'task.json'),
+      `${JSON.stringify({
+        ...persisted,
+        execution: {
+          result: 'executed',
+          executor_agent_id: 'executor',
+          actions: ['Moved the bounded registry entry.'],
+          evidence: [{ command: 'inspect registry transition', output: 'transition complete' }],
+          approvalRequired: null,
+        },
+        stage: 'verify',
+        verification: {
+          verdict: null,
+          verifier_agent_id: null,
+          postconditions: [],
+          findings: [],
+          evidence: [],
+        },
+      }, null, 2)}\n`,
+      'utf8',
+    );
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'verify', '18', verifyReturn()),
+      /\[operation-version\].*cycle.*recordedAt|authoritative execution requires cycle and recordedAt/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 105 recovery refuting a failed scoped postcondition does not open another execute cycle', async () => {
+  const { root, taskDir } = await makeRoot(operationCouncilTask());
+  const finding = blockingFinding({
+    kickTo: 'execute',
+    what: 'The destination registry still contains two entries.',
+    why: 'The scoped correction did not satisfy the planned exact-once postcondition.',
+  });
+  try {
+    await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+    await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor'));
+    await recordSpecialistReturn(root, 'verify', '18', verifyReturn('fresh-verifier', {
+      cycle: 1,
+      verdict: 'needs-work',
+      postconditions: [{
+        ...verifyReturn().postconditions[0],
+        ok: false,
+        evidence: 'independent read still found two destination entries',
+      }],
+      findings: [finding],
+    }));
+    await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('fresh-refuter', finding, {
+        cycle: 1,
+        source: 'verify',
+        verdict: 'refuted',
+      }),
+    );
+    const recorded = await readTask(taskDir);
+
+    assert.deepEqual(
+      [recorded.status, recorded.stage],
+      ['blocked', 'verify'],
+      'a false planned postcondition is terminal for the one scoped correction',
+    );
+    assert.match(recorded.blockedReason, /postcondition/i);
+    assert.equal(recorded.judgmentHistory.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 101 surviving blocker: operation convergence ships resolved verifier findings', async (t) => {
+  await t.test('follow-up-only verification reaches done with evidence retained', async () => {
+    const finding = blockingFinding({
+      class: 'follow-up',
+      kickTo: 'plan',
+      what: 'The operator guide could name the verification command.',
+    });
+    const { root } = await makeRoot(readyOperation());
+    try {
+      const recorded = await recordSpecialistReturn(root, 'verify', '18', verifyReturn('followup-verifier', {
+        verdict: 'needs-work',
+        findings: [finding],
+      }));
+      assert.deepEqual([recorded.status, recorded.stage], ['done', 'done']);
+      assert.equal(recorded.verification.verdict, 'pass');
+      assert.deepEqual(recorded.verification.findings, [finding]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('refuted verifier blocker reaches done with refute retained', async () => {
+    const finding = blockingFinding({
+      kickTo: 'execute',
+      what: 'The verifier evidence may be stale.',
+    });
+    const { root } = await makeRoot(readyOperation());
+    try {
+      await recordSpecialistReturn(root, 'verify', '18', verifyReturn('verifier', {
+        verdict: 'needs-work',
+        findings: [finding],
+      }));
+      const recorded = await recordSpecialistReturn(
+        root,
+        'refute',
+        '18',
+        refuteReturn('verify-refuter', finding, { source: 'verify', verdict: 'refuted' }),
+      );
+      assert.deepEqual([recorded.status, recorded.stage], ['done', 'done']);
+      assert.equal(recorded.verification.findings[0].class, 'follow-up');
+      assert.equal(recorded.verification.findings[0].refute.verdict, 'refuted');
+      assert.deepEqual(recorded.refutes.at(-1), recorded.verification.findings[0].refute);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('initial council ship reaches done with originating evidence retained', async () => {
+    const original = operationCouncilTask();
+    const { root } = await makeRoot(original);
+    try {
+      const recorded = await recordSpecialistReturn(
+        root,
+        'council',
+        '18',
+        operationCouncilReturn('shipped', false),
+      );
+      assert.deepEqual([recorded.status, recorded.stage], ['done', 'done']);
+      assert.equal(recorded.convergence.council.outcome, 'shipped');
+      assert.deepEqual(recorded.verification, original.verification);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('scoped execute plus fresh verification reaches scoped-fix-shipped', async () => {
+    const { root } = await makeRoot(operationCouncilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+      await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor'));
+      await recordSpecialistReturn(root, 'verify', '18', verifyReturn('fresh-verifier', { cycle: 1 }));
+      const recorded = await recordSpecialistReturn(
+        root,
+        'council',
+        '18',
+        operationCouncilReturn('scoped-fix-shipped'),
+      );
+      assert.deepEqual(
+        [recorded.status, recorded.stage, recorded.convergence.council.outcome],
+        ['done', 'done', 'scoped-fix-shipped'],
+      );
+      assert.equal(recorded.judgmentHistory.length, 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 101 cycle 2: either capped operation source triggers one council without an ordinary kickback', async () => {
+  const verifyFinding = blockingFinding({
+    kickTo: 'execute',
+    what: 'The destination Git ref resolves to the wrong object.',
+    why: 'The independently queried ref violates the planned postcondition.',
+  });
+  /** @type {Record<string, any>} */
+  const auditFinding = {
+    ...blockingFinding({
+      kickTo: 'execute',
+      what: 'The external registry still exposes the source entry.',
+      why: 'The independent registry query found the pre-operation state.',
+    }),
+    cwe: 'CWE-670',
+  };
+  const { root, taskDir } = await makeRoot(readyOperation(true, {
+    convergence: {
+      cap: 2,
+      stages: { verify: { blockingKickbacks: 2 }, audit: { blockingKickbacks: 0 } },
+      council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+    },
+  }));
+  try {
+    await recordSpecialistReturn(root, 'verify', '18', verifyReturn('mixed-verifier', {
+      verdict: 'needs-work',
+      findings: [verifyFinding],
+    }));
+    await recordSpecialistReturn(root, 'audit', '18', auditReturn('mixed-auditor', {
+      verdict: 'needs-work',
+      findings: [auditFinding],
+    }));
+    await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('mixed-verify-refuter', verifyFinding, { source: 'verify' }),
+    );
+    const beforeFinalRefute = await readTask(taskDir);
+    const triggered = await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('mixed-audit-refuter', auditFinding, { source: 'audit' }),
+    );
+
+    assert.equal(triggered.convergence.council.stage, 'verify');
+    assert.equal(triggered.convergence.stages.audit.blockingKickbacks, 0);
+    assert.equal(triggered.kickbacks.length, beforeFinalRefute.kickbacks.length);
+
+    const shipped = await recordSpecialistReturn(root, 'council', '18', {
+      stage: 'council',
+      council: {
+        convened: true,
+        stage: 'verify',
+        members: [
+          { agent_id: 'mixed-integrity', lens: 'integrity', temperature: 0.3 },
+          { agent_id: 'mixed-security', lens: 'security', temperature: 0.7 },
+          { agent_id: 'mixed-pragmatist', lens: 'pragmatist', temperature: 1 },
+        ],
+        findings: [
+          {
+            id: 'F1',
+            summary: verifyFinding.what,
+            source: 'verify',
+            blockingVotes: 1,
+            survived: false,
+            followupTaskId: 18,
+          },
+          {
+            id: 'F2',
+            summary: auditFinding.what,
+            source: 'audit',
+            blockingVotes: 1,
+            survived: false,
+            followupTaskId: 18,
+          },
+        ],
+        verdict: 'ship',
+        outcome: 'shipped',
+      },
+    });
+    assert.deepEqual([shipped.status, shipped.stage, shipped.convergence.council.outcome], ['done', 'done', 'shipped']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 101 cycle 2: scoped execute kickbacks terminate but an exact approval stop remains resumable', async (t) => {
+  for (const destination of ['capture', 'plan']) {
+    await t.test(`scoped kickback to ${destination} blocks to the operator`, async () => {
+      const { root } = await makeRoot(operationCouncilTask());
+      try {
+        await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+        const before = await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor', {
+          result: 'kickback',
+          actions: ['Inspected the scoped recovery precondition.'],
+          evidence: [{ command: 'inspect recovery boundary', output: 'the scoped runbook is insufficient' }],
+          kickback: { to: destination, reason: 'The council-scoped recovery cannot proceed safely.' },
+        }));
+
+        assert.deepEqual(
+          [before.status, before.stage, before.convergence.council.outcome],
+          ['blocked', 'execute', 'blocked-to-operator'],
+        );
+        assert.match(before.blockedReason, /destination registry contains two entries/i);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await t.test('scoped exact approval stop can resume the same execute cycle', async () => {
+    const mutation = 'Rewrite the exact council-scoped registry entry.';
+    const task = operationCouncilTask();
+    task.plan.requiresApproval = true;
+    task.plan.approvalBoundary = mutation;
+    const { root } = await makeRoot(task);
+    try {
+      await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+      const stopped = await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor-stop', {
+        result: 'approval-required',
+        actions: ['Captured the scoped rollback state.'],
+        evidence: [{ command: 'inspect recovery boundary', output: 'rollback state captured' }],
+        approvalRequired: mutation,
+      }));
+      assert.deepEqual(
+        [stopped.status, stopped.stage, stopped.convergence.council.outcome],
+        ['in_progress', 'execute', null],
+      );
+
+      await recordCore.recordApproval(root, '18', 'Chef');
+      const resumed = await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor-resume'));
+      assert.deepEqual([resumed.status, resumed.stage], ['in_progress', 'verify']);
+      assert.equal(resumed.execution.approval.mutation, mutation);
+      assert.equal(resumed.execution.approval.grantedBy, 'Chef');
+      assert.equal(resumed.judgmentHistory.length, 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 101 cycle 2: required audit na rejects atomically before or after verification', async (t) => {
+  for (const verificationFirst of [false, true]) {
+    await t.test(verificationFirst ? 'after verification' : 'before verification', async () => {
+      const { root, taskDir } = await makeRoot(readyOperation(true));
+      try {
+        if (verificationFirst) {
+          await recordSpecialistReturn(root, 'verify', '18', verifyReturn('ordered-verifier'));
+        }
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordSpecialistReturn(root, 'audit', '18', auditReturn('na-auditor', { verdict: 'na' })),
+          /\[record-transition\].*required audit.*na/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+
+        await recordSpecialistReturn(root, 'audit', '18', auditReturn('passing-auditor'));
+        if (!verificationFirst) {
+          await recordSpecialistReturn(root, 'verify', '18', verifyReturn('ordered-verifier'));
+        }
+        const recorded = await readTask(taskDir);
+        assert.deepEqual([recorded.status, recorded.stage], ['done', 'done']);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const [name, category] of [['explicit', 'code'], ['historical omission', undefined]]) {
+    const task = auditStageTask(category === undefined ? {} : { category });
+    const { root } = await makeRoot(task);
+    try {
+      const recorded = await recordSpecialistReturn(
+        root,
+        'audit',
+        '18',
+        auditReturn(`${name}-code-auditor`, { verdict: 'na' }),
+      );
+      assert.deepEqual([recorded.status, recorded.stage], ['done', 'done']);
+      assert.equal(recorded.audit.verdict, 'na');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('issue 101 cycle 2: operation audit recording separates the auditor from the executor', async () => {
+  const { root, taskDir } = await makeRoot(readyOperation(true));
+  try {
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'audit', '18', auditReturn('executor')),
+      /\[inv2\].*(?:executor.*auditor|auditor.*executor)/i,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

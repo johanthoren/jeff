@@ -37,8 +37,10 @@ codex_dispatch_contract() {
   done <<'CASES'
 plan|xhigh
 implement|high
+execute|high
 refactor|xhigh
 review|xhigh
+verify|xhigh
 audit|xhigh
 refute|xhigh
 CASES
@@ -62,4 +64,35 @@ CASES
   grep -E '(shutdown|cancel).*notification.*correlate' <<<"$contract"
   grep -E 'notification.*do not require' <<<"$contract"
   grep -E 'not_found.*(prove|evidence).*(cancel|cancellation)' <<<"$contract"
+}
+
+@test "issue 105 operation roles describe one cooperative workflow across hosts" {
+  local plan_role execute_role verify_role contract
+  plan_role="$(cat "$REPO/agents/cook-plan.md")"
+  execute_role="$(cat "$REPO/agents/cook-execute.md")"
+  verify_role="$(cat "$REPO/agents/cook-verify.md")"
+  contract="$(cat "$REPO/skills/cook/SKILL.md")"
+
+  grep -E 'operator-facing.*approvalBoundary|approvalBoundary.*operator-facing' <<<"$plan_role"
+  grep -E 'approval-required.*approvalBoundary|approvalBoundary.*approval-required' <<<"$execute_role"
+  grep -E 'role contract.*stop|stop.*role contract' <<<"$execute_role"
+  grep -E 're-fire.*execute|execute.*re-fire' <<<"$execute_role"
+  grep -E 'verification (method|seam)|verificationSeams' <<<"$verify_role"
+  grep -E '(Never|never).*(executor|execution|execute).*evidence' <<<"$verify_role"
+  grep -E 'cooperative.*(workflow|protocol)|(workflow|protocol).*cooperative' <<<"$contract"
+  grep -E 'not (a )?security sandbox|not.*sandbox' <<<"$contract"
+  grep -E 'host.*(tool|capabilit).*(not|is not).*(invariant|guarantee)|not.*cross-host.*invariant' <<<"$contract"
+  grep -F 'cook approve <id> <operator>' <<<"$contract"
+
+  ! grep -E 'operation_apply|verify_query|canonical argv batch|Operation verification host capability gate' \
+    <<<"$plan_role"$'\n'"$execute_role"$'\n'"$verify_role"$'\n'"$contract"
+}
+
+@test "issue 101 cycle 2: operation planner has a strict durable escalation return" {
+  local role
+  role="$(cat "$REPO/agents/cook-plan.md")"
+
+  grep -E 'operation.*unresolved fork|unresolved fork.*operation' <<<"$role"
+  grep -F '"stage":"plan","result":"escalation"' <<<"$role"
+  grep -E '"slices":.*"escalation":.*"fork":.*"options"' <<<"$role"
 }

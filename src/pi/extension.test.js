@@ -13,7 +13,7 @@ import jeffExtension, { formatDispatchResult } from './extension.js';
  * @param {Record<string, unknown>} [dependencies]
  * @param {unknown} [hostSdk]
  */
-function registeredDispatchTool(dependencies, hostSdk) {
+function registeredTools(dependencies, hostSdk) {
   const tools = new Map();
   /** @type {any} */ (jeffExtension)({
     pi: hostSdk,
@@ -21,7 +21,15 @@ function registeredDispatchTool(dependencies, hostSdk) {
     /** @param {any} definition */
     registerTool(definition) { tools.set(definition.name, definition); },
   }, dependencies);
-  return tools.get('cook_dispatch');
+  return tools;
+}
+
+/**
+ * @param {Record<string, unknown>} [dependencies]
+ * @param {unknown} [hostSdk]
+ */
+function registeredDispatchTool(dependencies, hostSdk) {
+  return registeredTools(dependencies, hostSdk).get('cook_dispatch');
 }
 
 const AUDIT_CATEGORIES = [
@@ -51,6 +59,28 @@ function specialistReturn(stage, overrides = {}) {
     implement: {
       agent_id: 'implement-agent', stage: 'implement', result: 'green', files: ['src/pi/extension.js'],
       greenRun: { command: 'node --test src/pi/extension.test.js', output: 'pass' }, kickback: null,
+    },
+    execute: {
+      agent_id: 'execute-agent',
+      stage: 'execute',
+      result: 'approval-required',
+      actions: ['Captured recoverable state.'],
+      evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
+      kickback: null,
+      approvalRequired: 'Rewrite the exact shared registry entry.',
+    },
+    verify: {
+      agent_id: 'verify-agent',
+      stage: 'verify',
+      cycle: 0,
+      verdict: 'pass',
+      postconditions: [{
+        postcondition: 'The registry has one destination entry.',
+        ok: true,
+        evidence: 'source absent; destination present once',
+      }],
+      findings: [],
+      evidence: [{ command: 'inspect registry', output: 'postconditions satisfied' }],
     },
     refactor: {
       agent_id: 'refactor-agent', stage: 'refactor', result: 'clean', files: [], outsideDiff: [],
@@ -103,6 +133,18 @@ function markPrivateReturnFields(returned, marker) {
       return { ...common, slices: [marker], testFiles: [marker], redRun: { command: marker, output: marker } };
     case 'implement':
       return { ...common, files: [marker], greenRun: { command: marker, output: marker } };
+    case 'execute':
+      return {
+        ...common,
+        actions: [marker],
+        evidence: [{ command: marker, output: marker }],
+      };
+    case 'verify':
+      return {
+        ...common,
+        postconditions: [{ ...returned.postconditions[0], evidence: marker }],
+        evidence: [{ command: marker, output: marker }],
+      };
     case 'refactor':
       return {
         ...common,
@@ -208,7 +250,7 @@ test('issue 95 plan projection exposes a named refactor opportunity', () => {
   assert.equal(display.refactorOpportunity, opportunity);
 });
 
-test('extension registers /jeff-status and cook_dispatch', () => {
+test('issue 105 extension registers status and dispatch without a host-specific approval adapter', () => {
   const commands = new Map();
   const tools = new Map();
   const pi = {
@@ -232,8 +274,54 @@ test('extension registers /jeff-status and cook_dispatch', () => {
   assert.equal(tools.has('cook_dispatch'), true);
   assert.deepEqual(tools.get('cook_dispatch').parameters.required, ['stage', 'brief']);
   assert.deepEqual(tools.get('cook_dispatch').parameters.properties.stage.enum, [
-    'plan', 'implement', 'refactor', 'review', 'audit', 'refute',
+    'plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute',
   ]);
+  assert.deepEqual([...tools.keys()], ['cook_dispatch']);
+});
+
+test('issue 107 Pi compact approval display is exact and terminal-safe', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-approval-projection-'));
+  const approvalBoundary = 'Rewrite source entry exactly.\nThen use \u001b[31mred\u202e\uD800 exactly once.';
+  const safeApprovalLiteral = '"Rewrite source entry exactly.\\nThen use \\u001b[31mred\\u202e\\ud800 exactly once."';
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    const returned = specialistReturn('execute', { approvalRequired: approvalBoundary });
+    const tool = registeredDispatchTool({
+      dispatchRoleSession: async () => ({
+        stage: 'execute',
+        agent_id: returned.agent_id,
+        brain: { provider: 'local', model: 'test-model', effort: 'high' },
+        transcript: JSON.stringify(returned),
+      }),
+    });
+    const result = await tool.execute(
+      'call-approval',
+      { stage: 'execute', brief: 'Return the exact approval request.' },
+      undefined,
+      undefined,
+      { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+    );
+
+    assert.equal(result.details.approvalRequired, approvalBoundary);
+    assert.equal(JSON.parse(result.content[0].text).approvalRequired, approvalBoundary);
+    assert.equal(
+      JSON.parse(renderDispatchResult(result, { expanded: true })).approvalRequired,
+      approvalBoundary,
+    );
+
+    const compact = renderDispatchResult(result).trimEnd();
+    const separator = compact.indexOf(' | ');
+    assert.notEqual(separator, -1);
+    const visibleApproval = compact.slice(separator + 3);
+    assert.equal(visibleApproval, safeApprovalLiteral);
+    assert.equal(JSON.parse(visibleApproval), approvalBoundary);
+    assert.equal(compact.split('\n').length, 1);
+    assert.doesNotMatch(compact, /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/u);
+    assert.doesNotThrow(() => encodeURIComponent(compact));
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test('cook_dispatch parses and projects every specialist result across model and TUI surfaces', async (t) => {
@@ -256,6 +344,12 @@ test('cook_dispatch parses and projects every specialist result across model and
         greenRun: { command: null, output: 'Tests overfit the implementation' },
         kickback: { to: 'plan', reason: 'Tests overfit the implementation' },
       }), 'Tests overfit', ['implement', 'kickback', 'plan', 'Tests overfit'], ['kickback', 'result', 'stage']],
+      ['execute approval stop', specialistReturn('execute'), 'Rewrite the exact shared registry entry', [
+        'execute', 'approval-required', 'Rewrite the exact shared registry entry',
+      ], ['approvalRequired', 'result', 'stage']],
+      ['operation verification', specialistReturn('verify'), 'pass', [
+        'verify', 'pass',
+      ], ['findings', 'stage', 'verdict']],
       ['refactor summary', specialistReturn('refactor'), 'Kept one projection', [
         'refactor', 'clean', 'Kept one projection',
       ], ['result', 'stage', 'summary']],

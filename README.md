@@ -11,6 +11,10 @@ specialist contexts carry each stage; enforced separation keeps builders from
 signing off their own work; durable evidence records what happened; and
 deterministic gates decide whether the plate can leave the pass.
 
+Jeff is a cooperative workflow protocol for one trusted operator and friendly
+agents, not a security sandbox. It validates the ledger and stage contracts; it
+does not claim to confine tools supplied by every host.
+
 You run the kitchen: you call the order, you get the last word. Jeff works the
 pass: takes the order, fires the line, holds the standard, lets nothing out
 until it's worthy. A plan, a failing test, the smallest change to green. A
@@ -28,6 +32,21 @@ and brings back the plate only when it's worthy.
 Capture > Plan + Tests > Implement > (Refactor if owed) > Review > (Audit if risky) > Done
 ```
 
+For bounded operation tasks, the alternate path is:
+
+`capture → plan → execute → verify → conditional audit → done`
+
+Operation tasks do not use code-task test scaffolding, implementation, refactor,
+review, or the full-suite gate. Done retains the operation plan and requires
+nonempty execution evidence, exact ordered independent verification of every
+planned postcondition, and an audit pass when audit is required. When a plan
+requires approval, the executor stops with the exact operator-facing request.
+After you approve it, Jeff records the matching grant through host-neutral
+`cook approve <id> <operator>` and re-fires execute. Execute and verify otherwise
+use ordinary host-native stage dispatch. Host tool differences are not a
+cross-host security guarantee, and executor evidence never replaces independent
+verification.
+
 - **Capture:** Jeff pins the order down with you: what *done* means, what's out
   of scope, before a pan gets hot.
 - **Plan + tests:** one fresh cook designs the approach and proof, then puts the
@@ -40,7 +59,7 @@ Capture > Plan + Tests > Implement > (Refactor if owed) > Review > (Audit if ris
 - **Review:** a fresh cook who never touched the dish checks it against your
   standard.
 - **Audit:** when the dish is risky, a security pass before it leaves.
-- **Done:** only when the full suite is green and the order is met. Not "should
+- **Code done:** only when the full suite is green and the order is met. Not "should
   work." Does work.
 
 Every station is a fresh cook: no one works off a half-remembered chat. The cook

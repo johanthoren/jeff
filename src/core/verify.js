@@ -156,16 +156,20 @@ export async function runVerify(root, taskId) {
     const clean = !treeDirty(root);
     const output = verdict.stdout[0] ?? verdict.stderr[0];
     try {
-      await updateTask(root, taskId, (task) => ({
-        ...task,
-        updatedAt: utcSecond(),
-        tests: {
-          ...task.tests,
-          green: rc === 0,
-          evidence: [...task.tests.evidence, { command: cmd, output }],
-          gate: { hash, clean, green: rc === 0, command: cmd, at: utcSecond() },
-        },
-      }));
+      await updateTask(root, taskId, (task) => {
+        const tests = task.tests;
+        if (tests === undefined) throw new Error('[verify] task has no code test gate');
+        return {
+          ...task,
+          updatedAt: utcSecond(),
+          tests: {
+            ...tests,
+            green: rc === 0,
+            evidence: [...tests.evidence, { command: cmd, output }],
+            gate: { hash, clean, green: rc === 0, command: cmd, at: utcSecond() },
+          },
+        };
+      });
     } catch (error) {
       return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
     }

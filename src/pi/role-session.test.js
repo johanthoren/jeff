@@ -459,12 +459,14 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
   });
 });
 
-test('dispatchRoleSession grants stage-appropriate tools without command or edit access to judgment stages', async () => {
+test('issue 105 cooperative dispatch uses host-native stage tools without fixed operation tools', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {Record<string, string>} */
     const agents = {
       plan: '---\nname: cook-plan\neffort: xhigh\n---\nPlan body.',
       implement: '---\nname: cook-implement\neffort: high\n---\nImplement body.',
+      execute: '---\nname: cook-execute\neffort: high\n---\nExecute body.',
+      verify: '---\nname: cook-verify\neffort: xhigh\n---\nVerify body.',
       refactor: '---\nname: cook-refactor\neffort: xhigh\n---\nRefactor body.',
       audit: '---\nname: cook-audit\neffort: xhigh\n---\nAudit body.',
       refute: '---\nname: cook-refute\neffort: xhigh\n---\nRefute body.',
@@ -475,20 +477,24 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
 
     /** @type {Record<string, string[]>} */
     const toolsByStage = {};
+    /** @type {Record<string, string[]>} */
+    const customToolsByStage = {};
     /** @type {Record<string, string>} */
     const effortByStage = {};
     const sdk = {
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (/** @type {any} */ options) => {
         toolsByStage[options.stageForTest] = options.tools;
+        customToolsByStage[options.stageForTest] = (options.customTools ?? [])
+          .map((/** @type {{ name: string }} */ tool) => tool.name);
         return { session: { subscribe() {}, async prompt() {}, dispose() {} } };
       },
     };
 
-    for (const stage of ['plan', 'implement', 'refactor', 'review', 'audit', 'refute']) {
+    for (const stage of ['plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute']) {
       await dispatchRoleSession({
         stage,
-        brief: 'Check the diff.',
+        brief: 'Do only this stage.',
         cwd: repoRoot,
         repoRoot,
         currentModel: { provider: 'local', id: 'qwen-dev' },
@@ -507,13 +513,27 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
       plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       refactor: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      execute: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      verify: ['read', 'grep', 'find', 'ls'],
       review: ['read', 'grep', 'find', 'ls'],
       audit: ['read', 'grep', 'find', 'ls'],
       refute: ['read', 'grep', 'find', 'ls'],
     });
+    assert.deepEqual(customToolsByStage, {
+      plan: [],
+      implement: [],
+      refactor: [],
+      execute: [],
+      review: [],
+      verify: [],
+      audit: [],
+      refute: [],
+    });
     assert.deepEqual(effortByStage, {
       plan: 'xhigh',
       implement: 'high',
+      execute: 'high',
+      verify: 'xhigh',
       refactor: 'xhigh',
       review: 'xhigh',
       audit: 'xhigh',
@@ -522,13 +542,47 @@ test('dispatchRoleSession grants stage-appropriate tools without command or edit
   });
 });
 
-test('dispatchRoleSession translates every stage to an isolated OMP child session', async () => {
+test('issue 105 approval boundary remains a role contract instead of a custom exact-command executor', async () => {
+  await withRepo(async (repoRoot) => {
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-execute.md'),
+      '---\nname: cook-execute\neffort: high\n---\nExecute body.',
+    );
+    /** @type {any} */
+    let capturedOptions;
+    const sdk = {
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (/** @type {any} */ options) => {
+        capturedOptions = options;
+        return { session: { subscribe() {}, async prompt() {}, dispose() {} } };
+      },
+    };
+
+    await dispatchRoleSession({
+      stage: 'execute',
+      brief: 'Stop at the exact operator-facing boundary before approval.',
+      taskId: '18',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel: { provider: 'local', id: 'qwen-dev' },
+      sdk,
+      generateAgentId: () => 'cooperative-executor',
+    });
+
+    assert.deepEqual(capturedOptions.tools, ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write']);
+    assert.equal('customTools' in capturedOptions, false);
+  });
+});
+
+test('issue 105 dispatchRoleSession translates every stage to an isolated OMP child without fixed operation tools', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {Record<string, string>} */
     const efforts = {
       plan: 'xhigh',
       implement: 'high',
       refactor: 'xhigh',
+      execute: 'high',
+      verify: 'xhigh',
       review: 'xhigh',
       audit: 'xhigh',
       refute: 'xhigh',
@@ -555,6 +609,8 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
       plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       refactor: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      execute: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
+      verify: ['read', 'grep', 'find', 'ls'],
       review: ['read', 'grep', 'find', 'ls'],
       audit: ['read', 'grep', 'find', 'ls'],
       refute: ['read', 'grep', 'find', 'ls'],
@@ -563,6 +619,8 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
     const expectedOmpToolNames = {
       plan: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
+      execute: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
+      verify: ['read', 'grep', 'glob'],
       refactor: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
       review: ['read', 'grep', 'glob'],
       audit: ['read', 'grep', 'glob'],
@@ -598,7 +656,6 @@ test('dispatchRoleSession translates every stage to an isolated OMP child sessio
       assert.deepEqual(options.tools, expectedTools[stage]);
       assert.deepEqual(options.toolNames, expectedOmpToolNames[stage]);
       assert.equal('customTools' in options, false);
-      assert.equal(options.model, currentModel);
       assert.equal(options.thinkingLevel, efforts[stage]);
       assert.equal(options.disableExtensionDiscovery, true);
       assert.deepEqual(options.preloadedCustomToolPaths, []);

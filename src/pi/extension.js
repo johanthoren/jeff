@@ -9,10 +9,18 @@ import { validateSpecialistReturn } from '../core/record-contract.js';
 const DISPLAY_ITEM_LIMIT = 8;
 const DISPLAY_TEXT_LIMIT = 96;
 const DISPLAY_CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/u;
+const APPROVAL_LITERAL_UNSAFE = /[\u007f-\u009f\u2028\u2029\uD800-\uDFFF\p{Bidi_Control}]/gu;
 
 /** @param {string} value */
 function makeWellFormed(value) {
   return value.replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '\uFFFD');
+}
+
+/** @param {string} value */
+function approvalLiteral(value) {
+  return JSON.stringify(value).replace(APPROVAL_LITERAL_UNSAFE, (character) => (
+    `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`
+  ));
 }
 
 /** @param {unknown} value */
@@ -66,6 +74,34 @@ function displayProjection(result) {
             reason: displayText(result.kickback.reason),
           },
         } : {}),
+      };
+    case 'execute':
+      return {
+        stage,
+        ...status,
+        ...(result.kickback ? {
+          kickback: {
+            to: displayText(result.kickback.to),
+            reason: displayText(result.kickback.reason),
+          },
+        } : {}),
+        ...(typeof result.approvalRequired === 'string' ? { approvalRequired: result.approvalRequired } : {}),
+      };
+    case 'verify':
+      return {
+        stage,
+        ...status,
+        findings: Array.isArray(result.findings)
+          ? result.findings.slice(0, DISPLAY_ITEM_LIMIT).map((finding) => ({
+              severity: displayText(finding.severity),
+              class: displayText(finding.class),
+              file: displayText(finding.file),
+              line: Number.isInteger(finding.line) && finding.line > 0 ? finding.line : undefined,
+              kickTo: displayText(finding.kickTo),
+              what: displayText(finding.what),
+              why: displayText(finding.why),
+            }))
+          : [],
       };
     case 'refactor':
       return { stage, ...status, summary: displayTexts(result.summary) };
@@ -171,6 +207,12 @@ function compactDispatchLine(details) {
   if (stage === 'plan' && details.escalation) {
     return `${stage}: ${status} | ${details.escalation.fork} (${details.escalation.options.join(', ')})`;
   }
+  if (stage === 'execute' && details.approvalRequired) {
+    return `${stage}: ${status} | ${approvalLiteral(details.approvalRequired)}`;
+  }
+  if (stage === 'execute' && details.kickback) {
+    return `${stage}: ${status} to ${details.kickback.to} | ${details.kickback.reason}`;
+  }
   if (stage === 'implement' && details.kickback) {
     return `${stage}: ${status} to ${details.kickback.to} | ${details.kickback.reason}`;
   }
@@ -250,7 +292,7 @@ export default function jeffExtension(pi, dependencies = {}) {
     name: 'cook_dispatch',
     label: 'Cook Dispatch',
     description: 'Dispatch a jeff specialist in a fresh Pi role session.',
-    promptSnippet: 'Dispatch a jeff plan, implement, refactor, review, audit, or refute role session.',
+    promptSnippet: 'Dispatch a jeff plan, implement, refactor, execute, review, verify, audit, or refute role session.',
     parameters: DispatchParams,
     renderCall: renderDispatchCall,
     renderResult: renderDispatchResult,
@@ -271,6 +313,7 @@ export default function jeffExtension(pi, dependencies = {}) {
         currentModel: ctx.model,
         modelRegistry: ctx.modelRegistry,
         sdk: pi.pi,
+        taskId: params.taskId,
       });
 
       let specialistReturn;

@@ -1,7 +1,7 @@
 {
   "name": "jeff",
-  "version": "3.6.2",
-  "description": "Jeff is a model-native quality control plane for coding agents.",
+  "version": "3.7.0",
+  "description": "Jeff is a model-native quality control plane and cooperative workflow protocol, not a security sandbox.",
   "author": {
     "name": "Johan Thor\u00e9n"
   },
@@ -18,7 +18,7 @@
   "interface": {
     "displayName": "Jeff",
     "shortDescription": "A model-native quality control plane",
-    "longDescription": "Your sous chef, Jeff, is a model-native quality control plane. Fresh specialist contexts, enforced separation, durable evidence, and deterministic gates hold the pass. Nothing leaves the pass until it is worthy.",
+    "longDescription": "Your sous chef, Jeff, is a model-native quality control plane and cooperative workflow protocol for trusted operators and friendly agents, not a security sandbox. Fresh specialist contexts, enforced separation, durable evidence, and deterministic gates hold the pass.",
     "developerName": "Johan Thor\u00e9n",
     "category": "Developer Tools",
     "capabilities": [

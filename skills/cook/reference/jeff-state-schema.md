@@ -6,6 +6,8 @@ runtime validator. The sole operational entry is `src/cli/cook.js`; it consumes
 that checked-JS core directly. Historical Bash parity oracles, when retained as
 test-only fixtures, are not installed runtimes or alternate schema authorities.
 
+Jeff is a cooperative workflow protocol for a trusted operator and friendly agents, not a security sandbox. The schema validates ledger order, equality, provenance, evidence, separation, and completion; it does not claim to confine tools supplied by a host.
+
 ## On-disk layout
 
 - `.jeff/tasks/<NNNN>-<slug>/task.json`: per-task structured state (the canonical source; the dirs are the registry).
@@ -24,6 +26,7 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
   "slug": "kebab-case-slug",
   "title": "Human-readable title",
   "status": "pending",
+  "category": "code",
   "stage": "capture",
   "priority": "p2",
   "deps": [],
@@ -34,7 +37,9 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
     "implementer_agent_id": null,
     "reviewer_agent_id": null,
     "reviewer2_agent_id": null,
-    "audit_agent_id": null
+    "audit_agent_id": null,
+    "executor_agent_id": null,
+    "verifier_agent_id": null
   },
   "tests":  { "authored_by_agent_id": null, "green": false, "evidence": [] },
   "review": { "verdict": null, "reviewer_agent_id": null, "evidence": [] },
@@ -53,17 +58,18 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - `slug`: non-empty, kebab-case.
 - `title`: non-empty.
 - `status` ∈ `pending | in_progress | blocked | done | abandoned`.
-- `stage` ∈ `capture | plan | implement | refactor | review | audit | done`; historical ledgers may persist `test`, which readers accept as the documented compatibility-resume state. Canonical writers never emit `test`.
+- `category` is `code | operation`. Capture locks it by primary outcome. Omission is historical compatibility and behaves exactly as `code`.
+- `operationStateVersion`: canonical operation writers persist `1`. An unmarked schema-v1 operation ledger uses the mechanically checked legacy branch; any other marker value is invalid. Code ledgers, including historical category omission, never enter this branch.
+- Code stages are `capture | plan | implement | refactor | review | audit | done`; operation stages are `capture | plan | execute | verify | audit | done`. Historical code ledgers may persist `test` as a compatibility-resume state. Category graphs and kickbacks are closed. Marked operation stages retain their exact predecessor state, and `status:"done"` is equivalent to `stage:"done"`.
 - `priority` ∈ `p0 | p1 | p2 | p3 | p4`.
-- `createdAt` / `updatedAt`: calendar-valid ISO-8601 datetimes. The same strict
-  timestamp contract applies to `tests.gate.at` and every `kickbacks[*].at`.
+- `createdAt` / `updatedAt`: calendar-valid ISO-8601 datetimes. The same strict timestamp contract applies to `tests.gate.at`, every `kickbacks[*].at`, approval request and grant times, execution `recordedAt`, and judgment-history times.
 - `deps`: array of existing task ids; the graph must be acyclic.
 - `complexity`: `"simple" | "complex"` (absent ⇒ `"complex"`). Set or refine it at plan by whether the change complects or carries risk: braids concerns, couples previously separate things, crosses subsystem boundaries, or has non-local side effects. Classify by complecting, not difficulty; deployment or other non-local side effects ⇒ `"complex"`; default `"complex"` when unsure. It does not select Git topology.
-- `plan.refactorOpportunity`: canonical plan returns and newly persisted plans carry either a non-empty named opportunity for behavior-preserving deduplication, deletion, or harmonization, or explicit `null`. Historical persisted plans may omit the field; omission conservatively requires refactor.
+- Code `plan.refactorOpportunity` carries a nonempty named behavior-preserving opportunity or `null`; historical code plans may omit it. A completed operation plan requires `runbook`, `preconditions`, `recoveryBoundary`, exact operator-facing `approvalBoundary`, boolean `requiresApproval`, `postconditions`, and deterministic `verificationSeams`, and omits code test/refactor fields. An unresolved operation fork instead persists only `result:"escalation"`, nonempty `slices`, and nonnull `{fork, options}` while remaining at `plan`; the answered plan replaces it.
 - `branch` (optional, deprecated): ignored legacy state. New records omit it; validators continue to accept old records containing it without migration.
 - Historical records may contain a `brains` field. Validators ignore it and accept those records unchanged; new records omit it. Dispatch evidence may report the child session's actual provider/model/effort.
-- `agents.*`: harness agent ids recorded by Jeff from implementation, review, and audit dispatches. Complex tasks use both `reviewer_agent_id` and `reviewer2_agent_id`; each reviewer must differ from the implementer. Historical `plan_agent_id` and `test_author_agent_id` fields are accepted and ignored; new ledgers omit them.
-- `tests`: `authored_by_agent_id` set to the combined `plan` stage's agent id; `green` is boolean `true`/`false` (set `true` only with cited command `evidence`) **or** the string `"na"` (task 0049). `"na"` is the justified-terminal-no-test done-state: a `None`-disposition acceptance criterion (terminal/declarative, with no consumer-observable behavior to test) records `tests.green == "na"` instead of a manufactured green. On a `done` task the `[inv4]` check accepts `"na"` only when `tests.evidence` is non-empty (the cited justification, reusing the same evidence slot a `true` green uses: no new field) **and** `review.verdict == "pass"` (reviewer-agreed); such a task has no test author (`authored_by_agent_id == null` is allowed). Only the literal `"na"` is accepted; boolean `false` and any other value stay refused. Optional `tests.gate` (the `"gate"` key under `"tests"`) records the full-suite gate result that backs `green`: `{ "hash": "<sha>", "clean": true, "green": true, "command": "<cmd>", "at": "<iso>" }`, written by Jeff from a `cook verify` run. Absent on tasks captured before this field; when present on a `done` task the `[gate]` validator check enforces it (green+clean with a non-empty hash, and `tests.green` backed by `gate.green`).
+- `agents.*`: code records implementer/reviewer identities; operation records `executor_agent_id` and `verifier_agent_id`, which must differ. Recorded operation identities are nonempty strings; `null` is the only vacant marker. An operation audit binds `agents.audit_agent_id` to `audit.audit_agent_id`, and the auditor must differ from both the executor and verifier. Historical plan/test identities remain accepted and ignored.
+- `tests`, `review`, and `review2`: authoritative only for code and omitted from canonical operation ledgers. Compatibility readers validate any present fields and fail closed on malformed shapes.
 - Canonical `review` and optional `review2` share the same shape: `verdict` is
   `pass | needs-work | null`, `reviewer_agent_id` is a string or null, and
   `evidence` is an array. The runtime reader additionally accepts `na` only for
@@ -76,22 +82,20 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
   `agents.reviewer2_agent_id`. A complex done task requires both recorded reviews
   to pass; simple tasks and historical records identified by the retired
   plan/test agent fields retain the single-review path.
-- `audit`: `required` set by `plan`; `verdict` ∈ `pass | needs-work | na`.
-- `kickbacks`: `[{ from, to, reason, at }]`. Current sources are canonical stage
-  names plus `verify`; current destinations are canonical stage names. The
-  runtime reader also accepts the retired `test` destination in historical
-  records without making `test` a canonical task stage.
+- `audit`: `required` set by `plan`; `verdict` is `pass | needs-work | na`. `{ verdict:"na", audit_agent_id:null }` is the vacant operation placeholder. A required operation audit cannot occupy that placeholder with a recorded auditor; code tasks, including historical category omission, retain their compatible required-`na` path.
+- `execution`: operation execute result plus bound executor identity, nonnegative `cycle`, ISO `recordedAt`, nonempty action strings and command/output evidence, nullable `approvalRequired`, optional `approvalRequestId`, and optional operator-recorded `approval`. For `requiresApproval:true`, `approval-required` must equal `plan.approvalBoundary` byte-for-byte, append and bind the exact request, retain the requesting executor identity, and remain at `execute`. The executor return cannot contain a grant. After the operator approves the displayed request, Jeff records it through host-neutral `cook approve <id> <operator>` and re-fires execute with a fresh specialist using ordinary host-native tools.
+- `approvalRequests`: append-only operation request history. Each row is `{ id, mutation, requestedBy, requestedAt, cycle }`, where `id` is its zero-based append index. The pending execution binds the latest row exactly. Completed approval-gated execution retains that row's id and cycle, with `requestedAt <= grantedAt <= execution.recordedAt`; the requester differs from the final executor and grantor.
+- `approvals`: optional append-only operation grant history. Each record is `{ mutation, grantedBy, grantedAt }`; `mutation` is the historical field name for the exact operator-facing request. The atomic parent transition copies only the active pending request. It rejects missing, changed, stale, duplicate, or executor-attributed grants. A `requiresApproval:true` plan cannot execute directly, and completed execution binds the latest exact request to the latest retained grant.
+- `verification`: operation verdict plus bound verifier identity, deterministic `{ postcondition, ok, evidence }` results, findings, and nonempty command/output evidence. A fresh verifier uses the plan's deterministic methods with ordinary host-native read capabilities. An unavailable method produces `needs-work`; executor evidence is never sign-off. Done retains the plan and requires exactly one row per `plan.postconditions` item in identical order and text, with every row true and evidenced, and verifier different from executor. Follow-ups and refute- or exact council-demoted findings remain durable without blocking completion.
+- `judgmentHistory`: archived operation judgment cycles. Each row records its zero-based `cycle`, time, verifier/auditor identities, and exact outcomes. Attached and retained refutes remain distinct from their active or archived source judge.
+- `kickbacks`: `[{ from, to, reason, at }]`. Ordinary operation sources are `execute | verify | audit` and destinations are `capture | plan | execute`. A council-scoped execute kickback to capture or plan terminates as `blocked-to-operator`. Code keeps its existing graph, including historical `verify` source compatibility.
 - `status = blocked` ⇒ `blockedReason` non-null.
 - `status = abandoned` ⇒ `abandonReason` non-null.
 - `status = done` ⇒ the done-gate holds (validator invariant 4).
 
-## `convergence` (optional: review/audit loop termination)
+## `convergence` (optional bounded judgment-loop termination)
 
-Records how the review/audit loop converged for this task: the per-stage
-blocking-kickback counters, and (if a cap was hit) the one task-wide council's
-membership, per-finding votes, verdict, and outcome. See task 0002 and
-`AGENTS.md` for the mechanism (severity gate from cycle 1, per-stage cap, K=3
-council with per-finding ≥2 majority, scoped-fix-or-escalate termination).
+Code uses `review`/`audit` counters and sources (`review`, `review2`, `audit`). Operation uses `verify`/`audit`. Both reuse the same cap, source-bound refute, K=3 council vote, retained resolved findings, and one-scoped-cycle terminal mechanism.
 
 **Optional, with strict back-compat.** A `task.json` *without* `convergence`
 validates exactly as before (treated as defaulted/zeroed); invariants INV-7..11
@@ -122,46 +126,24 @@ never touched.
 
 ### Field rules
 
-- `cap`: integer ≥ 1. Per-stage blocking-kickback cap (default 2 in the protocol).
-- `stages.review` / `stages.audit`: independent `{ blockingKickbacks }` counters.
-  Only **blocking**-severity kickbacks increment a counter; follow-ups never do.
-- `council.convened`: `true` once a stage reaches the cap, every required active
-  judgment and source-bound surviving refute is present, and the one task-wide
-  council returns; else `false`.
-- `council.stage`: which stage triggered the council: `review` or `audit` (when
-  convened). It remains for recovery and historical compatibility, not scope.
+- `cap`: integer at least 1; default protocol cap is 2.
+- Category-specific judgment counters are independent and increment only for source-bound surviving blocking findings. A convened council is valid only when its own category-valid source equals `cap`; another source at cap is not authority for it.
+- `council.stage` is the single exact-cap trigger: `review | audit` for code or `verify | audit` for operation. A convened operation council also retains the active execution `cycle` and baseline `executor_agent_id`.
 - `council.members`: the K=3 lenses. `lens` ∈ `integrity | security | pragmatist`
   (each used exactly once). `temperature` records the intended decorrelation
-  temperature (or `null` where the dispatch can't set one). Member separation
-  is scoped to the active judgment cycle; historical identities may serve again.
-- `council.findings`: exactly the active blocking union across `review`,
-  `review2`, and `audit`, matched by originating `source` plus finding summary.
-  New initial council returns require `source`; persisted historical findings
-  and their recovery replay may omit it. Omission, invention, duplication, a missing source-bound surviving
-  refute, or a wrong source rejects before persistence. Scoped recovery archives
-  and clears every judgment slot.
-  `blockingVotes` ∈ 0..3 (one per lens). `survived` is a pure function of the
-  votes (see INV-9). `followupTaskId` references a spawned backlog task for
-  demoted findings; `null` for survivors.
-- `council.verdict`: `block` iff any finding survived, else `ship` (INV-9).
-- `council.outcome`: `shipped` (verdict ship), `scoped-fix-shipped` (verdict
-  block, the one scoped fix passed verification → reached done), or
-  `blocked-to-operator` (scoped fix failed → handed off, `status=blocked`).
-  After a scoped fix, all reviews and the audit run fresh. Their identities must
-  differ from the scoped implementer, but may reuse identities from prior cycles.
+  temperature (or `null` where the dispatch cannot set one). Code member separation is scoped to the active judgment cycle. Operation members also differ from archived judges and refuters.
+- `council.findings` is exactly the active blocking union for the category, matched by source plus summary. New returns require the source. Every blocker requires a source-bound surviving refute.
+- `blockingVotes` is 0..3 and `survived == (blockingVotes >= 2)`. Demoted findings record a valid follow-up task id; survivors record `null`.
+- `council.verdict` is `block` iff any finding survived, otherwise `ship`.
+- A block permits one scoped `implement` cycle for code or `execute` cycle for operation. Operation completion proves exactly one adjacent execution cycle by an executor distinct from the council baseline, followed by fresh category-specific judgments whose identities do not reuse archived judges or council members. Code additionally requires its fresh clean full-suite gate. An operation approval stop remains resumable, but a scoped execute kickback or failed reassessment ends as `blocked-to-operator`.
 
 ### Validator invariants (INV-7..INV-11)
 
 All are pure functions of the recorded state: deterministic, fail-closed,
 consistent with the existing invariants. **Absent `convergence` ⇒ all skipped.**
 
-- **INV-7 (shape/range):** `cap` is an integer ≥ 1; each
-  `stages.{review,audit}.blockingKickbacks` is an integer in `0..cap`.
-- **INV-8 (council distinctness):** when `convened`, `members` has exactly 3
-  entries; their `agent_id`s are mutually distinct and none equals
-  the active `agents.reviewer_agent_id` or `agents.implementer_agent_id`; the three `lens`
-  values are exactly `integrity`, `security`, `pragmatist`; `council.stage` ∈
-  `{review, audit}`.
+- **INV-7:** category-specific counters are integers in `0..cap`.
+- **INV-8:** a convened council has exactly three distinct lenses, a category-valid exact-cap trigger stage, and required builder/judge separation. Operation councils also retain cycle and baseline-executor provenance and exclude archived judges/refuters.
 - **INV-9 (per-finding determinism):** for each finding,
   `survived == (blockingVotes ≥ 2)`; and `verdict == ("block" if any finding
   survived else "ship")`. The ship/block decision is reproducible from the
@@ -170,10 +152,9 @@ consistent with the existing invariants. **Absent `convergence` ⇒ all skipped.
   records a `followupTaskId` that exists in the task set; every surviving finding
   has `followupTaskId == null`.
 - **INV-11 (block resolution / done-gate):**
-  `verdict == "block" && outcome == "blocked-to-operator"` ⇒ `status == "blocked"`;
-  and `status == "done"` with a convened council whose `verdict == "block"` is
-  permitted **only** when `outcome == "scoped-fix-shipped"` (a council-block may
-  reach done only via the one verified scoped fix).
+  `verdict == "block" && outcome == "blocked-to-operator"` implies `status == "blocked"`.
+  A done task with a convened blocking council requires `outcome == "scoped-fix-shipped"`.
+  Marked operation state additionally proves one adjacent post-council execution and fresh reassessment from its retained cycle provenance.
 
 
 ## Task registry

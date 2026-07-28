@@ -1,7 +1,7 @@
 {
   "name": "@johanthoren/jeff",
-  "version": "3.6.2",
-  "description": "Jeff is a model-native quality control plane with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates.",
+  "version": "3.7.0",
+  "description": "Jeff is a model-native quality control plane and cooperative workflow protocol for trusted operators and friendly agents, not a security sandbox.",
   "type": "module",
   "license": "Apache-2.0",
   "engines": {
@@ -27,6 +27,9 @@
     ".codex-plugin",
     "AGENTS.md",
     "agents",
+    "docs/brand.md",
+    "docs/maintaining-jeff.md",
+    "docs/specs/jeff-design.md",
     "assets/jeff.png",
     "hooks",
     "NOTICE",

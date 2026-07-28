@@ -6,7 +6,8 @@
  */
 
 /** @typedef {'pending' | 'in_progress' | 'blocked' | 'done' | 'abandoned'} TaskStatus */
-/** @typedef {'capture' | 'plan' | 'implement' | 'refactor' | 'review' | 'audit' | 'done'} TaskStage */
+/** @typedef {'code' | 'operation'} TaskCategory */
+/** @typedef {'capture' | 'plan' | 'implement' | 'refactor' | 'execute' | 'review' | 'verify' | 'audit' | 'done'} TaskStage */
 /** @typedef {'p0' | 'p1' | 'p2' | 'p3' | 'p4'} TaskPriority */
 /** @typedef {'simple' | 'complex'} TaskComplexity */
 /** @typedef {'pass' | 'needs-work' | null} ReviewVerdict */
@@ -15,6 +16,41 @@
 /** @typedef {'ship' | 'block' | null} CouncilVerdict */
 /** @typedef {'shipped' | 'scoped-fix-shipped' | 'blocked-to-operator' | null} CouncilOutcome */
 /** @typedef {TaskStage | 'verify'} KickbackSource */
+
+/** @typedef {{command: string, output: string}} Evidence */
+/** @typedef {{command: string, recommendation: 'PASS' | 'REVIEW' | 'BLOCK', reportPath: string}} AuditScan */
+/** @typedef {'secrets' | 'injection_sql' | 'injection_command' | 'path_traversal' | 'insecure_deserialization' | 'weak_crypto' | 'dynamic_execution' | 'tls_transport' | 'xss' | 'sensitive_logging' | 'insecure_permissions'} AuditCategory */
+/** @typedef {'covered_with_hits' | 'covered_no_hits' | 'not_covered'} AuditCoverageStatus */
+/** @typedef {{category: AuditCategory, status: AuditCoverageStatus}} AuditCoverage */
+
+/**
+ * @typedef {Object} Refute
+ * @property {string} agent_id
+ * @property {'review' | 'review2' | 'verify' | 'audit'} source
+ * @property {string} finding
+ * @property {'survives' | 'refuted'} verdict
+ * @property {string} rationale
+ * @property {Evidence[]} evidence
+ */
+
+/**
+ * @typedef {Object} Finding
+ * @property {string} file
+ * @property {number} line
+ * @property {'critical' | 'high' | 'medium' | 'low'} severity
+ * @property {'blocking' | 'follow-up'} class
+ * @property {'capture' | 'plan' | 'implement' | 'refactor' | 'execute'} kickTo
+ * @property {string} what
+ * @property {string} why
+ * @property {string | null} [cwe]
+ * @property {Refute} [refute]
+ */
+
+/**
+ * @typedef {Omit<Finding, 'kickTo'> & {
+ *   kickTo: 'capture' | 'plan' | 'execute'
+ * }} OperationFinding
+ */
 
 /**
  * @typedef {Object} Review
@@ -27,16 +63,62 @@
  * @typedef {Object} Audit
  * @property {boolean} required
  * @property {AuditVerdict} verdict
+ * @property {AuditVerdict} [reportedVerdict]
  * @property {string | null} audit_agent_id
- * @property {unknown[]} evidence
+ * @property {Finding[]} [findings]
+ * @property {Evidence[]} evidence
+ * @property {AuditScan} [scan]
+ * @property {AuditCoverage[]} [coverage]
  */
 
 /**
+ * @typedef {Object} Approval
+ * @property {string} mutation
+ * @property {string} grantedBy
+ * @property {string} grantedAt
+ */
+
+/**
+ * @typedef {Object} ApprovalRequest
+ * @property {number} id
+ * @property {string} mutation
+ * @property {string} requestedBy
+ * @property {string} requestedAt
+ * @property {number} cycle
+ */
+
+/**
+ * @typedef {Object} PlanEscalation
+ * @property {string} fork
+ * @property {string[]} options
+ */
+
+/**
+ * @typedef {Object} TaskPlan
+ * @property {string} result
+ * @property {string[]} slices
+ * @property {string[]} [testFiles]
+ * @property {{command: string | null, output: string}} [redRun]
+ * @property {PlanEscalation | null} escalation
+ * @property {string | null} [refactorOpportunity]
+ * @property {string[]} [runbook]
+ * @property {string[]} [preconditions]
+ * @property {string} [recoveryBoundary]
+ * @property {string} [approvalBoundary]
+ * @property {boolean} [requiresApproval]
+ * @property {string[]} [postconditions]
+ * @property {string[]} [verificationSeams]
+ */
+
+
+/**
  * @typedef {Object} TaskAgents
- * @property {string | null} implementer_agent_id
- * @property {string | null} reviewer_agent_id
+ * @property {string | null} [implementer_agent_id]
+ * @property {string | null} [reviewer_agent_id]
  * @property {string | null} [reviewer2_agent_id]
  * @property {string | null} audit_agent_id
+ * @property {string | null} [executor_agent_id]
+ * @property {string | null} [verifier_agent_id]
  */
 
 /**
@@ -93,10 +175,44 @@
  */
 
 /**
- * @typedef {Object} Convergence
+ * @typedef {Omit<CouncilFinding, 'source'> & {
+ *   source: 'verify' | 'audit'
+ * }} OperationCouncilFinding
+ */
+
+/**
+ * @typedef {Object} CodeConvergence
  * @property {number} cap
  * @property {{review: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
  * @property {{convened: boolean, stage: 'review' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ */
+
+/**
+ * @typedef {Object} OperationConvergence
+ * @property {number} cap
+ * @property {{verify: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
+ * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, members: CouncilMember[], findings: OperationCouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ */
+
+/** @typedef {CodeConvergence | OperationConvergence} Convergence */
+
+/**
+ * @typedef {Object} OperationVerification
+ * @property {ReviewVerdict} verdict
+ * @property {'pass' | 'needs-work'} [reportedVerdict]
+ * @property {string | null} verifier_agent_id
+ * @property {Array<{postcondition: string, ok: boolean, evidence: string}>} postconditions
+ * @property {OperationFinding[]} findings
+ * @property {Evidence[]} evidence
+ */
+
+/**
+ * @typedef {Object} OperationJudgmentHistory
+ * @property {number} [cycle]
+ * @property {string} at
+ * @property {OperationVerification} verification
+ * @property {Audit} audit
+ * @property {{verifier_agent_id: string | null, audit_agent_id: string | null}} agents
  */
 
 /**
@@ -105,22 +221,30 @@
  *
  * @typedef {Object} CanonicalTaskJson
  * @property {1} schemaVersion
+ * @property {1} [operationStateVersion]
  * @property {number | string} id
  * @property {string} slug
  * @property {string} title
  * @property {TaskStatus} status
+ * @property {TaskCategory} [category]
  * @property {TaskStage} stage
  * @property {TaskPriority} priority
  * @property {Array<number | string>} deps
  * @property {string} createdAt
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]
- * @property {{result: string, slices: string[], testFiles: string[], redRun: {command: string | null, output: string}, escalation: {fork: string, options: string[]} | null, refactorOpportunity?: string | null}} [plan]
+ * @property {TaskPlan} [plan]
  * @property {TaskAgents} agents
- * @property {TaskTests} tests
- * @property {Review} review
+ * @property {TaskTests} [tests]
+ * @property {Review} [review]
  * @property {Review | null} [review2]
  * @property {Audit} audit
+ * @property {{result: 'executed' | 'kickback' | 'approval-required', executor_agent_id: string | null, cycle?: number, recordedAt?: string, approvalRequestId?: number, actions: string[], evidence: Evidence[], approvalRequired: string | null, approval?: Approval}} [execution]
+ * @property {ApprovalRequest[]} [approvalRequests]
+ * @property {Approval[]} [approvals]
+ * @property {OperationVerification} [verification]
+ * @property {Refute[]} [refutes]
+ * @property {OperationJudgmentHistory[]} [judgmentHistory]
  * @property {unknown[]} commits
  * @property {Kickback[]} kickbacks
  * @property {string | null} blockedReason

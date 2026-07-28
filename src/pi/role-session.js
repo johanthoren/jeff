@@ -7,10 +7,11 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { prepareInstalledSdkSession } from './pi-sdk-adapter.js';
 
-export const STAGES = ['plan', 'implement', 'refactor', 'review', 'audit', 'refute'];
+export const STAGES = ['plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute'];
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
-const EDIT_TOOLS = ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'];
+const COMMAND_TOOLS = [...READ_TOOLS, 'bash'];
+const EDIT_TOOLS = [...COMMAND_TOOLS, 'edit', 'write'];
 const PACKAGE_ROOT = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..'));
 const OMP_SETTINGS = {
   'advisor.enabled': false,
@@ -38,7 +39,7 @@ const OMP_SETTINGS = {
  * @returns {string[]}
  */
 function toolsForStage(stage) {
-  if (stage === 'plan' || stage === 'implement' || stage === 'refactor') return EDIT_TOOLS;
+  if (['plan', 'implement', 'refactor', 'execute'].includes(stage)) return EDIT_TOOLS;
   return READ_TOOLS;
 }
 
@@ -347,6 +348,7 @@ async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, 
  *   stage: string,
  *   brief: string,
  *   taskDir?: string,
+ *   taskId?: string,
  *   cwd: string,
  *   repoRoot?: string,
  *   currentModel?: unknown,
@@ -390,6 +392,7 @@ export async function dispatchRoleSession(opts) {
     parentModelRegistry: opts.modelRegistry,
     currentModel: opts.currentModel,
   });
+  /** @type {Record<string, any>} */
   const sessionOptions = {
     cwd: opts.cwd,
     model: opts.currentModel,
@@ -415,10 +418,11 @@ export async function dispatchRoleSession(opts) {
       throw new Error(`cook_dispatch: child model drifted from ${current.provider}/${current.id} to ${actual.provider ?? 'unknown'}/${actual.id ?? 'unknown'}`);
     }
     if (isolation) {
+      const expectedTools = isolation.toolNames;
       const active = session.getActiveToolNames?.();
-      if (!Array.isArray(active) || active.length !== isolation.toolNames.length || isolation.toolNames.some((tool) => !active.includes(tool))) {
+      if (!Array.isArray(active) || active.length !== expectedTools.length || expectedTools.some((tool) => !active.includes(tool))) {
         const received = Array.isArray(active) ? active.join(', ') : 'unavailable';
-        throw new Error(`cook_dispatch: child tool isolation failed (expected ${isolation.toolNames.join(', ')}, got ${received})`);
+        throw new Error(`cook_dispatch: child tool isolation failed (expected ${expectedTools.join(', ')}, got ${received})`);
       }
     }
     session.subscribe((/** @type {any} */ event) => {
