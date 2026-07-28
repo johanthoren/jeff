@@ -4,10 +4,6 @@ Soft, Jeff-maintained orientation. Not gated by `cook validate`. Forward-looking
 
 Next free id: n/a in lite mode; GitHub issues own numbering.
 
-## NOW
-
-- **`#112`** `blocked-to-operator` has no terminal exit. The validator fix now admits `abandoned`, and local ledgers `#101` and `#105` are reconciled to that terminal state with their council history intact. Finish the independent review, audit, and integration gates.
-
 ## NEXT
 
 - **`#108`** guard authoritative approval validation so a degenerate ledger reports a violation instead of killing the validator.
@@ -28,4 +24,4 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## CLOSED THIS PASS (2026-07-28)
 
-`#107` merged via PR #114. Pruned as superseded or satisfied: `#102` (met by `#107`, pinned at `src/pi/extension.test.js:283`), `#103` (docs aligned by `#105`/`#107`), `#104` (verifier query-kind architecture never shipped; `SKILL.md:242` settles the premise the other way), `#71` and `#111` (see DEFERRED above). The abandoned `codex/task-80-pi-human-returns` branch and both stale worktrees were removed.
+`#107` merged via PR #114. `#109` merged via PR #115. `#112` added the terminal abandonment path and reconciled local ledgers `#101` and `#105` to `abandoned` with their council history intact. Pruned as superseded or satisfied: `#102` (met by `#107`, pinned at `src/pi/extension.test.js:283`), `#103` (docs aligned by `#105`/`#107`), `#104` (verifier query-kind architecture never shipped; `SKILL.md:242` settles the premise the other way), `#71` and `#111` (see DEFERRED above). The abandoned `codex/task-80-pi-human-returns` branch and both stale worktrees were removed.
