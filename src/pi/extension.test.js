@@ -279,10 +279,10 @@ test('issue 105 extension registers status and dispatch without a host-specific 
   assert.deepEqual([...tools.keys()], ['cook_dispatch']);
 });
 
-test('issue 107 Pi compact approval display is exact and terminal-safe', async () => {
+test('issue 107 compact and issue 109 expanded Pi approval displays are exact and terminal-safe', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-approval-projection-'));
-  const approvalBoundary = 'Rewrite source entry exactly.\nThen use \u001b[31mred\u202e\uD800 exactly once.';
-  const safeApprovalLiteral = '"Rewrite source entry exactly.\\nThen use \\u001b[31mred\\u202e\\ud800 exactly once."';
+  const approvalBoundary = 'Rewrite with C1 \u0085, separator \u2028, Bidi \u202e, and lone surrogate \uD800 exactly.';
+  const safeApprovalLiteral = '"Rewrite with C1 \\u0085, separator \\u2028, Bidi \\u202e, and lone surrogate \\ud800 exactly."';
   try {
     await mkdir(join(cwd, '.jeff'));
     await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
@@ -303,12 +303,29 @@ test('issue 107 Pi compact approval display is exact and terminal-safe', async (
       { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
     );
 
+    const contentBytes = JSON.stringify(result.content);
+    const parentDetailsBytes = JSON.stringify(result.details);
+    const expandedPrefix = '  "approvalRequired": ';
+    const expandedLines = renderDispatchLines(result, { expanded: true });
+    const expanded = expandedLines.join('\n');
+    const expandedApprovalLines = expandedLines.filter((line) => line.startsWith(expandedPrefix));
+
     assert.equal(result.details.approvalRequired, approvalBoundary);
     assert.equal(JSON.parse(result.content[0].text).approvalRequired, approvalBoundary);
-    assert.equal(
-      JSON.parse(renderDispatchResult(result, { expanded: true })).approvalRequired,
-      approvalBoundary,
+    assert.deepEqual(
+      expandedApprovalLines.map((line) => line.trimEnd()),
+      [`${expandedPrefix}${safeApprovalLiteral}`],
     );
+    const expandedApprovalLiteral = expandedApprovalLines[0].trimEnd().slice(expandedPrefix.length);
+    assert.equal(JSON.parse(expandedApprovalLiteral), approvalBoundary);
+    assert.equal(JSON.parse(expanded).approvalRequired, approvalBoundary);
+    assert.doesNotMatch(
+      expandedApprovalLines[0],
+      /[\u0000-\u001f\u007f-\u009f\u2028\u2029\p{Bidi_Control}]/u,
+    );
+    assert.doesNotThrow(() => encodeURIComponent(expandedApprovalLines[0]));
+    assert.equal(JSON.stringify(result.content), contentBytes);
+    assert.equal(JSON.stringify(result.details), parentDetailsBytes);
 
     const compact = renderDispatchResult(result).trimEnd();
     const separator = compact.indexOf(' | ');

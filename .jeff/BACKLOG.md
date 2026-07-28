@@ -6,12 +6,12 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **`#112`** `blocked-to-operator` has no terminal exit. Load-bearing for orientation: the `#101` and `#105` ledgers still read `blocked` in `cook ls` even though both issues are closed, so the local store disagrees with the tracker until this is fixed. Option 1 in the issue (narrow INV-11 to admit `abandoned`) is sufficient for the terminal case.
+- **`#109`** escape the expanded Pi approval rendering: the residual half of the display-spoofing finding `#105`'s panel sustained, and the only place that disagrees with the project's own display policy.
 
 ## NEXT
 
 - **`#108`** guard authoritative approval validation so a degenerate ledger reports a violation instead of killing the validator.
-- **`#109`** escape the expanded Pi approval rendering: the residual half of the display-spoofing finding `#105`'s panel sustained, and the only place that disagrees with the project's own display policy.
+- **`#112`** `blocked-to-operator` has no terminal exit. Load-bearing for orientation: the `#101` and `#105` ledgers still read `blocked` in `cook ls` even though both issues are closed, so the local store disagrees with the tracker until this is fixed. Option 1 in the issue (narrow INV-11 to admit `abandoned`) is sufficient for the terminal case.
 - **`#110`** bind approval grants to their request id rather than to text plus timestamp ordering.
 - **`#113`** pin the operation-category residue: a regression for the restored priority check, `approvalRequests` in the code-side cross-category guard, and INV-8 documentation scoped to what is actually checked.
 

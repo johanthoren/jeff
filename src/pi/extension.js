@@ -243,7 +243,14 @@ function renderDispatchResult(result, opts) {
   const details = dispatchDetails(result);
   const stage = typeof details.stage === 'string' ? details.stage : 'cook_dispatch';
   if (opts.isPartial) return textComponent([`${stage}: running`]);
-  if (opts.expanded) return textComponent(JSON.stringify(details, null, 2).split('\n'), { wrap: true });
+  if (opts.expanded) {
+    const lines = JSON.stringify(details, null, 2).split('\n').map((line) => (
+      line.startsWith('  "approvalRequired": ')
+        ? `  "approvalRequired": ${approvalLiteral(details.approvalRequired)}`
+        : line
+    ));
+    return textComponent(lines, { wrap: true });
+  }
   return textComponent([compactDispatchLine(details)]);
 }
 
