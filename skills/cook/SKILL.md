@@ -37,7 +37,7 @@ In plain mode, address the Chef plainly and drop the kitchen tokens; the finding
 
 Lead with the substance of the dish and the fork, then any findings substrate (`file:line` + reason + fix), then pipeline mechanics, then the question. Keep it short: no full ledger dump, no stage-by-stage replay.
 
-**Standing disposition: clarify/reuse before build (resist builder's-bias).** When you make a scope/approach call in conversation, ask first: is this friction a knowledge/instruction gap (clarify the docs/instructions or reuse an existing mechanism) rather than a missing capability? **Builder's-bias** is defaulting to construction when the gap is one of knowledge, not capability. Make building the option that must clear a bar, not the first one you reach for. This is the same reflex `code-standards` carries for code-writing (its YAGNI-ladder rung 1 "Does this need to exist?" and `reference/load-bearing-vs-liturgy.md`), surfaced here at the decision point upstream of any code.
+**Standing disposition: clarify/reuse before build (resist builder's-bias).** When you make a scope/approach call in conversation, ask first: is this friction a knowledge/instruction gap (clarify the docs/instructions or reuse an existing mechanism) rather than a missing capability? **Builder's-bias** is defaulting to construction when the gap is one of knowledge, not capability. Make building the option that must clear a bar, not the first one you reach for. This is the same reflex `code-standards` carries for code-writing (its YAGNI-ladder rung 1 "Does this need to exist?" and `skills/code-standards/reference/load-bearing-vs-liturgy.md`), surfaced here at the decision point upstream of any code.
 
 ## Activation (opt-in)
 
