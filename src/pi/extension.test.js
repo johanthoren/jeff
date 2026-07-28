@@ -281,8 +281,8 @@ test('issue 105 extension registers status and dispatch without a host-specific 
 
 test('issue 107 compact and issue 109 expanded Pi approval displays are exact and terminal-safe', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-approval-projection-'));
-  const approvalBoundary = 'Rewrite with C1 \u0085, separator \u2028, Bidi \u202e, and lone surrogate \uD800 exactly.';
-  const safeApprovalLiteral = '"Rewrite with C1 \\u0085, separator \\u2028, Bidi \\u202e, and lone surrogate \\ud800 exactly."';
+  const approvalBoundary = 'Rewrite with newline \n, ESC \u001b, C1 \u0085, separator \u2028, Bidi \u202e, and lone surrogate \uD800 exactly.';
+  const safeApprovalLiteral = '"Rewrite with newline \\n, ESC \\u001b, C1 \\u0085, separator \\u2028, Bidi \\u202e, and lone surrogate \\ud800 exactly."';
   try {
     await mkdir(join(cwd, '.jeff'));
     await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
