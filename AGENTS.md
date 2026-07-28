@@ -1,6 +1,6 @@
 # AGENTS.md: jeff
 
-**jeff** is a model-native quality control plane, distributed as **Claude Code and Codex plugins** and a **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. It is a cooperative workflow protocol for one trusted Chef and friendly frontier agents, not a security sandbox; host tool isolation is not a cross-host invariant. Current dogfood stamp: GPT-5.6 Sol in July 2026, recorded as execution context rather than a compatibility floor or routing promise.
+**jeff** is a model-native quality control plane, distributed as **Claude Code and Codex plugins** and a **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. It is a cooperative workflow protocol for one trusted Chef and friendly frontier agents, not a security sandbox; host tool isolation is not a cross-host invariant.
 
 - Design spec: `docs/specs/jeff-design.md`
 - State schema: `skills/cook/reference/jeff-state-schema.md`
@@ -9,15 +9,19 @@
 
 **Before changing the system itself** (the method, skills, agents, validator, dispatch policy), read `docs/maintaining-jeff.md`: the maintenance and model-drift stance. It is written to the maintainer; read it as the maintainer's delegate, and surface to the Chef any call that rests on the Chef's own experience or judgment rather than making it alone.
 
+## Model expectation
+
+jeff is built for a frontier-tier model: Claude Opus 5, GPT-5.6 Sol, Grok 4.5, or a successor of that class. That is a design target, not a gate. The harness assumes that tier's judgment and carries no scaffolding to prop up less.
+
+jeff never detects, checks, or refuses a model. There is no capability probe, no allowlist, and no refusal path anywhere in the method, and a weaker model may still run the whole pipeline.
+
+Below the tier, judgment degrades before mechanism. The first things to slip are finding classification (blocking vs follow-up), drift out of a stage's strict return contract, and refute calibration. The mechanical gates keep holding, because they are checked rather than trusted: `cook validate`, the done-gate, builder/judge separation, and the single full-suite run are enforced against recorded state, not taken on a specialist's word.
+
+Re-thickening the harness so a weaker model can carry the judgment is not a maintenance goal. Model drift runs the other way here; see `docs/maintaining-jeff.md`, which asks what a stronger model lets us delete next.
+
 ## The kitchen (persona)
 
-jeff ships with a kitchen persona. The voice is a render layer over a fixed substrate, never a change to it.
-
-- **The Chef** is the operator: the head chef and owner. Jeff addresses them as "Chef."
-- **Jeff** is the sous chef: the thin orchestrator. Jeff runs the pass and never cooks or judges a dish itself.
-- **The brigade** is the dispatched specialists (`plan`, `implement`, `refactor`, `execute`, `review`, `verify`, `audit`), one to a station. They answer to Jeff by name ("Yes, Jeff."); Jeff dispatches a station by name ("Fire plan.") and addresses an individual cook with the same kitchen courtesy, "Chef" ("Re-fire that, Chef."). "Chef" is professional address for the operator and any cook alike; direction makes clear which.
-
-The flavor toggle controls only how Jeff speaks to the Chef: kitchen voice (Fire / Sending it / Re-fire / Scrapped / Back to you, Chef / the tasting = the council) vs plain status words. The voice is a global operator preference set once via the `JEFF_FLAVOR` environment variable (`kitchen` or `plain`); a per-repo `.jeff/config.json` `"flavor"` (`true` = kitchen, `false` = plain) overrides it for that repo. Precedence: live in-chat request > per-repo `flavor` > `JEFF_FLAVOR` > default kitchen. `cook flavor` resolves the effective voice to one word (`kitchen|plain`). The substrate (`file:line` + reason + fix, verdicts, evidence) is identical either way and is never dropped for style. Every Chef-facing question or hard call also opens with a short cold-context grounder (task id + one-line goal, then the root issue) before the ask: process status alone is not enough. Before the first durable write on ordinary intent, an assess→fork gate may pause for ad-hoc ship vs record pending vs record+start capture; hold writes until the Chef picks. Canonical spec: `docs/brand.md`; operational text: `skills/cook/SKILL.md`.
+jeff ships with a kitchen persona. The voice is a render layer over a fixed substrate, never a change to it. The roles (Chef, Jeff, the brigade), the flavor toggle and its precedence, the substrate-first rule, the Chef-facing grounder, and the assess→fork gate before the first durable write are owned by `skills/cook/SKILL.md` (§The kitchen, §Entry), the surface every host loads. Canonical voice spec: `docs/brand.md`.
 
 ## Repo = the package
 
@@ -43,15 +47,12 @@ A task locks `category` at capture by its primary outcome. `code` is the default
 ## Iron rules (non-advisory)
 
 1. **Thin orchestrator.** Route + transcribe; never self-judge; never override a `needs-work`. Every judgment happens in a fresh specialist context. Only `capture` is orchestrator-led; every other active stage is dispatched.
-2. **Separation.** For code, the plan specialist authors tests and differs from the implementer (INV-1); the implementer differs from every reviewer (INV-2). For operations, the executor differs from the verifier (INV-2). Complex operations still use one verifier; audit is a separate conditional judgment.
-3. **One model, host-native effort.** Every specialist inherits the orchestrator provider/model unchanged. Pi and Claude Code apply role-frontmatter effort where supported; Codex inherits orchestrator effort. Settled role values are plan/refactor/review/verify/audit/refute `xhigh`, implement/execute `high`.
+2. **Separation.** The party that builds a thing never signs it off. The binding identity invariants for both categories are owned by `skills/cook/reference/jeff-state-schema.md` (separation invariants) and enforced by `cook validate`.
+3. **One model, host-native effort.** Every specialist inherits the orchestrator provider/model unchanged. Pi and Claude Code apply role-frontmatter effort where supported; Codex inherits orchestrator effort. The settled per-stage values are owned by `agents/cook-*.md` frontmatter.
 4. **State on disk.** Write `.jeff/**` as plain files. `cook validate` gates (orchestrator before each commit; CI on push). No external state service.
-5. **Git.** Never put red or otherwise unverified task work on trunk. Run the full gate against a clean, immutable checkpoint, then ensure the shipped non-state content matches that checkpoint; only terminal bookkeeping that passes the method's validation may differ. A completed task lands on trunk as one green task commit. Repository and host context choose the branch, checkpoint, and integration mechanics; linked worktrees are optional when a checkout is dirty, occupied, or needed concurrently, never mandatory. `complexity` (`"simple" | "complex"`; absent ⇒ `"complex"`) classifies complecting and risk, not Git topology: deployment ⇒ complex; default complex when unsure; decide at plan. Run `cook validate` before every commit. Never block on a dirty tree; interrupt the Chef rarely. Full mode prunes terminal task state; lite retains its done ledger, reflects plan-store progress, and follows its operating profile.
-6. **Standards.** jeff's bundled first-party `code-standards` (with `testing`/`security-auditor`) is the portable baseline quality floor for all code; applicable user, host, repository, and language instructions may tighten or specialize it (language instructions override per-language) but never weaken it. No third-party skills or built-in tools drive behavior. No AI/assistant attribution in commits.
-7. **Convergence.** Code `review`/`audit` and operation `verify`/`audit` reuse the same bounded convergence mechanism. Findings self-classify blocking or follow-up, every blocker gets one source-bound refute, and each active judgment source has a cap of 2.
-   - On the 3rd would-be kickback from either source, wait for all required active judgments and refutes, suppress every ordinary kickback from that union, then convene one K=3 council over the exact active blockers.
-   - Council members are mutually distinct and separated from the active builder and judges. A finding survives when at least 2 lenses mark it blocking.
-   - A council block buys at most one scoped cycle: `implement` for code or `execute` for operations. A scoped execute kickback terminates as `blocked-to-operator`; an exact approval stop remains resumable. Reassessment uses fresh code reviews or operation verification plus conditional audit.
+5. **Git.** Unverified task work never reaches trunk, and a completed task lands there as one green task commit. The gate order, the checkpoint contract, the commit-message shape, the `complexity` call, and the mode-specific terminal are owned by `skills/cook/SKILL.md` (§Git).
+6. **Standards.** jeff's bundled first-party skills are the portable baseline quality floor for all code, and no third-party skill or built-in tool drives behavior. The floor and its override precedence are owned by `skills/cook/SKILL.md` (§Standards).
+7. **Convergence.** Code `review`/`audit` and operation `verify`/`audit` reuse one bounded convergence mechanism: self-classified findings, a source-bound refute per blocker, a per-source cap, one task-wide council, and at most one scoped recovery cycle. The exact counts, membership, and terminal outcomes are owned by `skills/cook/SKILL.md` (§Council, §Kickbacks).
 
 ## Contributing to jeff itself
 

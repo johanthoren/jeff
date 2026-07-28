@@ -20,12 +20,27 @@ frontmatter_field() {
   awk '/^---$/{if(++n==2)exit} n==1 && /^'"$field"':/{gsub(/^'"$field"':[[:space:]]*/,""); print}' "$file"
 }
 
+# codex_dispatch_contract
+# Extracts the Codex native v2 dispatch contract from wherever the cook payload
+# keeps it. Task #117 discloses that branch-gated block progressively: it moves
+# out of the always-loaded SKILL.md into skills/cook/reference/. The contract
+# itself is unchanged, so this helper follows the content instead of pinning a
+# location: it scans SKILL.md and every reference file, and takes the section
+# from its heading to the next heading of the same or shallower level (so a
+# dedicated file's own subsections stay inside the contract).
 codex_dispatch_contract() {
-  awk '
-    /^### Codex native v2 dispatch$/ { found = 1 }
-    found && /^### / && $0 != "### Codex native v2 dispatch" { exit }
-    found { print }
-  ' "$REPO/skills/cook/SKILL.md"
+  local file
+  for file in "$REPO"/skills/cook/SKILL.md "$REPO"/skills/cook/reference/*.md; do
+    [ -f "$file" ] || continue
+    awk '
+      /^#+[ \t]/ {
+        match($0, /^#+/); level = RLENGTH
+        if (found && level <= start_level) exit
+        if (!found && $0 ~ /Codex native v2 dispatch/) { found = 1; start_level = level }
+      }
+      found { print }
+    ' "$file"
+  done
 }
 
 @test "role frontmatter: agents inherit model and pin settled effort" {
