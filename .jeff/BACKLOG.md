@@ -14,7 +14,9 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## TODO
 
-- **`#120`** cut prescriptive rules the declared model tier no longer needs. The deletion half of the context-engineering work; `#117` was the redistribution half and left payload prose net +18 lines. Targets: the six enumerated test smells in `agents/cook-review.md`, the disposition table `agents/cook-implement.md` re-derives, similar checklists in `cook-audit`/`cook-plan`, and explanatory prose in `SKILL.md`. Harness layer only.
+- **`#131`** harden the bundled-skill guard `#128` shipped: the fail-closed rule names no resolution base (so a consumer repo with its own `skills/testing/SKILL.md` resolves the relative path to a different document and the guard stays silent), the pointer `#128` added at `cook-audit.md:16` is itself unlocked by any test, and the operation lane carries no stop. The second item is a repeating pattern, not an instance: whatever fixes it should make the lock a property of adding a pointer, ideally one table-driven assertion over (role file, required path).
+- **`#130`** cut two verbatim duplications from the always-loaded `SKILL.md` (`:137`/`:155`, `:143`/`:206`). Same class `#120` cut from `cook-implement.md:18`; fell outside AC4 on a technicality.
+- **`cook indiff` false positive**: it compares the working tree, so an unrelated uncommitted file (`.jeff/BACKLOG.md` during `#128`) is reported as an out-of-diff refactor edit. Stashing and re-running gives exit 0. A false kickback signal on a scope guard erodes trust in the guard; consider comparing committed state or naming unrelated dirt separately.
 - **`#123`** the base-directory resolution recipe covers only the package CLI, while six reference reads are written plugin-root-relative. Three now sit at live branch points.
 - **`#124`** test-guard fallout from the `#117` relocation: one change-detector assertion, and two negative guards still scoped to `SKILL.md` after the prose they guard moved into `reference/`.
 - **`#125`** two facts still have a second home after the pointer conversion: effort values in `docs/specs/jeff-design.md:52` (found by both `#117` reviewers) and the operation approval sequence in `AGENTS.md:45` (reviewers split on whether it counts).
@@ -30,6 +32,10 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 - **Cursor support** remains an adapter, not a fork. Add it only against the authoritative core and recording boundary; create no host-specific workflow path.
 - Long-tail security scanners are frozen. `#26` is closed; reopen or supersede only when run history shows a new engine catches unique actionable findings.
 
-## CLOSED THIS PASS (2026-07-28)
+## CLOSED THIS PASS (2026-07-29)
+
+`#120` and `#128` merged together via PR #127 (`67753bb`). `#120` cut prescriptive rules the declared frontier tier no longer needs; `#128` finished the bundled-skill pointer mechanism those cuts depend on and absorbed `#129`. Payload prose net -1176 bytes after paying for the pointer mechanism and the fail-closed rule. Six judgments across the two tasks (four reviews, two required audits), zero blocking findings, zero kickbacks, both gates green on a clean tree. Three of the issue's own cut candidates came back as argued keeps: `cook-implement.md:12-15`, `cook-audit.md:16`, and two of the six review smells. The deletion exposed a latent defect, a relative `load-bearing-vs-liturgy.md` pointer that resolved to a nonexistent path while the cut ledger leaned on it for coverage. Follow-ups split out as `#130` and `#131`.
+
+## CLOSED PREVIOUS PASS (2026-07-28)
 
 `#117` merged via PR #119: harness right-sized for a declared frontier-tier target (Opus 5 / GPT-5.6 Sol / Grok 4.5), `SKILL.md` 311 to 228 lines, four branch-gated blocks moved to `skills/cook/reference/`. Zero blocking findings from two reviewers and a forced audit, zero kickbacks. Version deliberately not bumped; decided at release. `#107` merged via PR #114. `#109` merged via PR #115. `#112` added the terminal abandonment path and reconciled local ledgers `#101` and `#105` to `abandoned` with their council history intact. Pruned as superseded or satisfied: `#102` (met by `#107`, pinned at `src/pi/extension.test.js:283`), `#103` (docs aligned by `#105`/`#107`), `#104` (verifier query-kind architecture never shipped; `SKILL.md:242` settles the premise the other way), `#71` and `#111` (see DEFERRED above). The abandoned `codex/task-80-pi-human-returns` branch and both stale worktrees were removed.
