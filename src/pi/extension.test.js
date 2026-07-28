@@ -308,12 +308,12 @@ test('issue 107 compact and issue 109 expanded Pi approval displays are exact an
     const expandedPrefix = '  "approvalRequired": ';
     const expandedLines = renderDispatchLines(result, { expanded: true });
     const expanded = expandedLines.join('\n');
-    const expandedApprovalLines = expandedLines.filter((line) => line.startsWith(expandedPrefix));
+    const expandedApprovalLines = expandedLines.filter((/** @type {string} */ line) => line.startsWith(expandedPrefix));
 
     assert.equal(result.details.approvalRequired, approvalBoundary);
     assert.equal(JSON.parse(result.content[0].text).approvalRequired, approvalBoundary);
     assert.deepEqual(
-      expandedApprovalLines.map((line) => line.trimEnd()),
+      expandedApprovalLines.map((/** @type {string} */ line) => line.trimEnd()),
       [`${expandedPrefix}${safeApprovalLiteral}`],
     );
     const expandedApprovalLiteral = expandedApprovalLines[0].trimEnd().slice(expandedPrefix.length);
