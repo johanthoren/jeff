@@ -147,3 +147,191 @@ setup() {
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
+
+# ===========================================================================
+# task #117: right-size the harness for frontier-tier models
+#
+# Seam: the payload prose IS the product here. `skills/` (plus `agents/`) is the
+# only runtime surface both plugin manifests expose, and `skills/cook/SKILL.md`
+# is loaded in full on every activation. What a consuming host loads, and what a
+# maintainer reads in the shipped `AGENTS.md`, is therefore observable in exactly
+# one place: the shipped files. There is no second seam these assertions shadow
+# (contrast the task-0050 deletions, where the behavior was already guarded at a
+# produced-artifact seam), so these are structural payload invariants of the same
+# kind as the machine-path guards above, not source-prose change-detectors.
+#
+# Marker discipline: every marker below is a command name, env var, field name,
+# identifier, or verbatim duplicated clause: load-bearing content that survives
+# rewording. No assertion pins a sentence a maintainer may legitimately rephrase,
+# and no assertion pins a new reference file's name.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# AC1: the model expectation is declared in AGENTS.md
+#
+# RED now: AGENTS.md has no Model expectation section.
+# ---------------------------------------------------------------------------
+
+@test "#117 AC1: AGENTS.md declares the model expectation and the no-gating stance" {
+  local agents="$REPO/AGENTS.md" model
+
+  grep -qE '^#{2,3} Model expectation' "$agents" \
+    || { echo "AGENTS.md carries no 'Model expectation' section"; return 1; }
+
+  for model in 'Claude Opus 5' 'GPT-5.6 Sol' 'Grok 4.5'; do
+    grep -qF -- "$model" "$agents" \
+      || { echo "Model expectation does not name the design target: $model"; return 1; }
+  done
+
+  # jeff never gates on the model. This is the operative commitment: it forbids a
+  # future model check/refusal, and weaker models may still run the pipeline.
+  grep -qiE 'never[^.]*(detect|check|refus)[^.]*model|model[^.]*never[^.]*(detect|check|refus)' "$agents" \
+    || { echo "Model expectation does not state that jeff never detects, checks, or refuses a model"; return 1; }
+
+  # Re-thickening the harness for a weaker model is out of scope for maintenance.
+  grep -qF 'not a maintenance goal' "$agents" \
+    || { echo "Model expectation does not rule out re-thickening the harness as a maintenance goal"; return 1; }
+}
+
+@test "#117 AC1: the dogfood stamp is gone from AGENTS.md" {
+  # The stamp claimed an execution context readers took for a compatibility
+  # floor; the Model expectation section replaces it.
+  run grep -in 'dogfood' "$REPO/AGENTS.md"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
+
+# ---------------------------------------------------------------------------
+# AC2: per-stage effort is stated once, in agents/cook-*.md frontmatter
+#
+# `xhigh` is the effort vocabulary's unique token: it exists only as a role
+# effort value. tests/role-frontmatter.bats owns the positive assertion (the
+# frontmatter values); this owns the single-source half. Two homes for one
+# value is drift waiting to happen, and the model reconciles the conflict.
+#
+# RED now: AGENTS.md:47 and skills/cook/SKILL.md:193-202 restate the values.
+# ---------------------------------------------------------------------------
+
+@test "#117 AC2: per-stage effort values appear only in role frontmatter" {
+  run grep -rn 'xhigh' "$REPO/AGENTS.md" "$REPO/skills/cook"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
+
+# ---------------------------------------------------------------------------
+# AC3: each duplicated topic has exactly one normative home
+#
+# Direction is fixed by the packaging fact, not by preference: a consuming repo
+# receives AGENTS.md inside node_modules and never loads it, and both plugin
+# manifests expose only skills/ (plus agents/). A runtime-operative fact that
+# lands in AGENTS.md is silently lost for every non-Claude-Code host. So each
+# topic below must remain reachable from skills/cook/ and must not be restated
+# in AGENTS.md, which references the runtime owner by path instead.
+#
+# RED now: all five markers are in both files.
+# ---------------------------------------------------------------------------
+
+@test "#117 AC3: duplicated topics resolve to the runtime surface, not AGENTS.md" {
+  local topic marker
+  while IFS='|' read -r topic marker; do
+    grep -rqF -- "$marker" "$REPO/skills/cook" \
+      || { echo "topic=$topic: '$marker' is absent from skills/cook (runtime surface lost the fact)"; return 1; }
+    if grep -qF -- "$marker" "$REPO/AGENTS.md"; then
+      echo "topic=$topic: AGENTS.md restates '$marker' instead of pointing at the runtime owner"
+      return 1
+    fi
+  done <<'CASES'
+persona and flavor|JEFF_FLAVOR
+convergence and council|K=3
+git|Never put red
+standards|code-standards
+builder/judge separation|INV-1
+CASES
+}
+
+# ---------------------------------------------------------------------------
+# AC4: branch-gated detail is progressively disclosed
+#
+# Four blocks are provably dead in a given run yet load in full on every
+# activation. Each must leave SKILL.md and land in skills/cook/reference/.
+# Both halves are asserted per block: absence alone would be satisfied by
+# deleting the content, which is the catastrophic failure (a lite run with no
+# lite instructions).
+#
+# Block → what moves:
+#   lite mode                    : the whole "Lite mode (shared repos)" subtree
+#   full-mode registry           : "Creating a task" + BACKLOG maintenance
+#   full-mode prune              : terminal-with-removal sequence
+#   full-mode baseline           : "Entry-state baseline"
+#   operation semantics          : operation plan/execution + cooperative boundary
+#   codex native dispatch        : "Codex native v2 dispatch"
+#
+# RED now: every marker is resident in SKILL.md and in no reference file.
+# ---------------------------------------------------------------------------
+
+@test "#117 AC4: branch-gated blocks moved from SKILL.md into skills/cook/reference/" {
+  local block marker
+  while IFS='|' read -r block marker; do
+    if grep -qF -- "$marker" "$REPO/skills/cook/SKILL.md"; then
+      echo "block=$block: SKILL.md still carries '$marker'; it belongs in skills/cook/reference/"
+      return 1
+    fi
+    grep -rqF -- "$marker" "$REPO/skills/cook/reference" \
+      || { echo "block=$block: '$marker' is in no reference file; disclosure lost the content"; return 1; }
+  done <<'CASES'
+lite mode|cook indiff
+full-mode registry|Next free id
+full-mode prune|Strip satisfied deps
+full-mode baseline|red baseline
+operation semantics|Cooperative operation boundary
+operation semantics|never contains a grant
+codex native dispatch|spawn_agent
+CASES
+}
+
+@test "#117 AC4: reference disclosure links resolve in both directions" {
+  # Forward: a named reference path a specialist is told to read must exist,
+  # or the disclosure is a dead end at runtime.
+  # Reverse: a reference file SKILL.md never names is unreachable payload.
+  # GREEN now (two files, both linked): a regression lock that fails on a
+  # relocation that forgets either half.
+  local path base file
+  while read -r path; do
+    [ -n "$path" ] || continue
+    [ -f "$REPO/$path" ] || { echo "dangling reference path named in the payload: $path"; return 1; }
+  done <<EOF
+$(grep -rhoE 'skills/cook/reference/[A-Za-z0-9._-]+\.md' \
+    "$REPO/skills" "$REPO/agents" "$REPO/src" "$REPO/AGENTS.md" "$REPO/README.md" | sort -u)
+EOF
+
+  for file in "$REPO"/skills/cook/reference/*.md; do
+    [ -f "$file" ] || continue
+    base="$(basename "$file")"
+    grep -qF "skills/cook/reference/$base" "$REPO/skills/cook/SKILL.md" \
+      || { echo "orphan reference file: SKILL.md never names skills/cook/reference/$base"; return 1; }
+  done
+}
+
+# ---------------------------------------------------------------------------
+# AC5: removed scaffolding stays removed
+#
+# Both blocks steer the model inside an exploration space it no longer needs:
+# a worked Bad/Good pair for the grounder, and argument-handling mechanics the
+# CLI already enforces (tests/strict-args.bats owns that behavior).
+#
+# RED now: SKILL.md:40-41 (grounder pair) and SKILL.md:80-81 (argument
+# scaffolding). Scanned across skills/cook so relocation is not a loophole.
+# ---------------------------------------------------------------------------
+
+@test "#117 AC5: the Bad/Good grounder example pair stays removed" {
+  run grep -rnE '^(Bad|Good)[[:space:]]*[:(]' "$REPO/skills/cook"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
+
+@test "#117 AC5: request routing carries no argument-handling scaffolding" {
+  local pattern='the `#` is stripped|≡|unrecognized argument to a shell'
+  run grep -rnE "$pattern" "$REPO/skills/cook"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
