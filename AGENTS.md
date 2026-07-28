@@ -21,7 +21,7 @@ Re-thickening the harness so a weaker model can carry the judgment is not a main
 
 ## The kitchen (persona)
 
-jeff ships with a kitchen persona. The voice is a render layer over a fixed substrate, never a change to it. The roles (Chef, Jeff, the brigade), the flavor toggle and its precedence, the substrate-first rule, the Chef-facing grounder, and the assess→fork gate before the first durable write are stated once in `skills/cook/SKILL.md` (§The kitchen, §Entry), the surface every host loads. Canonical voice spec: `docs/brand.md`.
+jeff ships with a kitchen persona. The voice is a render layer over a fixed substrate, never a change to it. The roles (Chef, Jeff, the brigade), the flavor toggle and its precedence, the substrate-first rule, the Chef-facing grounder, and the assess→fork gate before the first durable write are owned by `skills/cook/SKILL.md` (§The kitchen, §Entry), the surface every host loads. Canonical voice spec: `docs/brand.md`.
 
 ## Repo = the package
 
@@ -47,12 +47,12 @@ A task locks `category` at capture by its primary outcome. `code` is the default
 ## Iron rules (non-advisory)
 
 1. **Thin orchestrator.** Route + transcribe; never self-judge; never override a `needs-work`. Every judgment happens in a fresh specialist context. Only `capture` is orchestrator-led; every other active stage is dispatched.
-2. **Separation.** The party that builds a thing never signs it off. The binding identity invariants for both categories are stated in `skills/cook/reference/jeff-state-schema.md` (separation invariants) and enforced by `cook validate`.
+2. **Separation.** The party that builds a thing never signs it off. The binding identity invariants for both categories are owned by `skills/cook/reference/jeff-state-schema.md` (separation invariants) and enforced by `cook validate`.
 3. **One model, host-native effort.** Every specialist inherits the orchestrator provider/model unchanged. Pi and Claude Code apply role-frontmatter effort where supported; Codex inherits orchestrator effort. The settled per-stage values are owned by `agents/cook-*.md` frontmatter.
 4. **State on disk.** Write `.jeff/**` as plain files. `cook validate` gates (orchestrator before each commit; CI on push). No external state service.
-5. **Git.** Unverified task work never reaches trunk, and a completed task lands there as one green task commit. The gate order, the checkpoint contract, the commit-message shape, the `complexity` call, and the mode-specific terminal are stated in `skills/cook/SKILL.md` (§Git).
-6. **Standards.** jeff's bundled first-party skills are the portable baseline quality floor for all code, and no third-party skill or built-in tool drives behavior. The floor and its override precedence are stated in `skills/cook/SKILL.md` (§Standards).
-7. **Convergence.** Code `review`/`audit` and operation `verify`/`audit` reuse one bounded convergence mechanism: self-classified findings, a source-bound refute per blocker, a per-source cap, one task-wide council, and at most one scoped recovery cycle. The exact counts, membership, and terminal outcomes are stated in `skills/cook/SKILL.md` (§Council, §Kickbacks).
+5. **Git.** Unverified task work never reaches trunk, and a completed task lands there as one green task commit. The gate order, the checkpoint contract, the commit-message shape, the `complexity` call, and the mode-specific terminal are owned by `skills/cook/SKILL.md` (§Git).
+6. **Standards.** jeff's bundled first-party skills are the portable baseline quality floor for all code, and no third-party skill or built-in tool drives behavior. The floor and its override precedence are owned by `skills/cook/SKILL.md` (§Standards).
+7. **Convergence.** Code `review`/`audit` and operation `verify`/`audit` reuse one bounded convergence mechanism: self-classified findings, a source-bound refute per blocker, a per-source cap, one task-wide council, and at most one scoped recovery cycle. The exact counts, membership, and terminal outcomes are owned by `skills/cook/SKILL.md` (§Council, §Kickbacks).
 
 ## Contributing to jeff itself
 
