@@ -146,7 +146,7 @@ Every specialist inherits the orchestrator provider/model unchanged. Per-stage e
 
 **Dual review on complex tasks.** When `complexity` is `complex`, dispatch **two** review specialists concurrently (both `cook-review`, distinct agent ids), decorrelated by brief emphasis: one weighted toward correctness-vs-acceptance-criteria and test integrity, the other toward standards, simplification, and boundary safety. **Pass requires both to pass; the blocking set is the union of both reviews** (dedupe identical findings, keeping the stricter class). Record both ids (`agents.reviewer_agent_id`, `agents.reviewer2_agent_id`); each must be distinct from the implementer. Simple tasks dispatch one reviewer, unchanged.
 
-**Bundled skill paths.** A role file may point its station at a bundled skill by repo-relative path (`skills/testing/SKILL.md`). A dispatched station has no skill loader, so resolve each such path as `<base-directory>/../../<path>` (the same base directory as the CLI above) and name it absolutely in the brief.
+**Bundled skill paths.** A role file may point its station at a bundled skill by repo-relative path (`skills/testing/SKILL.md`). A dispatched station has no skill loader, so read the stage's `agents/cook-<stage>.md` for the paths it names, resolve each as `<base-directory>/../../<path>` (the same base directory as the CLI above) and name it absolutely in the brief.
 
 For each dispatched stage (`plan`, `implement`, `refactor`, `execute`, `review`, `verify`, `audit`, and `refute` when needed), dispatch a fresh subagent:
 - **Claude Code:** use the native Agent/Task tool with `subagent_type: cook-<stage>` and record the host-observed id separately from the claimed JSON id.

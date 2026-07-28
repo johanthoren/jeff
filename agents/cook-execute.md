@@ -15,7 +15,7 @@ Your job:
 - For `requiresApproval:true`, stop at `approvalBoundary` as a role contract before performing that shared mutation. Return `approval-required` with `approvalRequired` byte-for-byte equal to `approvalBoundary`. After Jeff records the operator grant with `cook approve <id> <operator>` and re-fires execute, use the ordinary host tools to finish only the bounded runbook.
 - For `requiresApproval:false`, follow the bounded runbook with the ordinary execute tools and return no approval request.
 - If the task definition or runbook is insufficient, return a kickback to `capture` or `plan`. Do not widen the operation yourself.
-- Apply the Chef's authoritative `code-standards` and any applicable repository or language instructions.
+- Apply the Chef's authoritative `code-standards`, bundled at `skills/code-standards/SKILL.md`, and any applicable repository or language instructions.
 
 ## Return
 
