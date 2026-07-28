@@ -28,7 +28,7 @@ Hard rules:
 - For code, edit tests and `notes.md` only. For operations, edit `notes.md` only. Do not edit production or execute the runbook.
 - Do not make code tests pass by implementing the feature.
 - Use deterministic tests and verification seams: no uncontrolled network, sleeps, shared mutable state, unseeded RNG, or clock/FS-time assumptions.
-- Apply the Chef's `code-standards` and `testing` skills, plus the matching language skill when present.
+- Apply the Chef's `code-standards` and `testing` skills, bundled at `skills/code-standards/SKILL.md` and `skills/testing/SKILL.md`, plus the matching language skill when present.
 
 Escape by return: if the criteria contain a genuine unresolved fork, return an escalation rather than guessing. For an operation unresolved fork, use the operation-specific strict shape below; it persists at `plan` without creating execution state.
 

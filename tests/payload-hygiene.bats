@@ -289,18 +289,26 @@ codex native dispatch|spawn_agent
 CASES
 }
 
-@test "#117 AC4: reference disclosure links resolve in both directions" {
-  # Forward: a named reference path a specialist is told to read must exist,
-  # or the disclosure is a dead end at runtime.
+@test "#117 AC4 / #120 AC5: bundled skill paths resolve in both directions" {
+  # Forward: any bundled path a role or skill tells a specialist to read must
+  # exist, or the disclosure is a dead end at runtime. #120 widens the scan from
+  # skills/cook/reference/*.md to every skills/**.md path, because a role that
+  # delegates a rule to a bundled skill (rather than to a reference file) fails
+  # the same way: the pointer dangles and the rule silently evaporates. Anything
+  # under skills/ ships wholesale (package.json "files"), so resolution here is
+  # also the shipping half; tests/package-publish.bats owns the pack assertion.
+  # src/**/*.test.js is excluded: unit fixtures name synthetic host skill paths
+  # (/home/chef/.claude/skills/...) that are neither payload pointers nor
+  # published files.
   # Reverse: a reference file SKILL.md never names is unreachable payload.
-  # GREEN now (two files, both linked): a regression lock that fails on a
-  # relocation that forgets either half.
+  # GREEN now: a regression lock that fails on a pointer to a path that is not
+  # there, and on a reference file nothing names.
   local path base file
   while read -r path; do
     [ -n "$path" ] || continue
-    [ -f "$REPO/$path" ] || { echo "dangling reference path named in the payload: $path"; return 1; }
+    [ -f "$REPO/$path" ] || { echo "dangling bundled path named in the payload: $path"; return 1; }
   done <<EOF
-$(grep -rhoE 'skills/cook/reference/[A-Za-z0-9._-]+\.md' \
+$(grep -rhoE --exclude='*.test.js' 'skills/[A-Za-z0-9._/-]+\.md' \
     "$REPO/skills" "$REPO/agents" "$REPO/src" "$REPO/AGENTS.md" "$REPO/README.md" | sort -u)
 EOF
 
@@ -334,4 +342,37 @@ EOF
   run grep -rnE "$pattern" "$REPO/skills/cook"
   [ "$status" -ne 0 ]
   [ -z "$output" ]
+}
+
+# ===========================================================================
+# task #120: cut prescriptive rules the declared model tier no longer needs
+#
+# Seam: unchanged from #117. The payload prose IS the product, and the shipped
+# files are the only place a host observes it.
+#
+# Only the one mechanical failure mode of a deletion task is asserted here: a
+# rule delegated to a bundled skill that the receiving station cannot reach.
+# Deleted prose cannot regress at runtime, so no assertion pins the absence of
+# a removed sentence; that is the change-detector class this suite already
+# rejects (see tests/command-routing.bats). Everything else in #120 is a
+# judgment about what each remaining rule protects, and is review-owned.
+# ===========================================================================
+
+@test "#120 AC2 / #128 AC4: the review role names skills/testing/SKILL.md, the path its cuts depend on" {
+  # The review station runs with Read, Grep, Glob and no skill loader, so it can
+  # reach a bundled skill only through an explicit path. A bare skill name is
+  # not a pointer: a delegated rule behind one is unreachable at dispatch, and
+  # the review station judges test dispositions without it.
+  # The link guard above owns the other half (a named path must resolve); this
+  # owns the pointer existing at all.
+  #
+  # #128 AC4 pins the literal target instead of the path class. The class form
+  # went green on skills/code-standards/SKILL.md (added at :15 when the #120
+  # refactor harmonized the pointer form), so deleting the testing delegation,
+  # the single coverage argument for the four rules #120 cut from this role,
+  # no longer moved the assertion. Marker discipline is unchanged: a path is an
+  # identifier of exactly the class the #117 block above admits, and any
+  # rewording around it still satisfies this.
+  grep -qF 'skills/testing/SKILL.md' "$REPO/agents/cook-review.md" \
+    || { echo "agents/cook-review.md no longer names skills/testing/SKILL.md; the four test-integrity rules #120 delegated to the testing skill are unreachable from a Read/Grep/Glob station"; return 1; }
 }
