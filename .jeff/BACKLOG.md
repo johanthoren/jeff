@@ -6,7 +6,7 @@ Next free id: n/a in lite mode; GitHub issues own numbering.
 
 ## NOW
 
-- **`#112`** `blocked-to-operator` has no terminal exit. Load-bearing for orientation: the `#101` and `#105` ledgers still read `blocked` in `cook ls` even though both issues are closed, so the local store disagrees with the tracker until this is fixed. Option 1 in the issue (narrow INV-11 to admit `abandoned`) is sufficient for the terminal case.
+- **`#112`** `blocked-to-operator` has no terminal exit. The validator fix now admits `abandoned`, and local ledgers `#101` and `#105` are reconciled to that terminal state with their council history intact. Finish the independent review, audit, and integration gates.
 
 ## NEXT
 

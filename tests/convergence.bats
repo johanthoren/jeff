@@ -681,10 +681,9 @@ CONV_VALID_COUNCIL_BLOCK='{
 # INV-11: block resolution / done-gate
 # ---------------------------------------------------------------------------
 
-@test "INV-11a: verdict=block + outcome=blocked-to-operator while status!=blocked fails validate" {
-  # Task has status=done (from baseline) but outcome=blocked-to-operator: inconsistent.
-  write_baseline_task "$BK" 1 "task-inv11a-notblocked"
-  patch_convergence "$BK/tasks/1-task-inv11a-notblocked/task.json" '{
+@test "INV-11a: blocked-to-operator rejects pending and in_progress statuses" {
+  write_baseline_task "$BK" 1 "task-inv11a-active"
+  patch_convergence "$BK/tasks/1-task-inv11a-active/task.json" '{
     "cap": 2,
     "stages": { "review": { "blockingKickbacks": 2 }, "audit": { "blockingKickbacks": 0 } },
     "council": {
@@ -702,15 +701,17 @@ CONV_VALID_COUNCIL_BLOCK='{
       "outcome": "blocked-to-operator"
     }
   }'
-  # Baseline task has status=done: must fail (blocked-to-operator requires status=blocked)
-  run cook validate
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"inv11"* ]] || true
+  for task_status in pending in_progress; do
+    patch_field "$BK/tasks/1-task-inv11a-active/task.json" ".status = \"$task_status\""
+    run cook validate
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"inv11"* ]]
+  done
 }
 
-@test "INV-11a: verdict=block + outcome=blocked-to-operator with status=blocked passes validate (inv11a shape)" {
-  write_baseline_task "$BK" 1 "task-inv11a-blocked-ok"
-  patch_convergence "$BK/tasks/1-task-inv11a-blocked-ok/task.json" '{
+@test "INV-11a: blocked-to-operator accepts blocked and abandoned statuses" {
+  write_baseline_task "$BK" 1 "task-inv11a-terminal"
+  patch_convergence "$BK/tasks/1-task-inv11a-terminal/task.json" '{
     "cap": 2,
     "stages": { "review": { "blockingKickbacks": 2 }, "audit": { "blockingKickbacks": 0 } },
     "council": {
@@ -728,13 +729,20 @@ CONV_VALID_COUNCIL_BLOCK='{
       "outcome": "blocked-to-operator"
     }
   }'
-  # Mutate to status=blocked + blockedReason + adjust inv4 inapplicable fields
-  patch_field "$BK/tasks/1-task-inv11a-blocked-ok/task.json" '
+  patch_field "$BK/tasks/1-task-inv11a-terminal/task.json" '
     .status = "blocked"
     | .stage = "review"
     | .blockedReason = "council blocked: handed to operator"
     | .tests.green = false
     | .review.verdict = null
+  '
+  run cook validate
+  [ "$status" -eq 0 ]
+
+  patch_field "$BK/tasks/1-task-inv11a-terminal/task.json" '
+    .status = "abandoned"
+    | .blockedReason = null
+    | .abandonReason = "superseded by issue #112"
   '
   run cook validate
   [ "$status" -eq 0 ]

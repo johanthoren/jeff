@@ -684,8 +684,9 @@ function convergenceChecks(t, id, ids, out) {
     out.push(`task ${id}: scoped-fix-shipped requires exactly one fresh adjacent recovery [operation-recovery] [inv11]`);
   }
   // inv11: block resolution / done-gate.
-  if (conv && cl.verdict === 'block' && cl.outcome === 'blocked-to-operator' && t.status !== 'blocked') {
-    out.push(`task ${id}: council blocked-to-operator requires status == blocked [inv11]`);
+  if (conv && cl.verdict === 'block' && cl.outcome === 'blocked-to-operator'
+    && t.status !== 'blocked' && t.status !== 'abandoned') {
+    out.push(`task ${id}: council blocked-to-operator requires status == blocked or abandoned [inv11]`);
   }
   if (t.status === 'done' && conv && cl.verdict === 'block' && cl.outcome !== 'scoped-fix-shipped') {
     out.push(`task ${id}: done with an unresolved council block (outcome != scoped-fix-shipped) [inv11]`);
