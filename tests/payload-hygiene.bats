@@ -507,3 +507,55 @@ EOF
     return 1
   }
 }
+
+# ===========================================================================
+# task #134: the recipe's reach, locked to the path classes it covers
+#
+# The assertion above counts how many homes the recipe has and never what it
+# reaches. Re-narrowing it to the CLI alone leaves that count at one, in
+# SKILL.md, with no reference path touched: both assertions above stay green
+# while the #123 defect returns verbatim, since bundled skill paths and the
+# reference reads are again covered by no stated rule.
+#
+# Marker discipline, per the #117 block above: the three markers are payload
+# path classes, not sentences. `src/cli/cook.js` is the shipped command
+# surface, and `skills/` and `agents/` are the two payload directories both
+# plugin manifests expose. A recipe that covers all three names all three, in
+# any phrasing; a recipe narrowed to one of them cannot name the other two.
+# Each directory marker is matched as a bare class token, so naming one file
+# inside a directory does not pass for covering the directory.
+#
+# The section is located by the `../..` marker, not by its heading: a heading
+# is prose a maintainer may rename (#123 renamed this one), while the marker is
+# the path token every statement of the recipe carries. The assertion above
+# fixes that marker to exactly one home in SKILL.md, so "the section carrying
+# `../..`" names exactly one section.
+# ===========================================================================
+
+@test "#134 AC2: the resolution recipe reaches all three payload path classes" {
+  local recipe class
+  recipe="$(
+    awk '
+      /^##+ / { if (found) exit; body = ""; next }
+      { body = body $0 ORS }
+      index($0, "../..") { found = 1 }
+      END { if (found) printf "%s", body }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+
+  [ -n "$recipe" ] || {
+    echo "no section of skills/cook/SKILL.md states the base-directory resolution recipe"
+    return 1
+  }
+
+  # Trailing class excludes the path characters that would make the hit part of
+  # a longer path: `skills/cook/reference/migration.md` is one file, not the
+  # `skills/` class.
+  for class in 'src/cli/cook\.js' 'skills/([^A-Za-z0-9._/-]|$)' 'agents/([^A-Za-z0-9._/-]|$)'; do
+    grep -qE -- "$class" <<<"$recipe" || {
+      printf 'the base-directory resolution recipe no longer reaches the payload path class /%s/, so paths in that class resolve by no stated rule:\n%s\n' \
+        "$class" "$recipe"
+      return 1
+    }
+  done
+}
