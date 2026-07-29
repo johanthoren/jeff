@@ -559,3 +559,62 @@ EOF
     }
   done
 }
+
+# ===========================================================================
+# task #136: the recipe's scope, locked to the class it carves out
+#
+# The assertion above locks the recipe's *reach*: which payload classes it
+# covers. Nothing locks its *scope*: that project state sits outside it.
+# Restoring :48's subject to the unqualified "Every path this skill names" with
+# the carve-out deleted leaves tests 19, 20 and 21 green (one home, in SKILL.md;
+# every payload class still named; no reference path touched) and reproduces the
+# CWE-706 finding recorded in .jeff/tasks/lite-123-2452497030/task.json: a
+# `.jeff/memory/` or `.jeff/BACKLOG.md` write sent through the formula lands in
+# the installed plugin directory every project shares. Reach fails closed, scope
+# fails open, so scope is the half carrying the security weight.
+#
+# Marker discipline, per the #117 block above: `.jeff/` is a path class token of
+# the same kind as `skills/` and `agents/`, and it is matched as a bare class, so
+# a member path does not pass for the class. A carve-out names the class it
+# excludes in any phrasing, exactly as the recipe names the classes it covers;
+# no sentence is pinned. Member tokens could not serve as markers: the whole
+# point of this task is that `.jeff/config.json` and the seven paths beside it
+# are enumeration a maintainer may legitimately stop naming, while the class
+# survives every rewording that keeps the carve-out.
+#
+# kiss: the extraction is section-scoped and duplicated from the assertion
+# above rather than shared, because tests 19-21 are line-cited by three prior
+# stations' records. Both readers key on the same `../..` marker and both fail
+# closed on an empty section. Fold them into one helper the next time this
+# block is touched for its own reasons.
+#
+# Ceiling: section scope means the carve-out must live in the section that
+# states the recipe, which is where it belongs (it is that recipe's complement,
+# and "every *other* path" has no referent apart from it). A carve-out moved
+# into a section of its own is a false positive here; the upgrade path is to key
+# each half off its own token file-wide and drop the section bound.
+# ===========================================================================
+
+@test "#136 AC3: the resolution recipe carves out the .jeff/ project-state class" {
+  local recipe
+  recipe="$(
+    awk '
+      /^##+ / { if (found) exit; body = ""; next }
+      { body = body $0 ORS }
+      index($0, "../..") { found = 1 }
+      END { if (found) printf "%s", body }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+
+  [ -n "$recipe" ] || {
+    echo "no section of skills/cook/SKILL.md states the base-directory resolution recipe"
+    return 1
+  }
+
+  # Bare class token: `.jeff/config.json` is one file, not the `.jeff/` class.
+  grep -qE -- '\.jeff/([^A-Za-z0-9._/-]|$)' <<<"$recipe" || {
+    printf 'the section stating the base-directory resolution recipe names no bare `.jeff/` class, so project state is inside the recipe by default and a .jeff/ write resolves into the plugin directory every project shares:\n%s\n' \
+      "$recipe"
+    return 1
+  }
+}
