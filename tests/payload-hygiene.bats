@@ -345,34 +345,98 @@ EOF
 }
 
 # ===========================================================================
-# task #120: cut prescriptive rules the declared model tier no longer needs
+# task #120 / #128 / #131: the bundled-skill pointer, locked as a property of
+# the idiom instead of per instance
 #
 # Seam: unchanged from #117. The payload prose IS the product, and the shipped
-# files are the only place a host observes it.
+# role files are the only place a host observes it. A dispatched station runs
+# with Read, Grep, Glob and no skill loader, so it reaches a bundled skill only
+# through a path its own role file names, resolved against the absolute form
+# the brief supplies.
 #
-# Only the one mechanical failure mode of a deletion task is asserted here: a
-# rule delegated to a bundled skill that the receiving station cannot reach.
-# Deleted prose cannot regress at runtime, so no assertion pins the absence of
-# a removed sentence; that is the change-detector class this suite already
-# rejects (see tests/command-routing.bats). Everything else in #120 is a
-# judgment about what each remaining rule protects, and is review-owned.
+# One declaration drives three assertions:
+#   guard   : every declared role file binds the brief's absolute path and
+#             names what it returns when that path is unreachable;
+#   forward : every declared (role file, bundled path) pair is present;
+#   reverse : every bundled path named under agents/ is declared.
+#
+# Reverse is what ends the per-instance sequence (#120 added a pointer and did
+# not lock it; #128 locked that one and added another it did not lock): a new
+# pointer must be declared, and declaring it pulls its role file into the guard
+# too. The wide link guard above is no substitute, since it fails on a dangling
+# path and never on a deleted one.
+#
+# Marker discipline, per the #117 block above: bundled paths are identifiers,
+# and `needs-work`, `escalation`, `kickback` and `summary` are the return
+# vocabulary each role's own strict JSON object already fixes. Rewording the
+# sentence around any of them still passes. Host-provided skills (`rust`,
+# `swift`, `clojure`) ship no bundled path, so they enter neither the table nor
+# the scan.
+#
+# Forward subsumes the single pair #128 pinned here (cook-review.md ->
+# skills/testing/SKILL.md), which is why that assertion is gone rather than
+# kept beside this one.
 # ===========================================================================
 
-@test "#120 AC2 / #128 AC4: the review role names skills/testing/SKILL.md, the path its cuts depend on" {
-  # The review station runs with Read, Grep, Glob and no skill loader, so it can
-  # reach a bundled skill only through an explicit path. A bare skill name is
-  # not a pointer: a delegated rule behind one is unreachable at dispatch, and
-  # the review station judges test dispositions without it.
-  # The link guard above owns the other half (a named path must resolve); this
-  # owns the pointer existing at all.
-  #
-  # #128 AC4 pins the literal target instead of the path class. The class form
-  # went green on skills/code-standards/SKILL.md (added at :15 when the #120
-  # refactor harmonized the pointer form), so deleting the testing delegation,
-  # the single coverage argument for the four rules #120 cut from this role,
-  # no longer moved the assertion. Marker discipline is unchanged: a path is an
-  # identifier of exactly the class the #117 block above admits, and any
-  # rewording around it still satisfies this.
-  grep -qF 'skills/testing/SKILL.md' "$REPO/agents/cook-review.md" \
-    || { echo "agents/cook-review.md no longer names skills/testing/SKILL.md; the four test-integrity rules #120 delegated to the testing skill are unreachable from a Read/Grep/Glob station"; return 1; }
+# role file | bundled paths it must name | the token its return uses to report
+# one it cannot read. Single source for the three assertions below.
+list_bundled_pointers() {
+  cat <<'CASES'
+cook-audit.md|skills/security-auditor/SKILL.md|needs-work
+cook-execute.md|skills/code-standards/SKILL.md|kickback
+cook-implement.md|skills/code-standards/SKILL.md|kickback
+cook-plan.md|skills/code-standards/SKILL.md skills/testing/SKILL.md|escalation
+cook-refactor.md|skills/code-standards/SKILL.md|summary
+cook-review.md|skills/code-standards/SKILL.md skills/testing/SKILL.md|needs-work
+CASES
+}
+
+@test "#131 AC1 / AC2: every role file that names a bundled skill path carries the guard" {
+  # Two failure directions, one clause. Without the resolution base the station
+  # stats a repo-relative path against whatever cwd it has: silent in a consumer
+  # repo that has its own same-named document, spurious on a correct dispatch.
+  # Without the stop, a station whose skill is unreachable proceeds degraded.
+  local role paths stop
+  while IFS='|' read -r role paths stop; do
+    awk -v stop="$stop" '
+      { lower = tolower($0) }
+      index(lower, "absolute") && index(lower, "brief") && index($0, stop) { found = 1 }
+      END { if (!found) exit 1 }
+    ' "$REPO/agents/$role" || {
+      echo "agents/$role names a bundled skill path but no line carries the guard: it must bind the station to the absolute path its brief supplies, and name '$stop' as what it returns when that path is unreachable"
+      return 1
+    }
+  done < <(list_bundled_pointers)
+}
+
+@test "#131 AC3 forward: every declared bundled pointer is present in its role file" {
+  local role paths stop path
+  while IFS='|' read -r role paths stop; do
+    for path in $paths; do
+      grep -qF -- "$path" "$REPO/agents/$role" || {
+        echo "agents/$role no longer names $path; the rules delegated behind that pointer are unreachable from a station with no skill loader"
+        return 1
+      }
+    done
+  done < <(list_bundled_pointers)
+}
+
+@test "#131 AC3 reverse: every bundled skill path named under agents/ is declared" {
+  local file role declared path
+  for file in "$REPO"/agents/*.md; do
+    role="$(basename "$file")"
+    declared=" $(list_bundled_pointers | awk -F'|' -v role="$role" '$1 == role { print $2 }') "
+    while read -r path; do
+      [ -n "$path" ] || continue
+      case "$declared" in
+        *" $path "*) ;;
+        *)
+          echo "agents/$role names $path, which the pointer table above does not declare for it; declare the pair so the pointer is locked and the role file is held to the guard"
+          return 1
+          ;;
+      esac
+    done <<EOF
+$(grep -oE 'skills/[A-Za-z0-9._/-]+\.md' "$file" | sort -u)
+EOF
+  done
 }

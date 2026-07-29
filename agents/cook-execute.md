@@ -15,7 +15,7 @@ Your job:
 - For `requiresApproval:true`, stop at `approvalBoundary` as a role contract before performing that shared mutation. Return `approval-required` with `approvalRequired` byte-for-byte equal to `approvalBoundary`. After Jeff records the operator grant with `cook approve <id> <operator>` and re-fires execute, use the ordinary host tools to finish only the bounded runbook.
 - For `requiresApproval:false`, follow the bounded runbook with the ordinary execute tools and return no approval request.
 - If the task definition or runbook is insufficient, return a kickback to `capture` or `plan`. Do not widen the operation yourself.
-- Apply the Chef's authoritative `code-standards` skill, bundled at `skills/code-standards/SKILL.md`, and any applicable repository or language instructions.
+- Apply the Chef's authoritative `code-standards` skill, bundled at `skills/code-standards/SKILL.md`, and any applicable repository or language instructions. Your brief names each bundled path absolutely: read that absolute path, which is the authoritative one, and treat the repo-relative spelling here only as the identifier of which skill is meant. If such a path is missing from the brief or does not resolve, return a `kickback` naming it rather than executing without the skill.
 
 ## Return
 
