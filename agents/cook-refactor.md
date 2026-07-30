@@ -17,5 +17,5 @@ Your job:
 End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"refactor","result":"clean","files":[],"outsideDiff":[],"greenRun":{"command":"<command>","output":"<output>"},"summary":["<summary>"]}
+{"stage":"refactor","result":"clean","files":[],"outsideDiff":[],"greenRun":{"command":"<command>","output":"<output>"},"summary":["<summary>"]}
 ```

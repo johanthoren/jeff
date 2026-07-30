@@ -105,7 +105,7 @@ function findings(value, path, destinations, audit) {
 function validatePlan(value) {
   if (value.result === 'plan') {
     closed(value, '', [
-      'agent_id', 'stage', 'result', 'complexity', 'auditRequired', 'slices',
+      'stage', 'result', 'complexity', 'auditRequired', 'slices',
       'runbook', 'preconditions', 'recoveryBoundary', 'approvalBoundary',
       'requiresApproval', 'postconditions', 'verificationSeams', 'escalation',
     ]);
@@ -127,7 +127,7 @@ function validatePlan(value) {
   }
 
   if (value.result === 'escalation' && !Object.hasOwn(value, 'refactorOpportunity')) {
-    closed(value, '', ['agent_id', 'stage', 'result', 'complexity', 'auditRequired', 'slices', 'escalation']);
+    closed(value, '', ['stage', 'result', 'complexity', 'auditRequired', 'slices', 'escalation']);
     oneOf(value.complexity, 'complexity', ['simple', 'complex']);
     if (typeof value.auditRequired !== 'boolean') invalid('auditRequired');
     strings(value.slices, 'slices');
@@ -139,7 +139,7 @@ function validatePlan(value) {
     return;
   }
 
-  closed(value, '', ['agent_id', 'stage', 'result', 'complexity', 'auditRequired', 'refactorOpportunity', 'slices', 'testFiles', 'redRun', 'escalation']);
+  closed(value, '', ['stage', 'result', 'complexity', 'auditRequired', 'refactorOpportunity', 'slices', 'testFiles', 'redRun', 'escalation']);
   oneOf(value.result, 'result', ['red', 'escalation']);
   oneOf(value.complexity, 'complexity', ['simple', 'complex']);
   if (typeof value.auditRequired !== 'boolean') invalid('auditRequired');
@@ -159,7 +159,7 @@ function validatePlan(value) {
 
 /** @param {any} value */
 function validateImplement(value) {
-  closed(value, '', ['agent_id', 'stage', 'result', 'files', 'greenRun', 'kickback']);
+  closed(value, '', ['stage', 'result', 'files', 'greenRun', 'kickback']);
   oneOf(value.result, 'result', RESULTS.implement);
   strings(value.files, 'files');
   run(value.greenRun, 'greenRun');
@@ -173,7 +173,7 @@ function validateImplement(value) {
 
 /** @param {any} value */
 function validateExecute(value) {
-  closed(value, '', ['agent_id', 'stage', 'result', 'actions', 'evidence', 'kickback', 'approvalRequired']);
+  closed(value, '', ['stage', 'result', 'actions', 'evidence', 'kickback', 'approvalRequired']);
   oneOf(value.result, 'result', RESULTS.execute);
   strings(value.actions, 'actions');
   if (value.actions.length === 0) invalid('actions');
@@ -190,7 +190,7 @@ function validateExecute(value) {
 
 /** @param {any} value */
 function validateRefactor(value) {
-  closed(value, '', ['agent_id', 'stage', 'result', 'files', 'outsideDiff', 'greenRun', 'summary']);
+  closed(value, '', ['stage', 'result', 'files', 'outsideDiff', 'greenRun', 'summary']);
   oneOf(value.result, 'result', RESULTS.refactor);
   strings(value.files, 'files');
   strings(value.outsideDiff, 'outsideDiff');
@@ -200,7 +200,7 @@ function validateRefactor(value) {
 
 /** @param {any} value */
 function validateReview(value) {
-  closed(value, '', ['agent_id', 'stage', 'cycle', 'verdict', 'acLedger', 'findings', 'evidence']);
+  closed(value, '', ['stage', 'cycle', 'verdict', 'acLedger', 'findings', 'evidence']);
   nonnegativeInteger(value.cycle, 'cycle');
   oneOf(value.verdict, 'verdict', ['pass', 'needs-work']);
   if (!Array.isArray(value.acLedger)) invalid('acLedger');
@@ -220,7 +220,7 @@ function validateReview(value) {
 
 /** @param {any} value */
 function validateVerify(value) {
-  closed(value, '', ['agent_id', 'stage', 'cycle', 'verdict', 'postconditions', 'findings', 'evidence']);
+  closed(value, '', ['stage', 'cycle', 'verdict', 'postconditions', 'findings', 'evidence']);
   nonnegativeInteger(value.cycle, 'cycle');
   oneOf(value.verdict, 'verdict', ['pass', 'needs-work']);
   if (!Array.isArray(value.postconditions) || value.postconditions.length === 0) invalid('postconditions');
@@ -239,7 +239,7 @@ function validateVerify(value) {
 
 /** @param {any} value */
 function validateAudit(value) {
-  closed(value, '', ['agent_id', 'stage', 'cycle', 'verdict', 'scan', 'coverage', 'findings', 'evidence']);
+  closed(value, '', ['stage', 'cycle', 'verdict', 'scan', 'coverage', 'findings', 'evidence']);
   nonnegativeInteger(value.cycle, 'cycle');
   oneOf(value.verdict, 'verdict', ['pass', 'needs-work', 'na']);
   closed(value.scan, 'scan', ['command', 'recommendation', 'reportPath']);
@@ -264,7 +264,7 @@ function validateAudit(value) {
 
 /** @param {any} value */
 function validateRefute(value) {
-  closedOptional(value, '', ['agent_id', 'stage', 'cycle', 'finding', 'verdict', 'rationale', 'evidence'], ['source']);
+  closedOptional(value, '', ['stage', 'cycle', 'finding', 'verdict', 'rationale', 'evidence'], ['source']);
   nonnegativeInteger(value.cycle, 'cycle');
   if (value.source !== undefined) oneOf(value.source, 'source', ['review', 'review2', 'verify', 'audit']);
   string(value.finding, 'finding');
@@ -323,7 +323,6 @@ export function validateSpecialistReturn(stage, value) {
   if (!STAGES.includes(stage)) invalid('stage');
   if (!isType(value, 'object')) invalid('$');
   const record = /** @type {Record<string, any>} */ (value);
-  if (stage !== 'council') string(record.agent_id, 'agent_id');
   if (record.stage !== stage) invalid('stage');
   VALIDATORS[stage](record);
   return record;

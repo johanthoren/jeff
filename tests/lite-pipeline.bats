@@ -100,7 +100,7 @@ write_adopted_ledger_done() {
         test_author_agent_id: "agent-tester-001",
         implementer_agent_id: "agent-impl-002",
         reviewer_agent_id:    "agent-reviewer-003",
-        audit_agent_id:       null
+        audit_agent_id:       (if $av == "pass" then "agent-auditor-004" else null end)
       },
       tests: {
         authored_by_agent_id: "agent-tester-001",
@@ -115,7 +115,7 @@ write_adopted_ledger_done() {
       audit: {
         required: false,
         verdict: (if $av == "null" then null else $av end),
-        audit_agent_id: null,
+        audit_agent_id: (if $av == "pass" then "agent-auditor-004" else null end),
         evidence: []
       },
       commits: [],

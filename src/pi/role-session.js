@@ -65,14 +65,13 @@ export function parseRoleFile(raw) {
 }
 
 /**
- * @param {{ stage: string, agentId: string, roleBody: string, brief: string, taskDir?: string }} opts
+ * @param {{ stage: string, roleBody: string, brief: string, taskDir?: string }} opts
  * @returns {string}
  */
 export function buildRolePrompt(opts) {
   const taskDirLine = opts.taskDir ? `Task directory: ${opts.taskDir}\n` : '';
   return [
     `stage: ${opts.stage}`,
-    `agent_id: ${opts.agentId}`,
     '',
     opts.roleBody,
     '',
@@ -370,7 +369,6 @@ export async function dispatchRoleSession(opts) {
   const sdk = await loadSdk(opts.sdk);
   const prompt = buildRolePrompt({
     stage: opts.stage,
-    agentId,
     roleBody: role.body,
     brief: opts.brief,
     taskDir: opts.taskDir,

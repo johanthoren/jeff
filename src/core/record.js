@@ -348,6 +348,9 @@ function recordAudit(task, result) {
   if (isOperation(task) && task.audit.required === true && result.verdict === 'na') {
     throw new Error('[record-transition] required audit cannot return na');
   }
+  if (!isOperation(task) && task.agents.implementer_agent_id === result.agent_id) {
+    throw new Error('[inv2] implementer == auditor');
+  }
   if (isOperation(task) && task.agents.executor_agent_id === result.agent_id) {
     throw new Error('[inv2] executor == auditor');
   }
@@ -1037,8 +1040,11 @@ export async function recordSpecialistFile(root, stage, id, file, observedAgentI
 /** @param {string} root @param {string} stage @param {string} id @param {unknown} value @param {string} [observedAgentId] */
 export async function recordSpecialistReturn(root, stage, id, value, observedAgentId) {
   const specialistReturn = validateSpecialistReturn(stage, value);
-  if (stage !== 'council' && specialistReturn.agent_id !== observedAgentId) {
-    throw new Error(`[record-identity] claimed agent ${specialistReturn.agent_id} does not match observed agent ${observedAgentId ?? '<missing>'}`);
+  if (stage !== 'council' && (typeof observedAgentId !== 'string' || observedAgentId.length === 0)) {
+    throw new Error('[record-identity] observed agent is invalid');
   }
-  return updateTask(root, id, (task) => transitionTask(task, stage, specialistReturn), { allowTransientTerminal: true });
+  const transitionReturn = stage === 'council'
+    ? specialistReturn
+    : { ...specialistReturn, agent_id: observedAgentId };
+  return updateTask(root, id, (task) => transitionTask(task, stage, transitionReturn), { allowTransientTerminal: true });
 }

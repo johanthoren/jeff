@@ -51,17 +51,16 @@ function specialistReturn(stage, overrides = {}) {
   /** @type {Record<string, Record<string, any>>} */
   const returns = {
     plan: {
-      agent_id: 'plan-agent', stage: 'plan', result: 'red', complexity: 'complex', auditRequired: true,
+      stage: 'plan', result: 'red', complexity: 'complex', auditRequired: true,
       refactorOpportunity: null,
       slices: ['Project the return'], testFiles: ['src/pi/extension.test.js'],
       redRun: { command: 'node --test src/pi/extension.test.js', output: 'missing projection' }, escalation: null,
     },
     implement: {
-      agent_id: 'implement-agent', stage: 'implement', result: 'green', files: ['src/pi/extension.js'],
+      stage: 'implement', result: 'green', files: ['src/pi/extension.js'],
       greenRun: { command: 'node --test src/pi/extension.test.js', output: 'pass' }, kickback: null,
     },
     execute: {
-      agent_id: 'execute-agent',
       stage: 'execute',
       result: 'approval-required',
       actions: ['Captured recoverable state.'],
@@ -70,7 +69,6 @@ function specialistReturn(stage, overrides = {}) {
       approvalRequired: 'Rewrite the exact shared registry entry.',
     },
     verify: {
-      agent_id: 'verify-agent',
       stage: 'verify',
       cycle: 0,
       verdict: 'pass',
@@ -83,11 +81,11 @@ function specialistReturn(stage, overrides = {}) {
       evidence: [{ command: 'inspect registry', output: 'postconditions satisfied' }],
     },
     refactor: {
-      agent_id: 'refactor-agent', stage: 'refactor', result: 'clean', files: [], outsideDiff: [],
+      stage: 'refactor', result: 'clean', files: [], outsideDiff: [],
       greenRun: { command: 'node --test src/pi/extension.test.js', output: 'pass' }, summary: ['Kept one projection'],
     },
     review: {
-      agent_id: 'review-agent', stage: 'review', cycle: 0, verdict: 'needs-work',
+      stage: 'review', cycle: 0, verdict: 'needs-work',
       acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
       findings: [
         {
@@ -102,7 +100,7 @@ function specialistReturn(stage, overrides = {}) {
       evidence: [{ command: 'node --test src/pi/extension.test.js', output: 'failed' }],
     },
     audit: {
-      agent_id: 'audit-agent', stage: 'audit', cycle: 0, verdict: 'needs-work',
+      stage: 'audit', cycle: 0, verdict: 'needs-work',
       scan: { command: 'cook scan', recommendation: 'BLOCK', reportPath: '.jeff/scan.json' },
       coverage: AUDIT_CATEGORIES.map((category) => ({ category, status: 'covered_no_hits' })),
       findings: [{
@@ -112,7 +110,7 @@ function specialistReturn(stage, overrides = {}) {
       evidence: [{ command: 'node --test src/pi/extension.test.js', output: 'failed' }],
     },
     refute: {
-      agent_id: 'refute-agent', stage: 'refute', cycle: 0, source: 'review',
+      stage: 'refute', cycle: 0, source: 'review',
       finding: 'src/pi/extension.js:247 raw result', verdict: 'survives',
       rationale: 'The raw return is reachable by the parent model.',
       evidence: [{ command: 'read src/pi/extension.js', output: 'raw result returned' }],
@@ -127,7 +125,7 @@ function specialistReturn(stage, overrides = {}) {
  * @returns {Record<string, any>}
  */
 function markPrivateReturnFields(returned, marker) {
-  const common = { ...returned, agent_id: marker };
+  const common = returned;
   switch (returned.stage) {
     case 'plan':
       return { ...common, slices: [marker], testFiles: [marker], redRun: { command: marker, output: marker } };
@@ -290,7 +288,7 @@ test('issue 107 compact and issue 109 expanded Pi approval displays are exact an
     const tool = registeredDispatchTool({
       dispatchRoleSession: async () => ({
         stage: 'execute',
-        agent_id: returned.agent_id,
+        agent_id: 'execute-host-agent',
         brain: { provider: 'local', model: 'test-model', effort: 'high' },
         transcript: JSON.stringify(returned),
       }),
@@ -752,7 +750,7 @@ test('cook_dispatch refuses inactive projects before starting a role session', a
   }
 });
 
-test('cook_dispatch taskId persists the specialist result through the shared record service', async () => {
+test('issue 121 cook_dispatch taskId persists the host-observed identity for a return without agent_id', async () => {
   const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-record-'));
   const taskDir = join(cwd, '.jeff', 'tasks', '018-record-specialists');
   try {
@@ -785,7 +783,6 @@ test('cook_dispatch taskId persists the specialist result through the shared rec
       abandonReason: null,
     }, null, 2)}\n`, 'utf8');
     const transcript = JSON.stringify({
-      agent_id: 'pi-plan-agent',
       stage: 'plan',
       result: 'red',
       complexity: 'complex',
@@ -802,7 +799,7 @@ test('cook_dispatch taskId persists the specialist result through the shared rec
         dispatched = true;
         return {
         stage: 'plan',
-        agent_id: 'pi-plan-agent',
+        agent_id: 'pi-host-plan-agent',
         brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
         transcript,
         };
@@ -825,7 +822,7 @@ test('cook_dispatch taskId persists the specialist result through the shared rec
     if (dispatchError) throw dispatchError;
     const task = JSON.parse(await readFile(join(taskDir, 'task.json'), 'utf8'));
 
-    assert.equal(task.tests.authored_by_agent_id, 'pi-plan-agent');
+    assert.equal(task.tests.authored_by_agent_id, 'pi-host-plan-agent');
     assert.equal(task.complexity, 'complex');
     assert.equal(task.audit.required, true);
     assert.equal(task.stage, 'implement');
@@ -886,7 +883,6 @@ test('cook_dispatch transports the judgment cycle through the shared record cont
     };
     await writeFile(taskFile, `${JSON.stringify(task, null, 2)}\n`, 'utf8');
     const transcript = JSON.stringify({
-      agent_id: 'pi-review-agent',
       stage: 'review',
       cycle: 0,
       verdict: 'pass',
@@ -919,79 +915,3 @@ test('cook_dispatch transports the judgment cycle through the shared record cont
   }
 });
 
-test('cook_dispatch rejects mismatched claimed identity without changing ledger bytes', async () => {
-  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-record-identity-'));
-  const taskDir = join(cwd, '.jeff', 'tasks', '018-record-specialists');
-  const taskFile = join(taskDir, 'task.json');
-  try {
-    await mkdir(taskDir, { recursive: true });
-    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
-    await writeFile(taskFile, `${JSON.stringify({
-      schemaVersion: 1,
-      id: '18',
-      slug: 'record-specialists',
-      title: 'Record specialists',
-      status: 'in_progress',
-      stage: 'plan',
-      priority: 'p2',
-      deps: [],
-      complexity: 'simple',
-      createdAt: '2026-07-12T00:00:00Z',
-      updatedAt: '2026-07-12T00:00:00Z',
-      agents: { implementer_agent_id: null, reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
-      tests: { authored_by_agent_id: null, green: false, evidence: [] },
-      review: { verdict: null, reviewer_agent_id: null, findings: [], evidence: [] },
-      audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
-      commits: [],
-      kickbacks: [],
-      convergence: {
-        cap: 2,
-        stages: { review: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
-        council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
-      },
-      blockedReason: null,
-      abandonReason: null,
-    }, null, 2)}\n`, 'utf8');
-    const before = await readFile(taskFile, 'utf8');
-    const transcript = JSON.stringify({
-      agent_id: 'claimed-plan-agent',
-      stage: 'plan',
-      result: 'red',
-      complexity: 'complex',
-      auditRequired: true,
-      refactorOpportunity: null,
-      slices: ['Record one specialist result'],
-      testFiles: ['src/pi/extension.test.js'],
-      redRun: { command: 'node --test src/pi/extension.test.js', output: 'missing identity binding' },
-      escalation: null,
-    });
-    const tool = registeredDispatchTool({
-      dispatchRoleSession: async () => ({
-        stage: 'plan',
-        agent_id: 'observed-plan-agent',
-        brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
-        transcript,
-      }),
-    });
-
-    await assert.rejects(
-      () => tool.execute(
-        'call-1',
-        { stage: 'plan', brief: 'Plan task 18.', taskId: '18' },
-        undefined,
-        undefined,
-        { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
-      ),
-      (error) => {
-        assert.ok(error instanceof Error);
-        assert.match(error.message, /^cook_dispatch: .*record/i);
-        assert.ok(error.message.length <= 200);
-        assert.doesNotMatch(error.message, /claimed-plan-agent|observed-plan-agent|\[record-/);
-        return true;
-      },
-    );
-    assert.equal(await readFile(taskFile, 'utf8'), before);
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
-});

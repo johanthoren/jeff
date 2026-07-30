@@ -356,6 +356,15 @@ export function runInvariants(
     if (im !== null && (im === rv || im === rv2)) {
       out.push(`task ${id}: implementer == reviewer (${jqStr(im)}) [inv2]`);
     }
+    if (t.category !== 'operation' && isType(t.audit, 'object')) {
+      const outcomeAuditor = t.audit.audit_agent_id != null ? t.audit.audit_agent_id : null;
+      if (((t.audit.verdict === 'pass' || t.audit.verdict === 'needs-work')
+          && au === null && outcomeAuditor === null)
+        || (au !== null && outcomeAuditor !== null && au !== outcomeAuditor)
+        || (im !== null && (au === im || outcomeAuditor === im))) {
+        out.push(`task ${id}: audit outcome identity does not match its separated auditor [inv2]`);
+      }
+    }
     if (t.category === 'operation' && isType(t.execution, 'object')) {
       const outcomeExecutor = t.execution.executor_agent_id != null ? t.execution.executor_agent_id : null;
       if ((outcomeExecutor !== null && ex !== null && outcomeExecutor !== ex)
