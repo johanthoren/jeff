@@ -440,3 +440,181 @@ $(grep -oE 'skills/[A-Za-z0-9._/-]+\.md' "$file" | sort -u)
 EOF
   done
 }
+
+# ===========================================================================
+# task #123: the base-directory resolution recipe has one home, and every
+# payload reference path stays in the form the link guard can see
+#
+# Seam: unchanged from the #117 block above. The payload prose IS the product,
+# and skills/cook/SKILL.md loads in full on every activation, so whether a
+# consuming host can resolve a payload path is observable in exactly one place:
+# the shipped files.
+#
+# Marker discipline, per that block: `../..` is a path token, not a sentence.
+# Every statement of the recipe contains it and no rewording removes it, so the
+# count below tracks how many homes the recipe has, never how it is phrased.
+# The second test pins a path *form*, which is likewise structural.
+# ===========================================================================
+
+@test "#123 AC2: the base-directory resolution recipe has exactly one home, in SKILL.md" {
+  # Two failure directions, one count. More than one line restates the recipe
+  # (SKILL.md :48 and :149 plus reference/migration.md today: three homes to
+  # keep in step, and migration.md already spells the placeholder differently).
+  # Zero lines means the generalization deleted the rule rather than moving it.
+  #
+  # Requiring the survivor to sit in SKILL.md is the load-bearing half. SKILL.md
+  # loads on every activation; a reference file loads only on its own branch. A
+  # recipe that lands in a reference file is absent from every run that never
+  # reads that branch, which is the class of defect this task closes.
+  local homes
+  homes="$(grep -rn '\.\./\.\.' "$REPO/skills/cook" || true)"
+
+  [ "$(printf '%s\n' "$homes" | grep -c .)" -eq 1 ] || {
+    printf 'the base-directory resolution recipe must have exactly one home; found:\n%s\n' "$homes"
+    return 1
+  }
+
+  printf '%s\n' "$homes" | grep -qF "$REPO/skills/cook/SKILL.md:" || {
+    printf 'the surviving recipe is not in SKILL.md, so a run that never reads its branch cannot resolve any payload path:\n%s\n' "$homes"
+    return 1
+  }
+}
+
+@test "#123 AC3 / AC4: every payload reference path is plugin-root-relative" {
+  # The #120 defect, locked so it cannot recur silently. A pointer written
+  # base-relative (`reference/<name>.md`) resolves against whatever directory
+  # the reader happens to be at, and never matches the `skills/...` scan the
+  # link guard above runs, so that guard stays green while the pointer dangles.
+  # One uniform plugin-root-relative form is what lets the guard see these paths
+  # at all, which is why the fix is the recipe and not the paths.
+  #
+  # The asymmetry is live on the tree, not hypothetical: the link guard above
+  # passes today while both offenders below are present, and it cannot see
+  # skills/security-auditor/reference/adversarial-audit.md at all.
+  #
+  # src/**/*.test.js is excluded for the reason that guard states: unit fixtures
+  # name synthetic host skill paths that are neither payload pointers nor
+  # published files.
+  local offenders
+  offenders="$(
+    grep -rnoE --exclude='*.test.js' '[A-Za-z0-9._/-]*reference/[A-Za-z0-9._-]+\.md' \
+      "${PAYLOAD_ARGS[@]}" \
+      | grep -vE ':[0-9]+:skills/[A-Za-z0-9._-]+/reference/' || true
+  )"
+
+  [ -z "$offenders" ] || {
+    printf 'payload reference paths outside the plugin-root-relative skills/<skill>/reference/<name>.md form; the link guard above cannot see these:\n%s\n' "$offenders"
+    return 1
+  }
+}
+
+# ===========================================================================
+# task #134: the recipe's reach, locked to the path classes it covers
+#
+# The assertion above counts how many homes the recipe has and never what it
+# reaches. Re-narrowing it to the CLI alone leaves that count at one, in
+# SKILL.md, with no reference path touched: both assertions above stay green
+# while the #123 defect returns verbatim, since bundled skill paths and the
+# reference reads are again covered by no stated rule.
+#
+# Marker discipline, per the #117 block above: the three markers are payload
+# path classes, not sentences. `src/cli/cook.js` is the shipped command
+# surface, and `skills/` and `agents/` are the two payload directories both
+# plugin manifests expose. A recipe that covers all three names all three, in
+# any phrasing; a recipe narrowed to one of them cannot name the other two.
+# Each directory marker is matched as a bare class token, so naming one file
+# inside a directory does not pass for covering the directory.
+#
+# The section is located by the `../..` marker, not by its heading: a heading
+# is prose a maintainer may rename (#123 renamed this one), while the marker is
+# the path token every statement of the recipe carries. The assertion above
+# fixes that marker to exactly one home in SKILL.md, so "the section carrying
+# `../..`" names exactly one section.
+# ===========================================================================
+
+@test "#134 AC2: the resolution recipe reaches all three payload path classes" {
+  local recipe class
+  recipe="$(
+    awk '
+      /^##+ / { if (found) exit; body = ""; next }
+      { body = body $0 ORS }
+      index($0, "../..") { found = 1 }
+      END { if (found) printf "%s", body }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+
+  [ -n "$recipe" ] || {
+    echo "no section of skills/cook/SKILL.md states the base-directory resolution recipe"
+    return 1
+  }
+
+  # Trailing class excludes the path characters that would make the hit part of
+  # a longer path: `skills/cook/reference/migration.md` is one file, not the
+  # `skills/` class.
+  for class in 'src/cli/cook\.js' 'skills/([^A-Za-z0-9._/-]|$)' 'agents/([^A-Za-z0-9._/-]|$)'; do
+    grep -qE -- "$class" <<<"$recipe" || {
+      printf 'the base-directory resolution recipe no longer reaches the payload path class /%s/, so paths in that class resolve by no stated rule:\n%s\n' \
+        "$class" "$recipe"
+      return 1
+    }
+  done
+}
+
+# ===========================================================================
+# task #136: the recipe's scope, locked to the class it carves out
+#
+# The assertion above locks the recipe's *reach*: which payload classes it
+# covers. Nothing locks its *scope*: that project state sits outside it.
+# Restoring :48's subject to the unqualified "Every path this skill names" with
+# the carve-out deleted leaves tests 19, 20 and 21 green (one home, in SKILL.md;
+# every payload class still named; no reference path touched) and reproduces the
+# CWE-706 finding recorded in .jeff/tasks/lite-123-2452497030/task.json: a
+# `.jeff/memory/` or `.jeff/BACKLOG.md` write sent through the formula lands in
+# the installed plugin directory every project shares. Reach fails closed, scope
+# fails open, so scope is the half carrying the security weight.
+#
+# Marker discipline, per the #117 block above: `.jeff/` is a path class token of
+# the same kind as `skills/` and `agents/`, and it is matched as a bare class, so
+# a member path does not pass for the class. A carve-out names the class it
+# excludes in any phrasing, exactly as the recipe names the classes it covers;
+# no sentence is pinned. Member tokens could not serve as markers: the whole
+# point of this task is that `.jeff/config.json` and the seven paths beside it
+# are enumeration a maintainer may legitimately stop naming, while the class
+# survives every rewording that keeps the carve-out.
+#
+# kiss: the extraction is section-scoped and duplicated from the assertion
+# above rather than shared, because tests 19-21 are line-cited by three prior
+# stations' records. Both readers key on the same `../..` marker and both fail
+# closed on an empty section. Fold them into one helper the next time this
+# block is touched for its own reasons.
+#
+# Ceiling: section scope means the carve-out must live in the section that
+# states the recipe, which is where it belongs (it is that recipe's complement,
+# and "every *other* path" has no referent apart from it). A carve-out moved
+# into a section of its own is a false positive here; the upgrade path is to key
+# each half off its own token file-wide and drop the section bound.
+# ===========================================================================
+
+@test "#136 AC3: the resolution recipe carves out the .jeff/ project-state class" {
+  local recipe
+  recipe="$(
+    awk '
+      /^##+ / { if (found) exit; body = ""; next }
+      { body = body $0 ORS }
+      index($0, "../..") { found = 1 }
+      END { if (found) printf "%s", body }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+
+  [ -n "$recipe" ] || {
+    echo "no section of skills/cook/SKILL.md states the base-directory resolution recipe"
+    return 1
+  }
+
+  # Bare class token: `.jeff/config.json` is one file, not the `.jeff/` class.
+  grep -qE -- '\.jeff/([^A-Za-z0-9._/-]|$)' <<<"$recipe" || {
+    printf 'the section stating the base-directory resolution recipe names no bare `.jeff/` class, so project state is inside the recipe by default and a .jeff/ write resolves into the plugin directory every project shares:\n%s\n' \
+      "$recipe"
+    return 1
+  }
+}

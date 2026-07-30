@@ -85,5 +85,5 @@ security_audit_result:
 
 ## References
 
-- `reference/adversarial-audit.md`
+- `skills/security-auditor/reference/adversarial-audit.md`
 - `scripts/review_security.py`

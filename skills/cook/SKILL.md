@@ -43,9 +43,9 @@ Lead with the substance of the dish and the fork, then any findings substrate (`
 
 jeff is **opt-in per project**. Operate **only** when the project is an active jeff project (`.jeff/config.json` exists with `"active": true`). Otherwise (no `.jeff/`, or `active` is false) **stand down**: do not start the pipeline; return control to the normal host agent under the applicable user, host, and repository instructions. `cook init` activates a project (scaffold + mark active); `cook deinit` deactivates it (marks inactive, keeps task history). Cross-host enforcement is explicit validation before every commit plus CI (`ci.yml` runs `make validate` on push). In Claude Code only, the plugin offers an optional `PreToolUse` backstop that runs `cook validate` before the agent's own `git commit`s and blocks a commit only when validate reports an invalid task state.
 
-### Resolving the `cook` CLI
+### Resolving payload paths
 
-The operational command surface is the host-neutral checked-JS CLI at **`src/cli/cook.js`**. When this skill loads, its absolute **base directory** is given in the skill preamble. Resolve the package CLI as `node "<base-directory>/../../src/cli/cook.js" <verb>` while keeping the working directory in the target repo; the CLI derives the project root from cwd and Git, not from its own location. Inside the jeff source repo, `node src/cli/cook.js <verb>` is the same destination. In command examples below, `cook` means that resolved Node invocation.
+Every **payload** path this skill names (the CLI plus every `skills/` and `agents/` file) is relative to the plugin root, and when this skill loads its absolute **base directory** is given in the skill preamble: read or run any named payload path at `<base-directory>/../../<path>`, with no other step. Every other path this skill names, `.jeff/` state and repo files alike, resolves against the repo you are working in, never against the plugin root. The command surface is the host-neutral checked-JS CLI at **`src/cli/cook.js`**, run with `node` from a working directory inside the target repo; the CLI derives the project root from cwd and Git, not from its own location. Inside the jeff source repo, `node src/cli/cook.js <verb>` is the same destination. In command examples below, `cook` means that resolved Node invocation.
 
 ### Activating jeff (full / lite)
 
@@ -146,7 +146,7 @@ Every specialist inherits the orchestrator provider/model unchanged. Per-stage e
 
 **Dual review on complex tasks.** When `complexity` is `complex`, dispatch **two** review specialists concurrently (both `cook-review`, distinct agent ids), decorrelated by brief emphasis: one weighted toward correctness-vs-acceptance-criteria and test integrity, the other toward standards, simplification, and boundary safety. **Pass requires both to pass; the blocking set is the union of both reviews** (dedupe identical findings, keeping the stricter class). Record both ids (`agents.reviewer_agent_id`, `agents.reviewer2_agent_id`); each must be distinct from the implementer. Simple tasks dispatch one reviewer, unchanged.
 
-**Bundled skill paths.** A role file may point its station at a bundled skill by repo-relative path (`skills/testing/SKILL.md`). A dispatched station has no skill loader, so read the stage's `agents/cook-<stage>.md` for the paths it names, resolve each as `<base-directory>/../../<path>` (the same base directory as the CLI above) and name it absolutely in the brief.
+**Bundled skill paths.** A dispatched station has no skill loader, so read the stage's `agents/cook-<stage>.md` for the bundled paths it names (`skills/testing/SKILL.md`), resolve each per §Resolving payload paths, and name it absolutely in the brief.
 
 For each dispatched stage (`plan`, `implement`, `refactor`, `execute`, `review`, `verify`, `audit`, and `refute` when needed), dispatch a fresh subagent:
 - **Claude Code:** use the native Agent/Task tool with `subagent_type: cook-<stage>` and record the host-observed id separately from the claimed JSON id.
