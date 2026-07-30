@@ -3,9 +3,9 @@
 import { readFile, lstat, mkdir, realpath, rmdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { assertStoreContained, collectTasks, readMode, readTask, writeTask } from './store.js';
+import { assertStoreContained, collectTasks, readConfig, readTask, writeTask } from './store.js';
 import { git, treeDirty } from './git.js';
-import { isIsoDateTime, taskSchemaViolations } from './task-schema.js';
+import { configSchemaViolations, isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
 import {
@@ -921,6 +921,14 @@ async function locateTask(root, id, tasks) {
  */
 export async function updateTask(root, id, update, options = {}) {
   return withStoreLock(root, async () => {
+    const config = await readConfig(root, { strict: true });
+    const lite = config?.mode === 'lite';
+    const configViolations = configSchemaViolations(config, { lite });
+    if (configViolations.length) throw new Error(configViolations[0]);
+    const prunedTaskIds = !lite && Array.isArray(config?.prunedTaskIds)
+      ? /** @type {number[]} */ (config.prunedTaskIds)
+      : undefined;
+
     const tasks = await collectTasks(root);
     const { taskDir, taskPath } = await locateTask(root, id, tasks);
     const task = await readTask(taskDir, root);
@@ -947,10 +955,12 @@ export async function updateTask(root, id, update, options = {}) {
         throw new Error('[record-transition] terminal verification requires a clean working tree');
       }
     }
-    const lite = (await readMode(root)) === 'lite';
     const store = tasks.map((stored) => stored._dir === taskPath ? { ...candidate, _dir: taskPath } : stored);
     const candidatePrunePrefix = `task ${String(candidate.id)}:`;
-    const violations = [...taskSchemaViolations(candidate, { lite }), ...runInvariants(store, { lite })]
+    const violations = [
+      ...taskSchemaViolations(candidate, { lite }),
+      ...runInvariants(store, { lite, prunedTaskIds }),
+    ]
       .filter((violation) => !(
         options.allowTransientTerminal === true
         && !lite

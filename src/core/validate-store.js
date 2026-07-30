@@ -4,17 +4,13 @@
  * `validateStore(root)`: the authoritative in-process verdict boundary used by
  * the CLI and host integrations. The former Bash implementation remains a
  * transition oracle for intentionally unchanged behavior.
- *
- * Sequence (parity target): collect (fail closed) → `[gate]` pre-flight
- * short-circuit → full-mode empty-store early return → main invariant pass →
- * profile conformance → OK.
  */
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { collectTasks, readMode } from './store.js';
+import { collectTasks, readConfig } from './store.js';
 import { gatePreflight, runInvariants } from './invariants.js';
-import { taskSchemaViolations } from './task-schema.js';
+import { configSchemaViolations, taskSchemaViolations } from './task-schema.js';
 import { isType } from './validate.js';
 
 /**
@@ -50,7 +46,16 @@ function pass(stdout) {
  * @returns {Promise<Verdict>}
  */
 export async function validateStore(root) {
-  const lite = (await readMode(root)) === 'lite';
+  let config;
+  try {
+    config = await readConfig(root, { strict: true });
+  } catch (error) {
+    return fail([`cook: validation FAILED: ${/** @type {Error} */ (error).message}`]);
+  }
+  const lite = config?.mode === 'lite';
+  const prunedTaskIds = !lite && Array.isArray(config?.prunedTaskIds)
+    ? /** @type {number[]} */ (config.prunedTaskIds)
+    : undefined;
 
   // 1. Collect, fail CLOSED on any unparseable task.json.
   let tasks;
@@ -64,22 +69,24 @@ export async function validateStore(root) {
     return fail(stderr);
   }
 
-  // 2. Validate persisted shapes before evaluating semantic invariants. When
-  // schema errors exist, still attempt the invariant pass so historical callers
-  // retain its fail-closed markers; schema failures remain authoritative.
-  const schemaViolations = tasks.flatMap((task) => taskSchemaViolations(task, { lite }));
+  // 2. Collect persisted-shape and semantic violations. Schema failures remain
+  // authoritative but include fail-closed invariant markers.
+  const schemaViolations = [
+    ...configSchemaViolations(config, { lite }),
+    ...tasks.flatMap((task) => taskSchemaViolations(task, { lite })),
+  ];
+  let invariantViolations;
+  try {
+    invariantViolations = runInvariants(tasks, { lite, prunedTaskIds });
+  } catch {
+    invariantViolations = ['cook: validation FAILED: the invariant pass could not evaluate the task store.'];
+  }
   if (schemaViolations.length > 0) {
-    let invariantViolations = [];
-    try {
-      invariantViolations = runInvariants(tasks, { lite });
-    } catch {
-      invariantViolations = ['cook: validation FAILED: the invariant pass could not evaluate the task store.'];
-    }
     const violations = [...schemaViolations, ...invariantViolations];
     return fail([...violations, `cook: validation FAILED (${violations.length} issue(s))`]);
   }
 
-  // 3. [gate] done-gate pre-flight : short-circuits the whole pass on violation.
+  // 3. [gate] done-gate pre-flight: short-circuits the verdict on violation.
   let gateViolations;
   try {
     gateViolations = gatePreflight(tasks);
@@ -90,23 +97,18 @@ export async function validateStore(root) {
     return fail([...gateViolations, `cook: validation FAILED (${gateViolations.length} issue(s))`]);
   }
 
-  // 4. Full mode over an empty store: nothing to validate. (Lite runs even empty.)
+  // 4. Shared invariant verdict for empty and nonempty stores.
+  if (invariantViolations.length > 0) {
+    return fail([
+      ...invariantViolations,
+      `cook: validation FAILED (${invariantViolations.length} issue(s))`,
+    ]);
+  }
   if (!lite && tasks.length === 0) {
     return pass(['cook: no tasks under .jeff/tasks/: nothing to validate.']);
   }
 
-  // 5. Main invariant pass : fail CLOSED if it could not evaluate.
-  let violations;
-  try {
-    violations = runInvariants(tasks, { lite });
-  } catch {
-    return fail(['cook: validation FAILED: the invariant pass could not evaluate the task store.']);
-  }
-  if (violations.length > 0) {
-    return fail([...violations, `cook: validation FAILED (${violations.length} issue(s))`]);
-  }
-
-  // 6. Profile conformance : present-means-conform; absent is fine.
+  // 5. Profile conformance: present-means-conform; absent is fine.
   let profileText = null;
   try {
     profileText = await readFile(join(root, '.jeff', 'profile.md'), 'utf8');
@@ -120,7 +122,6 @@ export async function validateStore(root) {
     }
   }
 
-  // 7. OK.
   return pass([`cook: validation OK (${tasks.length} task(s))`]);
 }
 

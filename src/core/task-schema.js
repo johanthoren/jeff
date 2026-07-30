@@ -83,6 +83,26 @@ function requireField(out, field, valid) {
 }
 
 /**
+ * Validate full-mode dependency provenance at the config trust boundary.
+ * Lite mode does not interpret this full-mode field.
+ *
+ * @param {Record<string, unknown> | null} config
+ * @param {{ lite: boolean }} options
+ * @returns {string[]}
+ */
+export function configSchemaViolations(config, { lite }) {
+  /** @type {string[]} */
+  const out = [];
+  if (!lite && config !== null && Object.hasOwn(config, 'prunedTaskIds')) {
+    requireField(out, 'prunedTaskIds', Array.isArray(config.prunedTaskIds)
+      && config.prunedTaskIds.every((id) => (
+        typeof id === 'number' && Number.isInteger(id) && id > 0
+      )));
+  }
+  return out;
+}
+
+/**
  * @param {any} value
  * @param {string} field
  * @param {string[]} out

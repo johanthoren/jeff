@@ -137,28 +137,28 @@ jeff's model: a task reaching `done`/`abandoned` is **pruned** from the store
 `[prune]` check, so it will **fail** on any done/abandoned dir left resting. The
 bakehouse-core generations did not prune, so their stores hold these dirs.
 
-Reconcile during migration by pruning them. Do it as a verifiable loop, because
-removing a task whose id is still listed in a live task's `deps` trips the
-separate `[inv5]` "dep does not exist" check:
+Reconcile only ids and directories already established as resting terminal
+records during the migration inspection. Do not run a globbed rewrite over task
+files, and do not edit any surviving task's `task.json`.
 
-```bash
-# Remove every done/abandoned task dir. -f is needed: `git mv` staged these dirs
-# as renames, so a plain `git rm` refuses them.
-for d in .jeff/tasks/[0-9]*/; do
-  s=$(jq -r '.status' "$d/task.json" 2>/dev/null)
-  case "$s" in done|abandoned) git rm -rqf "$d" ;; esac
-done
+Before removing anything, edit `.jeff/config.json` once:
 
-# Validate; if it reports "dep <id> does not exist [inv5]", a surviving task
-# still depends on a pruned one. Strip those ids from the survivors' deps:
-COOK_ROOT="$PWD" <cook> validate
-# for each reported <id>, in each remaining task.json:
-#   jq '.deps -= [<id>]' task.json   (then re-stage and re-validate)
-```
+1. Create `prunedTaskIds` as an empty array if it is absent.
+2. For each inspected `done` or `abandoned` record, append its id exactly once
+   immediately before removing that exact task directory.
+3. Confirm the resulting array contains unique positive integers and no id for a
+   task directory that will remain live.
 
-Repeat validate until clean. For a large store this can remove many dirs in one
-migration commit; that is expected and matches how jeff would have pruned them
-incrementally. The records remain recoverable from git history.
+Leave every successor dependency intact, remove only the exact inspected
+terminal directories, and run `COOK_ROOT="$PWD" <cook> validate`. If validation
+identifies another resting terminal task, inspect and reconcile that exact id
+and directory before repeating these bounded steps.
+
+Stores that already pruned tasks under the older stripping procedure need no
+backfill. Keep `prunedTaskIds` absent or record only terminal ids known from
+inspected records; ids whose directories are already gone cannot be reconstructed
+reliably. A large migration may remove several known terminal dirs in one commit,
+but it must not discover or rewrite survivors while doing so.
 
 Lite mode drops `[prune]` (it is registry-only), so a lite project never hits
 this. Do **not** switch a project from full to lite just to dodge `[prune]`,

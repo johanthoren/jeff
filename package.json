@@ -1,6 +1,6 @@
 {
   "name": "@johanthoren/jeff",
-  "version": "3.8.0",
+  "version": "3.8.1",
   "description": "Jeff is a model-native quality control plane and cooperative workflow protocol for trusted operators and friendly agents, not a security sandbox.",
   "type": "module",
   "license": "Apache-2.0",

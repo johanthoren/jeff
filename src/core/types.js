@@ -285,6 +285,7 @@
  * @property {'full' | 'lite'} [mode]
  * @property {boolean} active
  * @property {string} [testCommand]
+ * @property {number[]} [prunedTaskIds]
  */
 
 export {};
