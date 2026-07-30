@@ -2,7 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateStore } from './validate-store.js';
@@ -2193,6 +2193,322 @@ test('INV-5 and full-only registry rules are enforced in full mode and skipped i
     const liteResult = await verdictFor(task);
     assert.equal(liteResult.ok, true);
   });
+});
+
+test('issue 140 terminally pruned predecessor remains machine-readable and unblocks its successor', async () => {
+  const root = await makeStore('full');
+  const predecessorDir = join(root, '.jeff', 'tasks', '0001-predecessor');
+  const successorDir = join(root, '.jeff', 'tasks', '0002-successor');
+  const independentDir = join(root, '.jeff', 'tasks', '0003-independent');
+  const predecessor = canonicalTask({
+    id: 1,
+    externalRef: undefined,
+    slug: 'predecessor',
+    status: 'abandoned',
+    abandonReason: 'superseded',
+  });
+  const successor = canonicalTask({
+    id: 2,
+    externalRef: undefined,
+    slug: 'successor',
+    deps: [1],
+  });
+  const independent = canonicalTask({
+    id: 3,
+    externalRef: undefined,
+    slug: 'independent',
+  });
+
+  try {
+    await writeTask(root, predecessor, '0001-predecessor');
+    await writeTask(root, successor, '0002-successor');
+    await writeTask(root, independent, '0003-independent');
+    assertNamedFailure(await validateStore(root), '[prune]');
+
+    await writeFile(
+      join(root, '.jeff', 'config.json'),
+      JSON.stringify({ prunedTaskIds: [1] }),
+      'utf8',
+    );
+    await rm(predecessorDir, { recursive: true });
+
+    const afterPrune = await validateStore(root);
+    assert.equal(afterPrune.ok, true, afterPrune.stderr.join('\n'));
+    const persistedConfig = JSON.parse(await readFile(join(root, '.jeff', 'config.json'), 'utf8'));
+    const persistedSuccessor = JSON.parse(await readFile(join(successorDir, 'task.json'), 'utf8'));
+    const persistedIndependent = JSON.parse(await readFile(join(independentDir, 'task.json'), 'utf8'));
+    assert.deepEqual(persistedConfig.prunedTaskIds, [1]);
+    assert.deepEqual(persistedSuccessor.deps, [1]);
+    assert.deepEqual(persistedIndependent.deps, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 140 only live or terminally pruned dependencies participate in the live DAG', async (t) => {
+  await t.test('allocation provenance cannot bless a missing nonterminal predecessor', async () => {
+    const root = await makeStore('full');
+    const predecessorDir = join(root, '.jeff', 'tasks', '0001-predecessor');
+    try {
+      await writeTask(root, canonicalTask({
+        id: 1,
+        externalRef: undefined,
+        slug: 'predecessor',
+      }), '0001-predecessor');
+      await writeTask(root, canonicalTask({
+        id: 2,
+        externalRef: undefined,
+        slug: 'successor',
+        deps: [1],
+      }), '0002-successor');
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({}),
+        'utf8',
+      );
+      await rm(predecessorDir, { recursive: true });
+
+      assertNamedFailure(await validateStore(root), '[inv5]');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('never-issued predecessor', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({ prunedTaskIds: [1] }),
+        'utf8',
+      );
+      await writeTask(root, canonicalTask({
+        id: 2,
+        externalRef: undefined,
+        slug: 'successor',
+        deps: [999],
+      }), '0002-successor');
+
+      assertNamedFailure(await validateStore(root), '[inv5]');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('cycle among live tasks', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({ prunedTaskIds: [9] }),
+        'utf8',
+      );
+      await writeTask(root, canonicalTask({
+        id: 1,
+        externalRef: undefined,
+        slug: 'first',
+        deps: [2],
+      }), '0001-first');
+      await writeTask(root, canonicalTask({
+        id: 2,
+        externalRef: undefined,
+        slug: 'second',
+        deps: [1],
+      }), '0002-second');
+
+      const result = await validateStore(root);
+      assertNamedFailure(result, '[inv5]');
+      assert.ok(result.stderr.some((line) => line.includes('dependency cycle')));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 140 terminal provenance rejects malformed and duplicate ids in nonempty and empty full stores', async (t) => {
+  await t.test('malformed id in a nonempty store', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({ prunedTaskIds: ['1'] }),
+        'utf8',
+      );
+      await writeTask(root, canonicalTask({ id: 1, externalRef: undefined }));
+
+      assertNamedFailure(await validateStore(root), '[schema] prunedTaskIds');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('zero is not a positive task id', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({ prunedTaskIds: [0] }),
+        'utf8',
+      );
+      await writeTask(root, canonicalTask({
+        id: 1,
+        externalRef: undefined,
+        deps: [0],
+      }));
+
+      assertNamedFailure(await validateStore(root), '[schema] prunedTaskIds');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('live task id cannot also be terminal provenance', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({ prunedTaskIds: [1] }),
+        'utf8',
+      );
+      await writeTask(root, canonicalTask({ id: 1, externalRef: undefined }));
+
+      assertNamedFailure(
+        await validateStore(root),
+        'live task id 1 must not appear in config prunedTaskIds [inv5]',
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('duplicate id in an empty store', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({ prunedTaskIds: [1, 1] }),
+        'utf8',
+      );
+
+      assertNamedFailure(await validateStore(root), '[inv5]');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('valid terminal provenance in an empty store', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({ prunedTaskIds: [1] }),
+        'utf8',
+      );
+
+      const result = await validateStore(root);
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+      assert.ok(result.stdout.some((line) => line.includes('nothing to validate')));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 140 lite validation ignores full-only terminal provenance', async (t) => {
+  /** @type {Array<[string, unknown[]]>} */
+  const cases = [
+    ['malformed and duplicate provenance', ['invalid', 'invalid']],
+    ['live-overlapping provenance', [1]],
+  ];
+
+  for (const [name, prunedTaskIds] of cases) {
+    await t.test(name, async () => {
+      const root = await makeStore('lite');
+      try {
+        await writeFile(
+          join(root, '.jeff', 'config.json'),
+          JSON.stringify({ mode: 'lite', prunedTaskIds }),
+          'utf8',
+        );
+        await writeTask(root, canonicalTask({ id: 1, externalRef: undefined }));
+
+        const result = await validateStore(root);
+        assert.equal(
+          result.ok,
+          true,
+          `lite validation must ignore full-only prunedTaskIds:\n${result.stderr.join('\n')}`,
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 140 full validation fails closed for present invalid config and accepts truly missing config', async (t) => {
+  /** @param {string} root */
+  const writeValidTask = (root) => writeTask(
+    root,
+    canonicalTask({ id: 1, externalRef: undefined }),
+  );
+
+  await t.test('missing config', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeValidTask(root);
+      const result = await validateStore(root);
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const [name, raw] of [
+    ['malformed JSON', '{"prunedTaskIds":'],
+    ['non-object JSON', '[]'],
+  ]) {
+    await t.test(name, async () => {
+      const root = await makeStore('full');
+      try {
+        await writeValidTask(root);
+        await writeFile(join(root, '.jeff', 'config.json'), raw, 'utf8');
+        assert.equal((await validateStore(root)).ok, false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await t.test('uncontained config symlink', async () => {
+    const root = await makeStore('full');
+    const outside = await mkdtemp(join(tmpdir(), 'jeff-task-schema-config-'));
+    try {
+      await writeValidTask(root);
+      const target = join(outside, 'config.json');
+      await writeFile(target, JSON.stringify({ prunedTaskIds: [] }), 'utf8');
+      await symlink(target, join(root, '.jeff', 'config.json'));
+      assert.equal((await validateStore(root)).ok, false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 140 migration records terminal-only provenance and leaves successor dependencies intact', async () => {
+  const migration = await readFile(
+    new URL('../../skills/cook/reference/migration.md', import.meta.url),
+    'utf8',
+  );
+  const heading = '## Reconciling resting terminal tasks';
+  const start = migration.indexOf(heading);
+  assert.notEqual(start, -1, 'migration reconciliation section is missing');
+  const nextHeading = migration.indexOf('\n## ', start + heading.length);
+  const section = migration.slice(start, nextHeading === -1 ? undefined : nextHeading);
+
+  assert.match(section, /prunedTaskIds/);
+  assert.match(section, /(leave|retain|preserve)[\s\S]{0,80}(successor|surviv)[\s\S]{0,80}(deps|dependenc)/i);
+  assert.doesNotMatch(section, /issuedTaskIds/);
 });
 
 /**

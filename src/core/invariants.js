@@ -277,12 +277,27 @@ function isResolvedOperationJudgment(outcome, exactCouncilShip) {
  * checks (id-type, inv5, duplicate-id, `[prune]`).
  *
  * @param {any[]} tasks
- * @param {{ lite: boolean }} opts
  * @returns {string[]}
  */
-export function runInvariants(tasks, { lite }) {
+export function runInvariants(
+  tasks,
+  /** @type {{ lite: boolean, prunedTaskIds?: number[] }} */ { lite, prunedTaskIds },
+) {
   const out = [];
   const ids = tasks.map((t) => t.id);
+  const dependencyIds = lite ? null : new Set([...ids, ...(prunedTaskIds ?? [])]);
+
+  if (!lite && prunedTaskIds !== undefined) {
+    const prunedIds = new Set(prunedTaskIds);
+    if (prunedIds.size !== prunedTaskIds.length) {
+      out.push('config prunedTaskIds must contain unique ids [inv5]');
+    }
+    for (const id of ids) {
+      if (prunedIds.has(id)) {
+        out.push(`live task id ${jqStr(id)} must not appear in config prunedTaskIds [inv5]`);
+      }
+    }
+  }
 
   for (const t of tasks) {
     // Fail CLOSED on type-confused containers (mirrors jq abort-on-index),
@@ -507,16 +522,19 @@ export function runInvariants(tasks, { lite }) {
       }
     }
 
-    // inv5a: deps exist (registry invariant, full only)
-    if (!lite) {
+    // inv5a: deps name live tasks or terminally pruned predecessors
+    // (registry invariant, full only)
+    if (dependencyIds !== null) {
       for (const d of jqOr(t.deps, [])) {
-        if (!ids.includes(d)) out.push(`task ${id}: dep ${jqStr(d)} does not exist [inv5]`);
+        if (!dependencyIds.has(d)) {
+          out.push(`task ${id}: dep ${jqStr(d)} is neither live nor terminally pruned [inv5]`);
+        }
       }
     }
 
     // prune: a done/abandoned dir must not rest in the store (full only)
     if (!lite && (t.status === 'done' || t.status === 'abandoned')) {
-      out.push(`task ${id}: status "${jqStr(t.status)}" task dir must not rest in the store; prune at completion: remove dir, strip deps, commit removal (archive is git history/tags) [prune]`);
+      out.push(`task ${id}: status "${jqStr(t.status)}" task dir must not rest in the store; append the id to config prunedTaskIds only after it becomes terminal, leave successor deps intact, remove only the terminal dir, and commit the removal (archive is git history/tags) [prune]`);
     }
 
     // convergence block (inv7-11); absent ⇒ skipped
@@ -540,7 +558,8 @@ export function runInvariants(tasks, { lite }) {
     }
   }
 
-  // inv5b: dependency cycle via Kahn (registry invariant, full only)
+  // inv5b: dependency cycle via Kahn over live edges only (registry invariant,
+  // full only). Terminally pruned ids are satisfied predecessors.
   if (!lite) {
     let remaining = tasks.map((t) => ({
       id: t.id,

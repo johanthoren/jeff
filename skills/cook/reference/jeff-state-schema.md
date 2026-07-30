@@ -63,7 +63,7 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - Code stages are `capture | plan | implement | refactor | review | audit | done`; operation stages are `capture | plan | execute | verify | audit | done`. Historical code ledgers may persist `test` as a compatibility-resume state. Category graphs and kickbacks are closed. Marked operation stages retain their exact predecessor state, and `status:"done"` is equivalent to `stage:"done"`.
 - `priority` ∈ `p0 | p1 | p2 | p3 | p4`.
 - `createdAt` / `updatedAt`: calendar-valid ISO-8601 datetimes. The same strict timestamp contract applies to `tests.gate.at`, every `kickbacks[*].at`, approval request and grant times, execution `recordedAt`, and judgment-history times.
-- `deps`: array of existing task ids; the graph must be acyclic.
+- `deps`: array of predecessor task ids. Without config provenance, every id must name a live task. In full mode, every id must name either a live task or an id in `prunedTaskIds`; terminally pruned predecessors remain recorded but do not block scheduling or participate in cycles. Cycles among live tasks remain invalid.
 - `complexity`: `"simple" | "complex"` (absent ⇒ `"complex"`). Set or refine it at plan by whether the change complects or carries risk: braids concerns, couples previously separate things, crosses subsystem boundaries, or has non-local side effects. Classify by complecting, not difficulty; deployment or other non-local side effects ⇒ `"complex"`; default `"complex"` when unsure. It does not select Git topology.
 - Code `plan.refactorOpportunity` carries a nonempty named behavior-preserving opportunity or `null`; historical code plans may omit it. A completed operation plan requires `runbook`, `preconditions`, `recoveryBoundary`, exact operator-facing `approvalBoundary`, boolean `requiresApproval`, `postconditions`, and deterministic `verificationSeams`, and omits code test/refactor fields. An unresolved operation fork instead persists only `result:"escalation"`, nonempty `slices`, and nonnull `{fork, options}` while remaining at `plan`; the answered plan replaces it.
 - `branch` (optional, deprecated): ignored legacy state. New records omit it; validators continue to accept old records containing it without migration.
@@ -161,7 +161,7 @@ consistent with the existing invariants. **Absent `convergence` ⇒ all skipped.
 
 ## Task registry
 
-There is no separate registry file: the `.jeff/tasks/<NNNN>-<slug>/` dirs **are** the registry. `cook ls` / `cook status` enumerate them; "next ready task" and "next id" are *computed* from the on-disk `task.json`s (`status` + `deps`), never stored. (The retired `index.json` registry (a duplicate of the dirs that drifted) was dropped in task 0065.)
+The `.jeff/tasks/<NNNN>-<slug>/` dirs are the live registry. `cook ls` / `cook status` enumerate them, and "next ready task" is computed from on-disk `task.json`s (`status` plus live `deps`). Optional full-mode config provenance `prunedTaskIds` records only terminal task ids whose directories were removed; it never duplicates live task state. (The retired `index.json` registry, a duplicate of the dirs that drifted, was dropped in task 0065.)
 
 ## `config.json` (`mode`: full vs lite)
 
@@ -173,6 +173,7 @@ There is no separate registry file: the `.jeff/tasks/<NNNN>-<slug>/` dirs **are*
 
 - `mode` ∈ `full | lite`. **Absent ⇒ `full`** (back-compat: every pre-lite store reads as full and validates byte-identically to today). `cook init` leaves `mode` unset (full); `cook lite` writes `mode:"lite"`.
 - `testCommand` (string, full mode; optional): the project's full-suite gate command, run by `cook verify` as the verdict (exit 0 = green). Absent/empty ⇒ `cook verify` fails closed (it never falls back to a hardcoded default). In lite mode the command is read instead from the operating profile's `Test command:` prose line (single-source; not duplicated into config).
+- `prunedTaskIds` (positive-integer array, full mode; optional): terminal-only provenance. Values must be unique and must not name live task ids. INV-5 accepts `deps` ids from the union of live task ids and this array, while scheduling ignores pruned predecessors. New tasks allocate above the maximum of that union but are not appended while live. Absence preserves the legacy rule that every dependency must name a live task, so existing full-mode stores require no migration. Lite mode ignores the field.
 - **Full mode** (the default): the committed task dirs, validated by the full invariant set below. Jeff runs `cook validate` before each stage-boundary commit; CI runs `make validate` on push. No git pre-commit hook is installed in any mode.
 - **Lite mode** (for a shared repo): the `.jeff/` store is git-excluded locally (`.git/info/exclude`, never committed) and **no** pre-commit hook is installed. The team owns the tracker and merge; jeff contributes only its quality machinery. Activated by `cook lite` (or its explicit natural-language twin; see `skills/cook/SKILL.md`).
 
@@ -180,20 +181,24 @@ There is no separate registry file: the `.jeff/tasks/<NNNN>-<slug>/` dirs **are*
 
 `cook validate` branches on `config.mode`:
 
-- **full / absent.** Empty `tasks/` (no task dirs) ⇒ "nothing to validate", exit 0; otherwise runs the **full** invariant set over the on-disk task dirs: the schema/done-gate quality invariants (INV-1, INV-2, INV-4), the convergence block (INV-7..11), **and** the registry invariants: numeric-`id` requirement, `deps` reference existing tasks + no cycles (INV-5), duplicate-id, and `[prune]`.
-- **lite: quality subset only.** Runs INV-1 (test author ≠ implementer), INV-2 (category-specific persisted identity binding and builder/judge separation), INV-4 (done-gate), and the INV-7..11 convergence block over each run-ledger `task.json`. **Drops** the registry invariants: a string `id` (an external tracker ref, e.g. `"JIRA-42"`) is accepted, INV-5 (dep DAG), duplicate-id, and `[prune]` are **skipped** (a lite run-ledger legitimately retains a local `done` record).
+- **full / absent.** Empty `tasks/` (no task dirs) ⇒ "nothing to validate", exit 0; otherwise runs the **full** invariant set over the on-disk task dirs: the schema/done-gate quality invariants (INV-1, INV-2, INV-4), the convergence block (INV-7..11), **and** the registry invariants: numeric-`id` requirement, dependency provenance + live-task cycles (INV-5), duplicate-id, and `[prune]`. When `prunedTaskIds` is absent, dependency provenance falls back to the legacy live-task rule.
+- **lite: quality subset only.** Runs INV-1 (test author ≠ implementer), INV-2 (category-specific persisted identity binding and builder/judge separation), INV-4 (done-gate), and the INV-7..11 convergence block over each run-ledger `task.json`. **Drops** the registry invariants: a string `id` (an external tracker ref, e.g. `"JIRA-42"`) is accepted, INV-5 (dep DAG), duplicate-id, and `[prune]` are **skipped** (a lite run-ledger legitimately retains a local `done` record). Config provenance is ignored.
 
 Before either mode's semantic checks, the core validates the persisted shape and
-reports field-named `[schema]` failures. The compatibility reader accepts and
-ignores historical `brains`, `branch`, `agents.plan_agent_id`, and
-`agents.test_author_agent_id`; it also accepts omitted `review2`,
-`agents.reviewer2_agent_id`, `convergence`, and `tests.gate`. Canonical writers
-do not expose the historical fields, and canonical stages do not include the
-legacy resume-only `test` value. Historical convergence records may also omit a
-council member's `temperature` or a finding's `followupTaskId`; canonical
-writers include both.
+reports field-named `[schema]` failures. Full validation and task updates treat a
+truly missing config as the legacy full-mode default, but reject a present
+unreadable, uncontained, malformed, or non-object config before writing task
+state. In full mode, present `prunedTaskIds` must contain only unique positive
+integers and no live ids. Lite mode does not interpret the field. The
+compatibility reader accepts and ignores historical `brains`, `branch`,
+`agents.plan_agent_id`, and `agents.test_author_agent_id`; it also accepts
+omitted `review2`, `agents.reviewer2_agent_id`, `convergence`, and `tests.gate`.
+Canonical writers do not expose the historical fields, and canonical stages do
+not include the legacy resume-only `test` value. Historical convergence records
+may also omit a council member's `temperature` or a finding's `followupTaskId`;
+canonical writers include both.
 
-**`[prune]` (registry invariant, task 0063; full mode only):** a `done`/`abandoned` task dir must not rest in the committed store. Terminal tasks are pruned at completion (the dir is removed, satisfied deps stripped, the removal committed to trunk); the archive is git history/tags and memory, not a resting `0NNN/` dir. Because a present `done` record (validated by `[gate]`/INV-4) and an absent terminal dir cannot both hold in one committed tree, completion follows a fixed gate -> remove -> validate -> commit order (see `skills/cook/SKILL.md` → Validation), so a legitimately-completing task is never blocked. Lite drops it (the team tracker owns the lifecycle and the lite store is never committed, so there is no git-history archive to fall back on).
+**`[prune]` (registry invariant, task 0063; full mode only):** a `done`/`abandoned` task dir must not rest in the committed store. After the record earns its terminal status and immediately before removing its exact directory, append its id once to config `prunedTaskIds`. Successor `deps` stay unchanged. INV-5 then treats pruned ids as satisfied predecessors while continuing to reject missing ids and cycles among live tasks. The terminal task archive remains git history/tags, not a resting `0NNN/` dir. Completion follows a fixed gate -> terminal record -> append provenance -> remove terminal dir -> validate -> commit order (see `skills/cook/SKILL.md` -> Validation). Lite drops this invariant and ignores config provenance.
 
 **Separation invariants (the load-bearing property: the implementer must not have shaped the tests it has to pass):**
 - **INV-1**: `tests.authored_by_agent_id ≠ agents.implementer_agent_id` (the combined test designer/author is not the implementer).

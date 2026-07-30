@@ -2378,6 +2378,172 @@ test('full-mode recording validates dependencies against the complete task store
   }
 });
 
+test('issue 140 public recorder updates a successor retaining a terminal-pruned dependency', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-record-pruned-'));
+  const taskDir = join(root, '.jeff', 'tasks', '002-successor');
+  try {
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(
+      join(root, '.jeff', 'config.json'),
+      JSON.stringify({ active: true, prunedTaskIds: [1] }),
+      'utf8',
+    );
+    await writeFile(
+      join(taskDir, 'task.json'),
+      `${JSON.stringify(canonicalTask({ id: 2, slug: 'successor', deps: [1] }), null, 2)}\n`,
+      'utf8',
+    );
+
+    await recordSpecialistReturn(root, 'plan', '2', planReturn());
+
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.stage, 'implement');
+    assert.deepEqual(recorded.deps, [1]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 140 lite public recorder ignores full-only terminal provenance', async (t) => {
+  /** @type {Array<[string, unknown[]]>} */
+  const cases = [
+    ['malformed and duplicate provenance', ['invalid', 'invalid']],
+    ['live-overlapping provenance', [18]],
+  ];
+
+  for (const [name, prunedTaskIds] of cases) {
+    await t.test(name, async () => {
+      const { root, taskDir } = await makeRoot();
+      try {
+        await writeFile(
+          join(root, '.jeff', 'config.json'),
+          JSON.stringify({ mode: 'lite', prunedTaskIds }),
+          'utf8',
+        );
+
+        await assert.doesNotReject(
+          () => recordSpecialistReturn(root, 'plan', '18', planReturn()),
+          'lite recorder must ignore full-only prunedTaskIds',
+        );
+        assert.equal(
+          (await readTask(taskDir)).stage,
+          'implement',
+          'lite recorder must persist the specialist return',
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 140 public recorder rejects malformed or incomplete terminal provenance atomically', async (t) => {
+  /** @type {Array<[string, unknown[], RegExp]>} */
+  const cases = [
+    ['malformed', ['1'], /prunedTaskIds/],
+    ['incomplete', [], /\[inv5\]/],
+  ];
+
+  for (const [name, prunedTaskIds, rejection] of cases) {
+    await t.test(name, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'jeff-record-pruned-invalid-'));
+      const taskDir = join(root, '.jeff', 'tasks', '002-successor');
+      try {
+        await mkdir(taskDir, { recursive: true });
+        await writeFile(
+          join(root, '.jeff', 'config.json'),
+          JSON.stringify({ active: true, prunedTaskIds }),
+          'utf8',
+        );
+        await writeFile(
+          join(taskDir, 'task.json'),
+          `${JSON.stringify(canonicalTask({ id: 2, slug: 'successor', deps: [1] }), null, 2)}\n`,
+          'utf8',
+        );
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+        await assert.rejects(
+          recordSpecialistReturn(root, 'plan', '2', planReturn()),
+          rejection,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 140 updateTask fails closed for present invalid config and accepts truly missing config', async (t) => {
+  /** @param {string} root */
+  const writeTask = async (root) => {
+    const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(
+      join(taskDir, 'task.json'),
+      `${JSON.stringify(canonicalTask(), null, 2)}\n`,
+      'utf8',
+    );
+    return taskDir;
+  };
+  /** @param {any} task */
+  const updateTitle = (task) => ({ ...task, title: 'Updated title' });
+
+  await t.test('missing config', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jeff-record-config-missing-'));
+    try {
+      const taskDir = await writeTask(root);
+      await recordCore.updateTask(root, '18', updateTitle);
+      assert.equal((await readTask(taskDir)).title, 'Updated title');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const [name, raw] of [
+    ['malformed JSON', '{"prunedTaskIds":'],
+    ['non-object JSON', '[]'],
+  ]) {
+    await t.test(name, async () => {
+      const root = await mkdtemp(join(tmpdir(), 'jeff-record-config-invalid-'));
+      try {
+        const taskDir = await writeTask(root);
+        await writeFile(join(root, '.jeff', 'config.json'), raw, 'utf8');
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+        await assert.rejects(
+          recordCore.updateTask(root, '18', updateTitle),
+          /config/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await t.test('uncontained config symlink', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jeff-record-config-link-'));
+    const outside = await mkdtemp(join(tmpdir(), 'jeff-record-config-outside-'));
+    try {
+      const taskDir = await writeTask(root);
+      const target = join(outside, 'config.json');
+      await writeFile(target, JSON.stringify({ prunedTaskIds: [] }), 'utf8');
+      await symlink(target, join(root, '.jeff', 'config.json'));
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+      await assert.rejects(
+        recordCore.updateTask(root, '18', updateTitle),
+        /config/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
 test('record rejects a repository whose .jeff parent redirects task writes outside the root', async () => {
   const root = await mkdtemp(join(tmpdir(), 'jeff-record-root-'));
   const outside = await mkdtemp(join(tmpdir(), 'jeff-record-outside-'));

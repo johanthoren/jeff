@@ -213,12 +213,12 @@ A code task must start from a **known-green baseline**, so the one post-change g
 
 Run `cook validate` before each commit. Code completion requires its existing non-implementer test gate, review set, and conditional audit. Operation completion requires executed actions/evidence, an independent passing verifier with all postconditions true and evidence present, and audit pass or not-required; it ignores code test, implementation, refactor, review, dual-review, and clean full-suite Git gates.
 
-The **`[prune]`** check is a **full-mode registry invariant**: a `done`/`abandoned` task dir must **not** rest in the store (the archive is git history/tags, not a resting dir). Lite mode drops it, like the other registry invariants. In addition to the Git outcomes above, full-mode completion requires:
-- the present task record to earn `done` under the done-gate before removal;
-- the terminal tree to strip satisfied dependencies, remove the task dir, refresh BACKLOG, and pass `cook validate`; and
-- trunk never to contain the transient terminal record.
-
-Choose repository-appropriate mechanics that make those outcomes inspectable.
+Registry validation is mode-specific. Before full-mode terminal bookkeeping,
+read `skills/cook/reference/full-mode.md` (§Terminal-with-removal): it owns the
+`[prune]` sequence and `prunedTaskIds`. The exact checked semantics and
+compatibility rule live in `skills/cook/reference/jeff-state-schema.md`
+(§`config.json`, §Lite validator subset). Lite mode ignores provenance and drops
+the registry invariants.
 
 When convergence is present, the validator re-derives category-specific counters, council membership and voting, follow-up tracking, builder/judge separation, and the one-scoped-cycle terminal outcome.
 

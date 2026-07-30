@@ -6,10 +6,10 @@ Read this when a full-mode project needs task files laid down, when a task reach
 
 There is **no** `cook new`/`create`/`add` verb, and none is planned (a deliberate call; see `[[jeff-no-cook-new-verb]]`); tasks are **hand-authored**. When a captured task needs its files laid down, do it by hand:
 
-- **Next id** = `max(id) + 1` over `.jeff/tasks/` (scan the dir names / `cook ls`); cross-check BACKLOG's "Next free id" line.
+- **Next id** = one greater than the maximum id in the union of live task ids and `prunedTaskIds` (or `1` when that union is empty). Cross-check BACKLOG's "Next free id" line for stale orientation; the live task directories and terminal provenance are authoritative.
 - **Create `.jeff/tasks/00NN-<slug>/`** with three files: `task.json` (canonical shape in `skills/cook/reference/jeff-state-schema.md` §`task.json`), `task.md` (goal / acceptance criteria / non-goals / audit), and `notes.md`.
-- **Register it:** add the task to `BACKLOG.md` and bump BACKLOG's "Next free id" line. (The new `task.json` dir is itself the registry entry; there is no separate index to append to.)
-- **Validate, then preserve:** run `cook validate` before integration and preserve the capture/backlog changes durably through the repository/context-selected checkpoint. Do not require a separate trunk commit: completed work lands as one green task commit.
+- **Orient the backlog:** add the live task to `BACKLOG.md` and bump BACKLOG's "Next free id" line. Do not add a live id to `prunedTaskIds`; the task directory is its registry entry.
+- **Validate, then preserve:** run `cook validate` before integration and preserve the capture/config/backlog changes durably through the repository/context-selected checkpoint. Do not require a separate trunk commit: completed work lands as one green task commit.
 
 This covers only the **mechanical scaffolding**. The interrogation → acceptance-criteria judgement stays in the Jeff-run `capture` stage; these steps are not a bypass of it.
 
@@ -29,8 +29,8 @@ Keep BACKLOG current so each fresh context starts with honest orientation rather
 ## Terminal-with-removal (prune)
 
 **When a full-mode task reaches a terminal state (`done` or `abandoned`), prune it from the store.** A done/abandoned task dir must **not** rest in the committed full-mode store; the archive is git history and tags, not a resting `0NNN/` dir. On reaching a terminal state, run this sequence (it is the same for `done` and `abandoned`; the only difference is the commit message and that an abandoned task records `abandonReason`):
-1. **Strip satisfied deps.** Remove the finishing task's id from the `deps` array of every still-live (pending/in_progress/blocked) task that referenced it, so no surviving task dangles a dependency on a removed dir.
-2. **`git rm -r` the task dir** (`.jeff/tasks/0NNN-<slug>/`).
+1. **Record terminal provenance.** Append the finishing id to `prunedTaskIds` only after its task record earns `done` or `abandoned`, and do so immediately before removing that exact task directory. The array contains unique positive integers and terminal ids only.
+2. **Leave successors intact and remove only the terminal dir.** Do not rewrite any successor's `deps`; `git rm -r` only `.jeff/tasks/0NNN-<slug>/`.
 3. **Refresh BACKLOG.md.** **Remove** the finished task from BACKLOG entirely (NOW/NEXT/TODO) and write **no** done-record or release narrative: the archive is git tags/history and memory, not BACKLOG. Optionally promote NEXT→NOW for the next task, and file new pending follow-up ids into TODO (or NEXT if imminent).
 4. **Validate the terminal bookkeeping, then satisfy the Git contract in `skills/cook/SKILL.md` (§Git).**
 
