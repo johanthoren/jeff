@@ -129,7 +129,7 @@ function observedReturn(agentId, value) {
 
 /** @param {Record<string, any>} value */
 function observedAgentId(value) {
-  return value[OBSERVED_AGENT_ID];
+  return /** @type {any} */ (value)[OBSERVED_AGENT_ID];
 }
 
 
