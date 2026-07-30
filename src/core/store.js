@@ -211,31 +211,24 @@ export async function collectTasks(root) {
 }
 
 /**
- * Read and parse `<root>/.jeff/config.json`, or `null` on a missing or
- * unparseable file (never throws). The shared degrade-to-null primitive
- * every soft config reader builds on: `readMode` below, `verify`'s
- * test-command resolver, `doctor`'s active check, and `flavor`
- * all read+parse this same file and fall back to their own per-caller
- * default when it's absent or corrupt. `init`'s read-modify-write is
- * deliberately NOT one of these callers: it must tell "absent" (fresh
- * scaffold) apart from "present but corrupt" (fail closed rather than
- * clobber a user's project), so it keeps its own bespoke read.
- *
- * A top-level non-object JSON value (`42`, `[1,2]`, `"s"`, `true`, `null`)
- * degrades to `null` too, so the return type is honestly object-or-null:
- * every caller then reads a missing property (→ its default) instead of the
- * `in` operator or a property access throwing on a primitive.
+ * Read and parse `<root>/.jeff/config.json`. Missing config returns `null`.
+ * Tolerant callers also receive `null` for unreadable, uncontained, malformed,
+ * or non-object config. Trust-boundary callers may request strict reads so a
+ * present invalid config cannot masquerade as an absent one.
  *
  * @param {string} root
+ * @param {{ strict?: boolean }} [options]
  * @returns {Promise<Record<string, unknown> | null>}
  */
-export async function readConfig(root) {
+export async function readConfig(root, options = {}) {
   try {
     const raw = await readContainedFile(root, join(root, '.jeff', 'config.json'));
-    const v = JSON.parse(raw);
-    return isType(v, 'object') ? /** @type {Record<string, unknown>} */ (v) : null;
-  } catch {
-    return null;
+    const value = JSON.parse(raw);
+    if (!isType(value, 'object')) throw new Error('config.json must contain an object');
+    return /** @type {Record<string, unknown>} */ (value);
+  } catch (error) {
+    if (/** @type {any} */ (error).code === 'ENOENT' || options.strict !== true) return null;
+    throw new Error(`could not read config.json: ${/** @type {Error} */ (error).message}`);
   }
 }
 

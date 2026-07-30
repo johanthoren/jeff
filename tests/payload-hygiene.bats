@@ -281,12 +281,19 @@ CASES
   done <<'CASES'
 lite mode|cook indiff
 full-mode registry|Next free id
-full-mode prune|Strip satisfied deps
+full-mode prune|Append the finishing id to `prunedTaskIds` only after its task record earns `done` or `abandoned`
 full-mode baseline|red baseline
 operation semantics|Cooperative operation boundary
 operation semantics|never contains a grant
 codex native dispatch|spawn_agent
 CASES
+}
+
+@test "#140 full-mode allocation includes live and terminally pruned ids without duplicating live state" {
+  local reference="$REPO/skills/cook/reference/full-mode.md"
+
+  grep -qF -- 'maximum id in the union of live task ids and `prunedTaskIds`' "$reference" \
+    || { echo "full-mode allocation no longer accounts for both live and terminally pruned ids"; return 1; }
 }
 
 @test "#117 AC4 / #120 AC5: bundled skill paths resolve in both directions" {
