@@ -37,17 +37,17 @@ Escape by return: if the criteria contain a genuine unresolved fork, return an e
 End your final message with exactly this strict JSON object, filled in, followed by nothing:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"plan","result":"red","complexity":"simple","auditRequired":false,"refactorOpportunity":null,"slices":["<slice>"],"testFiles":["<file>"],"redRun":{"command":"<command>","output":"<output>"},"escalation":null}
+{"stage":"plan","result":"red","complexity":"simple","auditRequired":false,"refactorOpportunity":null,"slices":["<slice>"],"testFiles":["<file>"],"redRun":{"command":"<command>","output":"<output>"},"escalation":null}
 ```
 
 For an operation task return:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"plan","result":"plan","complexity":"complex","auditRequired":true,"slices":["<slice>"],"runbook":["<step>"],"preconditions":["<precondition>"],"recoveryBoundary":"<boundary>","approvalBoundary":"Rewrite the shared release registry entry from source to destination.","requiresApproval":true,"postconditions":["<postcondition>"],"verificationSeams":["Read the source and destination entries independently."],"escalation":null}
+{"stage":"plan","result":"plan","complexity":"complex","auditRequired":true,"slices":["<slice>"],"runbook":["<step>"],"preconditions":["<precondition>"],"recoveryBoundary":"<boundary>","approvalBoundary":"Rewrite the shared release registry entry from source to destination.","requiresApproval":true,"postconditions":["<postcondition>"],"verificationSeams":["Read the source and destination entries independently."],"escalation":null}
 ```
 
 For an unresolved operation fork return:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"plan","result":"escalation","complexity":"complex","auditRequired":true,"slices":["<slice>"],"escalation":{"fork":"<fork>","options":["<option>"]}}
+{"stage":"plan","result":"escalation","complexity":"complex","auditRequired":true,"slices":["<slice>"],"escalation":{"fork":"<fork>","options":["<option>"]}}
 ```

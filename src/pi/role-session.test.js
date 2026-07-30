@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildRolePrompt, dispatchRoleSession, loadSdk } from './role-session.js';
+import { dispatchRoleSession, loadSdk } from './role-session.js';
 
 const REVIEW_AGENT = `---
 name: cook-review
@@ -380,23 +380,8 @@ function ompSdk(createAgentSession, testOptions = {}) {
   return sdk;
 }
 
-test('prompt construction includes role body, task directory, brief, and agent id', () => {
-  const prompt = buildRolePrompt({
-    stage: 'review',
-    agentId: '0123456789abcdef',
-    roleBody: 'Review body.',
-    brief: 'Check the diff.',
-    taskDir: '.jeff/tasks/x',
-  });
 
-  assert.match(prompt, /stage: review/);
-  assert.match(prompt, /agent_id: 0123456789abcdef/);
-  assert.match(prompt, /Review body\./);
-  assert.match(prompt, /Task directory: \.jeff\/tasks\/x/);
-  assert.match(prompt, /Check the diff\./);
-});
-
-test('dispatchRoleSession inherits the current Pi model and changes only thinking level', async () => {
+test('dispatchRoleSession prompt includes role context but omits the generated host agent id', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {any} */
     let capturedOptions;
@@ -437,6 +422,7 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
     const result = await dispatchRoleSession({
       stage: 'review',
       brief: 'Check the diff.',
+      taskDir: '.jeff/tasks/x',
       cwd: repoRoot,
       repoRoot,
       currentModel,
@@ -453,7 +439,11 @@ test('dispatchRoleSession inherits the current Pi model and changes only thinkin
     assert.equal('settings' in capturedOptions, false);
     assert.equal(capturedOptions.thinkingLevel, 'xhigh');
     assert.equal(capturedOptions.model, currentModel);
+    assert.match(capturedPrompt, /stage: review/);
     assert.match(capturedPrompt, /Review body\./);
+    assert.match(capturedPrompt, /Task directory: \.jeff\/tasks\/x/);
+    assert.match(capturedPrompt, /Check the diff\./);
+    assert.doesNotMatch(capturedPrompt, /0123456789abcdef/);
     assert.equal(result.transcript, 'verdict: pass');
     assert.equal(disposed, true);
   });

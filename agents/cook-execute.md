@@ -22,7 +22,7 @@ Your job:
 End your final message with exactly one strict JSON object, filled in, followed by nothing:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"execute","result":"executed","actions":["<action>"],"evidence":[{"command":"<command>","output":"<output>"}],"kickback":null,"approvalRequired":null}
+{"stage":"execute","result":"executed","actions":["<action>"],"evidence":[{"command":"<command>","output":"<output>"}],"kickback":null,"approvalRequired":null}
 ```
 
 For a boundary stop use `result:"approval-required"`, the exact `approvalBoundary` text as the nonempty `approvalRequired`, and `kickback:null`. Jeff presents that request to the operator, records the matching grant, and re-fires execute. The re-fired executor records its actions and command/output evidence in the ordinary `result:"executed"` shape. For a kickback use `result:"kickback"`, `approvalRequired:null`, and `kickback:{"to":"capture|plan","reason":"<reason>"}`.

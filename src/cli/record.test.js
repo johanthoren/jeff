@@ -119,6 +119,19 @@ function runGit(root, args) {
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 }
+const OBSERVED_AGENT_ID = Symbol('observedAgentId');
+
+/** @param {string} agentId @param {Record<string, any>} value */
+function observedReturn(agentId, value) {
+  Object.defineProperty(value, OBSERVED_AGENT_ID, { value: agentId });
+  return value;
+}
+
+/** @param {Record<string, any>} value */
+function observedAgentId(value) {
+  return value[OBSERVED_AGENT_ID];
+}
+
 
 /**
  * @param {string} root
@@ -127,7 +140,7 @@ function runGit(root, args) {
  * @param {Record<string, any>} value
  */
 function recordSpecialistReturn(root, stage, id, value) {
-  return recordObservedSpecialistReturn(root, stage, id, value, value.agent_id);
+  return recordObservedSpecialistReturn(root, stage, id, value, observedAgentId(value));
 }
 
 /** @param {string} root @param {unknown} value @param {string} [name] */
@@ -143,9 +156,9 @@ async function readTask(taskDir) {
   return JSON.parse(await readFile(join(taskDir, 'task.json'), 'utf8'));
 }
 
-function planReturn(overrides = {}) {
-  return {
-    agent_id: 'plan-agent',
+function planReturn(overrides = {}, agentId = 'plan-agent') {
+  const fields = overrides;
+  return observedReturn(agentId, {
     stage: 'plan',
     result: 'red',
     complexity: 'simple',
@@ -155,14 +168,14 @@ function planReturn(overrides = {}) {
     testFiles: ['src/cli/record.test.js'],
     redRun: { command: 'node --test src/cli/record.test.js', output: 'record is unavailable' },
     escalation: null,
-    ...overrides,
-  };
+    ...fields,
+  });
 }
 
 /** @param {Record<string, any>} [overrides] @returns {Record<string, any>} */
-function operationPlanReturn(overrides = {}) {
-  return {
-    agent_id: 'operation-plan-agent',
+function operationPlanReturn(overrides = {}, agentId = 'operation-plan-agent') {
+  const fields = overrides;
+  return observedReturn(agentId, {
     stage: 'plan',
     result: 'plan',
     complexity: 'complex',
@@ -176,8 +189,8 @@ function operationPlanReturn(overrides = {}) {
     postconditions: ['The source is absent and the destination exists exactly once.'],
     verificationSeams: ['Read the source and destination entries independently.'],
     escalation: null,
-    ...overrides,
-  };
+    ...fields,
+  });
 }
 
 /** @param {Record<string, any>} [overrides] @returns {Record<string, any>} */
@@ -198,8 +211,7 @@ function operationPlanState(overrides = {}) {
 }
 
 function executeReturn(agentId = 'executor', overrides = {}) {
-  return {
-    agent_id: agentId,
+  return observedReturn(agentId, {
     stage: 'execute',
     result: 'executed',
     actions: ['Moved the bounded registry entry.'],
@@ -207,12 +219,11 @@ function executeReturn(agentId = 'executor', overrides = {}) {
     kickback: null,
     approvalRequired: null,
     ...overrides,
-  };
+  });
 }
 
 function verifyReturn(agentId = 'verifier', overrides = {}) {
-  return {
-    agent_id: agentId,
+  return observedReturn(agentId, {
     stage: 'verify',
     cycle: 0,
     verdict: 'pass',
@@ -224,7 +235,7 @@ function verifyReturn(agentId = 'verifier', overrides = {}) {
     findings: [],
     evidence: [{ command: 'inspect registry postconditions', output: 'all postconditions satisfied' }],
     ...overrides,
-  };
+  });
 }
 
 /** @param {Record<string, any>} [overrides] @returns {any} */
@@ -300,33 +311,30 @@ function readyOperation(auditRequired = false, overrides = {}) {
 }
 
 function implementReturn(agentId = 'implementer', overrides = {}) {
-  return {
-    agent_id: agentId,
+  return observedReturn(agentId, {
     stage: 'implement',
     result: 'green',
     files: ['src/core/record.js'],
     greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
     kickback: null,
     ...overrides,
-  };
+  });
 }
 
 function refactorReturn(agentId = 'refactorer') {
-  return {
-    agent_id: agentId,
+  return observedReturn(agentId, {
     stage: 'refactor',
     result: 'clean',
     files: [],
     outsideDiff: [],
     greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
     summary: ['No refactor needed.'],
-  };
+  });
 }
 
 /** @param {string} agentId @param {Record<string, unknown>} [overrides] */
 function reviewReturn(agentId, overrides = {}) {
-  return {
-    agent_id: agentId,
+  return observedReturn(agentId, {
     stage: 'review',
     cycle: 0,
     verdict: 'pass',
@@ -334,7 +342,7 @@ function reviewReturn(agentId, overrides = {}) {
     findings: [],
     evidence: [{ command: 'git diff --check', output: 'clean' }],
     ...overrides,
-  };
+  });
 }
 
 /** @param {string} [status] */
@@ -343,8 +351,7 @@ function auditCoverage(status = 'covered_no_hits') {
 }
 
 function auditReturn(agentId = 'auditor', overrides = {}) {
-  return {
-    agent_id: agentId,
+  return observedReturn(agentId, {
     stage: 'audit',
     cycle: 0,
     verdict: 'pass',
@@ -353,7 +360,7 @@ function auditReturn(agentId = 'auditor', overrides = {}) {
     findings: [],
     evidence: [{ command: 'review-security --json', output: 'no findings' }],
     ...overrides,
-  };
+  });
 }
 
 /** @param {Record<string, any>} [overrides] @returns {Record<string, any>} */
@@ -372,8 +379,7 @@ function blockingFinding(overrides = {}) {
 
 /** @param {string} agentId @param {Record<string, any>} finding @param {Record<string, unknown>} [overrides] */
 function refuteReturn(agentId, finding, overrides = {}) {
-  return {
-    agent_id: agentId,
+  return observedReturn(agentId, {
     stage: 'refute',
     cycle: 0,
     finding: `${finding.file}:${finding.line} ${finding.what}`,
@@ -381,7 +387,7 @@ function refuteReturn(agentId, finding, overrides = {}) {
     rationale: 'The supported input reaches the reported failure.',
     evidence: [{ command: 'node --test src/cli/record.test.js', output: 'failure reproduced' }],
     ...overrides,
-  };
+  });
 }
 
 function auditStageTask(overrides = {}) {
@@ -608,10 +614,11 @@ async function prepareCompletedMixedStageReassessment() {
   return prepared;
 }
 
-test('record accepts the strict plan return and advances the task atomically', async () => {
+test('issue 121 CLI records a code return without agent_id from the separate observed identity', async () => {
   const { root, taskDir } = await makeRoot();
   try {
     const file = await writeReturn(root, planReturn());
+    assert.equal((await readFile(file, 'utf8')).includes('"agent_id"'), false);
 
     const result = runCook(root, ['record', 'plan', '18', 'plan-agent', file]);
     const task = await readTask(taskDir);
@@ -626,8 +633,7 @@ test('record accepts the strict plan return and advances the task atomically', a
     await rm(root, { recursive: true, force: true });
   }
 });
-
-test('issue 101 CLI records the operation graph without manufacturing code-task gates', async () => {
+test('issue 121 CLI records operation returns from separate observed identities', async () => {
   const { root, taskDir } = await makeRoot(operationTask());
   try {
     let file = await writeReturn(root, operationPlanReturn());
@@ -726,7 +732,7 @@ test('builder returns require the active stage and preserve the legacy test-stag
         root,
         'plan',
         '18',
-        planReturn({ agent_id: 'Plan101Ordering' }),
+        planReturn({}, 'Plan101Ordering'),
       );
 
       const recorded = await readTask(taskDir);
@@ -775,17 +781,17 @@ test('issue 101 operation plan requires operational boundaries and rejects code-
       refactorOpportunity: null,
       testFiles: ['src/cli/record.test.js'],
       redRun: { command: 'node --test', output: 'red' },
-    }],
-    ['code task with operation plan', canonicalTask(), operationPlanReturn()],
-    ['operation task with code plan', operationTask(), planReturn()],
+    }, 'operation-plan-agent'],
+    ['code task with operation plan', canonicalTask(), operationPlanReturn(), 'operation-plan-agent'],
+    ['operation task with code plan', operationTask(), planReturn(), 'plan-agent'],
   ];
-  for (const [name, task, returned] of wrongContracts) {
+  for (const [name, task, returned, agentId] of wrongContracts) {
     await t.test(name, async () => {
       const { root, taskDir } = await makeRoot(task);
       try {
         const before = await readFile(join(taskDir, 'task.json'), 'utf8');
         const file = await writeReturn(root, returned);
-        const result = runCook(root, ['record', 'plan', '18', returned.agent_id, file]);
+        const result = runCook(root, ['record', 'plan', '18', agentId, file]);
 
         assert.notEqual(result.code, 0);
         assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
@@ -799,8 +805,7 @@ test('issue 101 operation plan requires operational boundaries and rejects code-
 test('issue 101 cycle 2: operation plans durably escalate without advancing execution', async () => {
   const { root, taskDir } = await makeRoot(operationTask());
   try {
-    const escalation = {
-      agent_id: 'operation-plan-agent',
+    const escalation = observedReturn('operation-plan-agent', {
       stage: 'plan',
       result: 'escalation',
       complexity: 'complex',
@@ -810,7 +815,7 @@ test('issue 101 cycle 2: operation plans durably escalate without advancing exec
         fork: 'The repository does not establish which registry is authoritative.',
         options: ['Treat the local registry as authoritative.', 'Treat the remote registry as authoritative.'],
       },
-    };
+    });
 
     let recorded;
     try {
@@ -1113,7 +1118,7 @@ test('issue 101 surviving blocker: complex operation completes without code-revi
   }
 });
 
-test('issue 101 operation verifier is separated from the executor atomically', async () => {
+test('issue 121 operation verifier remains separated from the observed executor identity', async () => {
   const task = readyOperation(false, {
     agents: {
       ...operationTask().agents,
@@ -1803,7 +1808,21 @@ test('issue 101 cycle 2: required audit na rejects atomically before or after ve
   }
 });
 
-test('issue 101 cycle 2: operation audit recording separates the auditor from the executor', async () => {
+test('issue 121 code auditor remains separated from the observed implementer identity atomically', async () => {
+  const { root, taskDir } = await makeRoot(auditStageTask({ category: 'code' }));
+  try {
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'audit', '18', auditReturn('implementer')),
+      /\[inv2\].*(?:implementer.*auditor|auditor.*implementer)/i,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 121 operation auditor remains separated from the observed executor identity', async () => {
   const { root, taskDir } = await makeRoot(readyOperation(true));
   try {
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
@@ -2109,10 +2128,7 @@ test('record validates closed finding fields and final-stage evidence before wri
   const { root, taskDir } = await makeRoot(task);
   try {
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
-    const file = await writeReturn(root, {
-      agent_id: 'reviewer',
-      stage: 'review',
-      cycle: 0,
+    const file = await writeReturn(root, reviewReturn('reviewer', {
       verdict: 'needs-work',
       acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: false }],
       findings: [{
@@ -2125,7 +2141,7 @@ test('record validates closed finding fields and final-stage evidence before wri
         why: 'Readers can observe partial state.',
       }],
       evidence: [],
-    });
+    }));
 
     const result = runCook(root, ['record', 'review', '18', 'reviewer', file]);
 
@@ -2137,7 +2153,7 @@ test('record validates closed finding fields and final-stage evidence before wri
   }
 });
 
-test('record rejects a plan author reused as implementer before writing', async () => {
+test('issue 121 observed plan author cannot implement their own tests', async () => {
   const task = canonicalTask({
     stage: 'implement',
     tests: { authored_by_agent_id: 'same-agent', green: false, evidence: [] },
@@ -2145,14 +2161,7 @@ test('record rejects a plan author reused as implementer before writing', async 
   const { root, taskDir } = await makeRoot(task);
   try {
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
-    const file = await writeReturn(root, {
-      agent_id: 'same-agent',
-      stage: 'implement',
-      result: 'green',
-      files: ['src/core/record.js'],
-      greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
-      kickback: null,
-    });
+    const file = await writeReturn(root, implementReturn('same-agent'));
 
     const result = runCook(root, ['record', 'implement', '18', 'same-agent', file]);
 
@@ -2164,7 +2173,7 @@ test('record rejects a plan author reused as implementer before writing', async 
   }
 });
 
-test('record rejects an implementer reused as reviewer before writing', async () => {
+test('issue 121 observed implementer cannot review their own work', async () => {
   const task = canonicalTask({
     stage: 'review',
     agents: {
@@ -2178,15 +2187,9 @@ test('record rejects an implementer reused as reviewer before writing', async ()
   const { root, taskDir } = await makeRoot(task);
   try {
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
-    const file = await writeReturn(root, {
-      agent_id: 'same-agent',
-      stage: 'review',
-      cycle: 0,
-      verdict: 'pass',
-      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
-      findings: [],
+    const file = await writeReturn(root, reviewReturn('same-agent', {
       evidence: [{ command: 'git diff', output: 'No findings.' }],
-    }, '.jeff/return.json');
+    }), '.jeff/return.json');
 
     const result = runCook(root, ['record', 'review', '18', 'same-agent', file]);
 
@@ -2201,15 +2204,7 @@ test('record rejects an implementer reused as reviewer before writing', async ()
 test('issue 70 record accepts a terminal review at the current clean verified HEAD', async () => {
   const { root, taskDir } = await makeRoot(terminalReviewTask());
   try {
-    const specialistReturn = {
-      agent_id: 'reviewer',
-      stage: 'review',
-      cycle: 0,
-      verdict: 'pass',
-      acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
-      findings: [],
-      evidence: [{ command: 'git diff --check', output: 'clean' }],
-    };
+    const specialistReturn = reviewReturn('reviewer');
     const file = await writeReturn(root, specialistReturn, '.jeff/return.json');
 
     const result = runCook(root, ['record', 'review', '18', 'reviewer', file]);
@@ -2483,7 +2478,7 @@ test('simultaneous review and audit writes do not lose any judgment', async () =
 
 test('issue 72 agents-only review re-entry archives once and requires two fresh reviews', async () => {
   const finding = /** @type {any} */ (blockingFinding());
-  const refute = { ...refuteReturn('refuter', finding), source: 'review' };
+  const refute = { ...refuteReturn('refuter', finding), agent_id: 'refuter', source: 'review' };
   finding.refute = refute;
   const task = canonicalTask({
     stage: 'implement',
@@ -2712,15 +2707,11 @@ test('a refuted blocker progresses while retaining the finding and refute eviden
       verdict: 'needs-work',
       findings: [blocker],
     }));
-    await recordSpecialistReturn(second.root, 'refute', '18', {
-      agent_id: 'refuter',
-      stage: 'refute',
-      cycle: 0,
-      finding: `${blocker.file}:${blocker.line} ${blocker.what}`,
+    await recordSpecialistReturn(second.root, 'refute', '18', refuteReturn('refuter', blocker, {
       verdict: 'refuted',
       rationale: 'The upstream guard prevents the failure.',
       evidence: [{ command: 'sed -n 1,20p src/core/record.js', output: 'guard present' }],
-    });
+    }));
     const recorded = await readTask(second.taskDir);
     assert.equal(recorded.status, 'done');
     assert.equal(recorded.review.findings[0].class, 'follow-up');
@@ -2942,38 +2933,40 @@ test('follow-up-only audit reaches an INV-4-compatible terminal outcome with evi
   }
 });
 
-test('issue 65 shared recorder rejects a spoofed specialist identity without changing the task', async () => {
-  const { root, taskDir } = await makeRoot();
+test('issue 121 shared recorder persists the observed identity for a return without agent_id', async () => {
+  const { root } = await makeRoot();
   try {
-    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
-
-    await assert.rejects(
-      recordObservedSpecialistReturn(root, 'plan', '18', planReturn({ agent_id: 'claimed-agent' }), 'observed-agent'),
-      /\[record-identity\]/,
+    const recorded = await recordObservedSpecialistReturn(
+      root,
+      'plan',
+      '18',
+      planReturn(),
+      'observed-plan-agent',
     );
-    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+
+    assert.equal(recorded.tests.authored_by_agent_id, 'observed-plan-agent');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('issue 65 CLI passes observed identity separately and rejects payload spoofing atomically', async () => {
+test('issue 121 CLI rejects the retired specialist-authored agent_id field atomically', async () => {
   const { root, taskDir } = await makeRoot();
   try {
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
-    const file = await writeReturn(root, planReturn({ agent_id: 'claimed-agent' }));
+    const file = await writeReturn(root, { ...planReturn(), agent_id: 'observed-agent' });
 
     const result = runCook(root, ['record', 'plan', '18', 'observed-agent', file]);
 
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /\[record-identity\]/);
+    assert.match(result.stderr, /\[record-schema\].*agent_id/);
     assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('issue 65 refute identity cannot reuse the implementer', async () => {
+test('issue 121 observed refuter identity cannot reuse the implementer', async () => {
   const blocker = blockingFinding();
   const task = canonicalTask({
     stage: 'review',
@@ -3069,7 +3062,7 @@ test('issue 65 cycle 1 refute rejects prior-refuter reuse atomically with the id
   }
 });
 
-test('issue 68 council separation is limited to the active cycle', async () => {
+test('issue 121 council separation remains limited to the active observed identities', async () => {
   const task = councilTask({
     judgmentHistory: [{
       at: '2026-07-12T00:00:01Z',

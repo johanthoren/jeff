@@ -618,3 +618,27 @@ EOF
     return 1
   }
 }
+
+# ===========================================================================
+# issue #121: one host-observed specialist identity
+#
+# The role briefs and orchestration skill are shipped runtime payload. These
+# checks bind the public return contract, not an implementation detail: every
+# host asks specialists for these strict objects, then records the native child
+# id it observed separately.
+# ===========================================================================
+
+@test "#121 specialist role return contracts omit agent_id" {
+  run grep -nH -F '"agent_id"' "$REPO"/agents/cook-*.md
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
+
+@test "#121 orchestration makes the host-observed id authoritative" {
+  grep -Ei 'host-observed.*(authoritative|source of truth)' "$REPO/skills/cook/SKILL.md"
+  grep -Ei 'specialist.*return.*(omit|does not include).*agent_id' "$REPO/skills/cook/SKILL.md"
+
+  run grep -nEi 'claimed (JSON )?id|claimed `?agent_id|compare[^.]*agent_id' "$REPO/skills/cook/SKILL.md"
+  [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}

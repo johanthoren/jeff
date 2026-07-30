@@ -1835,6 +1835,136 @@ test('INV-2 keeps second-review outcomes bound to the canonical agent identity',
   assertNamedFailure(result, '[inv2]');
 });
 
+test('issue 121 second recovery: code audit identities are durably bound and separated under INV-2', async (t) => {
+  const terminal = canonicalTask({
+    status: 'done',
+    stage: 'done',
+    complexity: 'simple',
+    tests: {
+      authored_by_agent_id: 'plan',
+      green: true,
+      evidence: ['make test'],
+    },
+    agents: {
+      ...canonicalTask().agents,
+      reviewer_agent_id: 'reviewer-one',
+      audit_agent_id: 'auditor',
+    },
+    review: {
+      verdict: 'pass',
+      reviewer_agent_id: 'reviewer-one',
+      evidence: ['review one'],
+    },
+    review2: null,
+    audit: {
+      required: true,
+      verdict: 'pass',
+      audit_agent_id: 'auditor',
+      evidence: ['audit'],
+    },
+  });
+  /** @type {Array<[string, Record<string, any>]>} */
+  const categories = [
+    ['explicit code category', { category: 'code' }],
+    ['historical category omission', {}],
+  ];
+  /** @type {Array<[string, Record<string, any>, Record<string, any>, boolean]>} */
+  const cases = [
+    [
+      'a distinct agents-only auditor remains valid',
+      { audit_agent_id: 'auditor' },
+      { audit_agent_id: null },
+      true,
+    ],
+    [
+      'a distinct outcome-only auditor remains valid',
+      { audit_agent_id: null },
+      { audit_agent_id: 'auditor' },
+      true,
+    ],
+    [
+      'a passing audit requires at least one auditor identity',
+      { audit_agent_id: null },
+      { audit_agent_id: null },
+      false,
+    ],
+    [
+      'the agents-only auditor cannot be the implementer',
+      { audit_agent_id: terminal.agents.implementer_agent_id },
+      { audit_agent_id: null },
+      false,
+    ],
+    [
+      'the outcome-only auditor cannot be the implementer',
+      { audit_agent_id: null },
+      { audit_agent_id: terminal.agents.implementer_agent_id },
+      false,
+    ],
+    [
+      'matching dual auditor identities remain valid',
+      { audit_agent_id: 'auditor' },
+      { audit_agent_id: 'auditor' },
+      true,
+    ],
+    [
+      'contradictory dual auditor identities fail closed',
+      { audit_agent_id: 'auditor' },
+      { audit_agent_id: 'different-auditor' },
+      false,
+    ],
+  ];
+
+  for (const [name, agents, audit, accepted] of cases) {
+    await t.test(`${name} for explicit and historical code ledgers`, async () => {
+      const results = await Promise.all(categories.map(async ([categoryName, category]) => ({
+        categoryName,
+        result: await verdictFor({
+          ...terminal,
+          ...category,
+          agents: { ...terminal.agents, ...agents },
+          audit: { ...terminal.audit, ...audit },
+        }),
+      })));
+      const summary = results
+        .map(({ categoryName, result }) => `${categoryName}: ok=${result.ok}\n${result.stderr.join('\n')}`)
+        .join('\n');
+      assert.deepEqual(
+        results.map(({ result }) => (
+          accepted
+            ? result.ok
+            : !result.ok && result.stderr.some((line) => line.includes('[inv2]'))
+        )),
+        [true, true],
+        summary,
+      );
+    });
+  }
+
+  await t.test('the required-audit na placeholder remains valid and vacant for explicit and historical code ledgers', async () => {
+    const results = await Promise.all(categories.map(async ([categoryName, category]) => ({
+      categoryName,
+      result: await verdictFor({
+        ...terminal,
+        ...category,
+        agents: { ...terminal.agents, audit_agent_id: null },
+        audit: {
+          ...terminal.audit,
+          verdict: 'na',
+          audit_agent_id: null,
+          evidence: [],
+        },
+      }),
+    })));
+    assert.deepEqual(
+      results.map(({ result }) => result.ok),
+      [true, true],
+      results
+        .map(({ categoryName, result }) => `${categoryName}: ${result.stderr.join('\n')}`)
+        .join('\n'),
+    );
+  });
+});
+
 test('kickback members fail closed by field while current and historical transitions remain readable', async (t) => {
   await t.test('scalar member', async () => {
     const result = await verdictFor(canonicalTask({ kickbacks: ['invalid'] }));

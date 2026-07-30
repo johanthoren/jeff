@@ -22,5 +22,5 @@ Your job:
 End your final message with exactly one strict JSON object, filled in, followed by nothing:
 
 ```json
-{"agent_id":"<dispatch id>","stage":"verify","cycle":0,"verdict":"pass","postconditions":[{"postcondition":"<postcondition>","ok":true,"evidence":"<evidence>"}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
+{"stage":"verify","cycle":0,"verdict":"pass","postconditions":[{"postcondition":"<postcondition>","ok":true,"evidence":"<evidence>"}],"findings":[],"evidence":[{"command":"<command>","output":"<output>"}]}
 ```
