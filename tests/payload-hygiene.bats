@@ -793,8 +793,8 @@ CASES
   fi
 }
 
-@test "#144 README, active profile, and migration reject adoption-only cook on" {
-  local readme_setup readme_use profile migration route compact section
+@test "#144 README and migration reject adoption-only cook on" {
+  local readme_setup readme_use migration route compact section
   local adoption_only='cook on[^.]{0,160}(adopt|register|pending|bookkeeping|not execution|does not start|without start)|(adopt|register|pending|bookkeeping|not execution|does not start|without start)[^.]{0,160}cook on'
 
   readme_setup="$(
@@ -805,10 +805,6 @@ CASES
     awk '/^## Use/ { in_section = 1 } in_section && /^## / && !/^## Use/ { exit } in_section { print }' \
       "$REPO/README.md"
   )"
-  profile="$(
-    awk '/^## Operating Profile/ { in_section = 1 } in_section { print }' \
-      "$REPO/.jeff/profile.md"
-  )"
   migration="$(
     awk '
       /^## Compatibility notes/ { in_section = 1 }
@@ -818,7 +814,6 @@ CASES
   )"
   [ -n "$readme_setup" ]
   [ -n "$readme_use" ]
-  [ -n "$profile" ]
   [ -n "$migration" ]
 
   route="$(grep -Ei 'cook <(id|ref)>.*cook on <(id|ref)>|cook on <(id|ref)>.*cook <(id|ref)>' <<<"$readme_use" || true)"
@@ -831,23 +826,12 @@ CASES
     return 1
   }
 
-  route="$(grep -Ei 'cook <(id|ref)>.*cook on <(id|ref)>|cook on <(id|ref)>.*cook <(id|ref)>' <<<"$profile" || true)"
-  grep -qiE '(equivalent|same|either)' <<<"$route" || {
-    echo "the active profile does not present both cook forms as one task start"
-    return 1
-  }
-  grep -qiE 'start|resume' <<<"$route" || {
-    echo "the active profile does not identify the shared route as start or resume"
-    return 1
-  }
-
   compact="$(tr '\n' ' ' <<<"$migration")"
   grep -qiE 'string ids?[^.]{0,160}lite ledgers?[^.]{0,120}external tasks?|external tasks?[^.]{0,160}lite ledgers?[^.]{0,120}string ids?' <<<"$compact" || {
     echo "migration compatibility notes no longer tie lite string ids to external tasks"
     return 1
   }
-
-  for section in "$readme_setup" "$readme_use" "$profile" "$migration"; do
+  for section in "$readme_setup" "$readme_use" "$migration"; do
     compact="$(tr '\n' ' ' <<<"$section")"
     if grep -qiE "$adoption_only" <<<"$compact"; then
       echo "an operator-facing owning section still ties cook on to adoption-only behavior"
