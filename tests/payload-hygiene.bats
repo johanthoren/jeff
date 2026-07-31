@@ -649,3 +649,114 @@ EOF
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
+
+# ===========================================================================
+# issue #144: `cook <id>` and `cook on <ref>` share the host start route
+#
+# Seam: the shipped skill is the host router. The checked-JS CLI deliberately
+# has no pipeline starter, so CLI execution cannot prove host orchestration.
+# These assertions bind the payload decisions a consuming host observes, while
+# tests/lite-adopt.bats and tests/gh-issues.bats retain the private pending
+# adoption helper's filesystem, idempotency, and failure coverage.
+# ===========================================================================
+
+@test "#144 host routing sends both task spellings through one start or resume path" {
+  local activation routing shared_row
+  activation="$(
+    awk '
+      /^### Activating jeff/ { in_section = 1 }
+      /^### Request routing/ { if (in_section) exit }
+      in_section { print }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+  routing="$(
+    awk '
+      /^### Request routing/ { in_section = 1 }
+      /^### Lite mode/ { if (in_section) exit }
+      in_section { print }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+
+  if grep -qF -- 'cook on <ref>' <<<"$activation"; then
+    echo "cook on <ref> is still exposed as activation instead of task start"
+    return 1
+  fi
+
+  shared_row="$(grep -E 'cook <(id|ref|taskId)>.*cook on <ref>|cook on <ref>.*cook <(id|ref|taskId)>' <<<"$routing" || true)"
+  [ -n "$shared_row" ] || {
+    echo "request routing does not place cook <id> and cook on <ref> on one route"
+    return 1
+  }
+  grep -qiE 'pipeline|start|resume' <<<"$shared_row" || {
+    echo "the shared route does not start or resume the pipeline"
+    return 1
+  }
+  grep -qiE '(current|recorded)[[:space:]-]*(stage|phase)|(stage|phase)[[:space:]-]*(current|recorded)' <<<"$routing" || {
+    echo "request routing does not preserve the ledger's current stage"
+    return 1
+  }
+}
+
+@test "#144 lite host routing resolves state, wires privately, and fails without partial mutation" {
+  local contract compact pattern message
+  contract="$(
+    cat "$REPO/skills/cook/SKILL.md" "$REPO/skills/cook/reference/lite-mode.md"
+  )"
+  compact="$(tr '\n' ' ' <<<"$contract")"
+
+  while IFS=';' read -r pattern message; do
+    grep -qiE "$pattern" <<<"$compact" || {
+      echo "$message"
+      return 1
+    }
+  done <<'CASES'
+(local (ledger|task)[^.]{0,180}configured[^.]{0,120}(external|plan store|GitHub)|configured[^.]{0,180}(external|plan store|GitHub)[^.]{0,120}local (ledger|task));host routing does not state local-first and configured-external resolution together
+(private|internal)[^.]{0,120}(idempotent|adopt|wiring)|(idempotent|adopt|wiring)[^.]{0,120}(private|internal);adoption is not private idempotent wiring
+(continue|proceed|immediate)[^.]{0,160}(capture|current|recorded)[^.]{0,80}(stage|phase)|(capture|current|recorded)[^.]{0,160}(continue|proceed|immediate);private wiring still stops before the recorded pipeline stage
+(neither|no such|missing (local|task))[^.]{0,220}(partial ledger|external mutation|mutating the external)|(partial ledger|external mutation|mutating the external)[^.]{0,220}(neither|no such|missing (local|task));missing task routing does not promise a mutation-free failure
+CASES
+}
+
+@test "#144 pending adoption remains private while public prose drops adoption-only cook on" {
+  local entry record commands
+  entry="$(
+    awk '
+      /^## Entry/ { in_section = 1 }
+      /^## The loop/ { if (in_section) exit }
+      in_section { print }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+  record="$(grep -F -- '**Record future work:**' <<<"$entry" || true)"
+  [ -n "$record" ] || {
+    echo "Entry no longer defines Record future work"
+    return 1
+  }
+  grep -qiE '(private|internal)[^.]{0,100}(pending[ -]?adoption|adoption)|(pending[ -]?adoption|adoption)[^.]{0,100}(private|internal)' <<<"$record" || {
+    echo "Record future work does not use a private pending-adoption mechanism"
+    return 1
+  }
+  if grep -qF -- 'cook on <ref>' <<<"$record"; then
+    echo "Record future work still presents cook on <ref> as adoption-only control"
+    return 1
+  fi
+
+  commands="$(
+    awk '
+      /^## 8\. Commands/ { in_section = 1 }
+      /^## 9\. Ambient entry/ { if (in_section) exit }
+      in_section { print }
+    ' "$REPO/docs/specs/jeff-design.md"
+  )"
+  if grep -qE '(^|[`,[:space:]])on([`,[:space:]]|$)' <<<"$commands"; then
+    echo "the design still lists on as a public CLI command"
+    return 1
+  fi
+  if grep -qF -- 'Adopting a plan: `cook on`' "$REPO/skills/cook/reference/lite-mode.md"; then
+    echo "the lite reference still defines cook on as an adoption-only terminal"
+    return 1
+  fi
+  if grep -qF -- 'adopted` from by `cook on <ref>`' "$REPO/skills/cook/reference/jeff-state-schema.md"; then
+    echo "the state reference still attributes pending adoption to a public cook on command"
+    return 1
+  fi
+}

@@ -84,21 +84,22 @@ still judge whether the spec and implementation are good.
 
 ## 8. Commands
 
-The checked-JS entry point implements the complete public CLI surface:
+The checked-JS entry point implements the public CLI surface:
 `validate`, `verify`, `record`, `approve`, `baseline check`, `ls`, `status`,
-`show`, `init`, `lite`, `on`, `plan section|check|append`, `indiff`, `deinit`,
-`flavor`, `profile`, `doctor`, and help routing. `cook approve <id> <operator>`
+`show`, `init`, `lite`, `plan section|check|append`, `indiff`, `deinit`,
+`flavor`, `profile`, `doctor`, and help routing. A private adoption dispatch
+remains available only for internal pending-ledger wiring; it is neither an
+operator command nor a pipeline starter. `cook approve <id> <operator>`
 atomically copies the active pending operation request into append-only grant
-history. The header and dispatch in `src/cli/cook.js` are the source of truth
-for the verb set.
+history.
 
 ## 9. Ambient entry
 
 **Activation gate:** the skill engages only in an *active* jeff project (`.jeff/config.json` with `active: true`, set by `cook init`); elsewhere it stands down to the normal host agent under the applicable user, host, and repository instructions. Within an active project, that agent handles ordinary work-intent in the current context under those instructions, not as task creation or specialist dispatch. Addressing Jeff or the Chef and using engineering verbs do not change that route. The Chef can preserve a finding without creating work, record future work as pending, or separately ask to start tracked execution.
 
-Explicit natural-language activation requests use the activation map. The closed request-routing table applies only to typed `cook` invocations and explicit named task/external-ref requests. Its unknown-id catch-all never consumes unstructured conversation.
+Explicit natural-language activation requests use the activation map. The closed request-routing table applies only to typed `cook` invocations and explicit named task/external-ref requests. Its unknown-id catch-all never consumes unstructured conversation. Explicit `cook <id>` and `cook on <ref>` requests share one host-owned start/resume route: a matching local ledger takes precedence and resumes at its recorded current stage.
 
-In lite mode, recording first creates or updates the external item and then uses the existing `cook on <ref>` path to register an idempotent local ledger at pending/capture. This pending adoption does not interrogate the Chef, write a capture breakdown, enter `in_progress`, or dispatch a specialist. A later explicit start begins capture and makes Jeff the thin orchestrator; all tracked-work restrictions then apply. Lite follow-ups are pending-adopted before their ids are recorded, preserving INV-10 without starting execution.
+In active lite mode, only when no local ledger matches may that route resolve the configured external task. It validates the target before mutation, uses private idempotent adoption wiring when a ledger is needed, and continues directly into capture. If neither target exists, it fails before a partial ledger or external mutation. Separately, recording future lite work or a review/audit follow-up creates or updates the external item and invokes the private pending-adoption mechanism to register an idempotent ledger at pending/capture without starting execution, preserving INV-10.
 
 An explicit Remember request is the consent to write durable memory. Full mode keeps durable findings under `.jeff/memory/`. Outside full mode, Jeff prefers a suitable existing Git-tracked memory, decisions, learnings, or handoff file and preserves its purpose and format; local `.jeff/memory/` is the fallback. Without an explicit Remember (or other persistence) request, ordinary Explore work does not write durable memory. `AGENTS.md`, READMEs, and ordinary product documentation are not memory stores.
 

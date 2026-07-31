@@ -1,7 +1,7 @@
 ---
 name: cook
 description: >-
-  Handle engineering work in an active jeff project and drive its tracked task pipeline. Use when the Chef addresses Jeff, mentions jeff/cook, asks to set up, initialize, turn on, deinit, validate, or check status/tasks; runs `cook` or `cook <taskId>`; wants to adopt or work a task; asks to implement/build a plan (not merely read/review it); or describes real engineering work in an active jeff project. Ordinary intent starts Explore and assess→forks before durable writes (ad-hoc ship / record pending / record+start); only an explicit start enters capture→plan→implement→refactor→review→audit→done with fresh specialist contexts, enforced separation, durable evidence, and deterministic gates. Always confirm the task definition with the Chef before locking capture.
+  Handle engineering work in an active jeff project and drive its tracked task pipeline. Use when the Chef addresses Jeff, mentions jeff/cook, asks to set up, initialize, turn on, deinit, validate, or check status/tasks; runs `cook`, `cook <taskId>`, or `cook on <ref>`; wants to start or resume a task; asks to implement/build a plan (not merely read/review it); or describes real engineering work in an active jeff project. Ordinary intent starts Explore and assess→forks before durable writes (ad-hoc ship / record pending / record+start). Explicit task controls route to the pipeline.
 ---
 
 # cook: the orchestration loop
@@ -55,11 +55,10 @@ A request to *set up / turn on / initialize* jeff is an **activation** request, 
 | --- | --- |
 | set up / initialize jeff (full) here | `cook init` |
 | initialize / turn on a **lite** project here | `cook lite` |
-| adopt a team task / plan section / issue (lite) | `cook on <ref>` |
 | create or inspect the lite operating profile | `cook profile` |
 | deactivate jeff in this repo | `cook deinit` |
 
-Confirm once, then run the command. These same verbs are the control verbs in the routing table below.
+Confirm once, then run the command. These same verbs are the activation and CLI control verbs in the routing table below.
 
 **Migrating an existing bakehouse project** (it has a `.bakehouse/` store) to jeff is a directory rename plus a config normalization, with one reconciliation when the source kept resting `done`/`abandoned` tasks. Read `skills/cook/reference/migration.md` and follow it; do not improvise the steps.
 
@@ -72,10 +71,13 @@ Handle explicit natural-language activation requests through the activation map 
 | Request | Path | Action |
 | --- | --- | --- |
 | explicit bare `cook` invocation | pipeline | work the single next *ready* task, then stop |
-| explicit **control verb**: `lite`, `init`, `on <ref>`, `deinit`, `profile` | activation / CLI | run the matching `cook` subcommand (see the activation map above), **not** the pipeline |
+| explicit **control verb**: `lite`, `init`, `deinit`, `profile` | activation / CLI | run the matching `cook` subcommand (see the activation map above), **not** the pipeline |
 | explicit `cook approve <id> <operator>` | approval / CLI | after the Chef grants the active request, record it through the matching host-neutral CLI transition |
-| explicitly named numeric id(s): `1`, `31`, with or **without a leading `#`** | pipeline | work those tasks through `capture → … → done`, in dependency order |
-| unrecognized explicit `cook <arg>` or explicit named task / external ref | pipeline | treat it as a task id; if no such task exists, say so |
+| explicit `cook <id>` or `cook on <ref>` | pipeline | start or resume that named task at its recorded current stage |
+| explicitly named numeric id(s): `1`, `31`, with or **without a leading `#`** | pipeline | start or resume those tasks at each local ledger's recorded current stage, in dependency order |
+| unrecognized explicit `cook <arg>` or explicit named task / external ref | pipeline | treat it as a task id; if no such local or configured external task exists, say so |
+
+Resolve a named request against the local ledger first, matching either `id` or `externalRef`; only when no local ledger exists may an active lite project resolve the configured external task from its plan store. A local match resumes its recorded current stage without external lookup, re-adoption, or restarting capture. For a valid untracked configured-lite target, invoke the existing private idempotent adoption wiring, then continue immediately into the capture stage. If neither the local ledger nor the configured external task exists, report no such task and stop before creating a partial ledger or mutating the external task.
 
 ### Lite mode (shared repos)
 
@@ -83,7 +85,7 @@ Handle explicit natural-language activation requests through the activation map 
 
 **Plain work-intent in a non-activated repo never auto-activates**, neither full nor lite. Describing a bug or a feature in a repo with no active `.jeff/` is **not** an activation request: at most **offer** to set up jeff (full or lite) and wait for the Chef's explicit yes. Default to **full** for the Chef's own repos and **lite** when the repo is shipped/merged by a team you do not control; if it is unclear, ask which one.
 
-Once a project is lite, **read `skills/cook/reference/lite-mode.md`** before working it: it owns the operating profile, `cook on` adoption and capture write-back, the plan-store adapter seam, in-diff refactor, the integration terminal, and the lite done-gate.
+Once a project is lite, **read `skills/cook/reference/lite-mode.md`** before working it: it owns the operating profile, named-task resolution, private adoption wiring and capture write-back, the plan-store adapter seam, in-diff refactor, the integration terminal, and the lite done-gate.
 
 ## Entry
 
@@ -91,7 +93,7 @@ Explicit `cook` invocations and named task/ref requests are governed by the rout
 
 - **Explore:** the normal host agent handles ordinary engineering intent in the current context under the applicable user, host, and repository instructions. Create no task or plan-store item and dispatch no specialist. Addressing Jeff or the Chef, using engineering verbs, or working in an active project does not change this route. **Assess first (read-only / non-mutating).** Pure Q&A, read-only scout, and trivial single-file local tweaks with obvious scope may proceed without an interrupt. Before the **first durable write**, if any pause signal below fires, **stop and fork** (do not edit, scaffold a task, or cut a version first).
 - **Remember:** an explicit Remember request is the consent to write durable memory without creating work. In full mode, write it under `.jeff/memory/`. Outside full mode, prefer a suitable existing Git-tracked memory, decisions, learnings, or handoff file. Preserve that file's purpose and format. If none exists, use local `.jeff/memory/`. Without an explicit Remember (or other persistence) request, ordinary Explore work does not write durable memory. Never use `AGENTS.md`, a README, or ordinary product documentation as a memory dump.
-- **Record future work:** the normal host agent creates or updates a pending item and returns to the current work. A full-mode task rests at `status: "pending"`, `stage: "capture"`. In lite mode, create or update the external item, then use the existing `cook on <ref>` path to register its idempotent local ledger at the same pending/capture state. That pending adoption performs no interrogation, capture breakdown, `in_progress` transition, or specialist dispatch.
+- **Record future work:** the normal host agent creates or updates a pending item and returns to the current work. A full-mode task rests at `status: "pending"`, `stage: "capture"`. In lite mode, create or update the external item, then invoke the existing private pending-adoption mechanism to register its idempotent local ledger at the same pending/capture state. Use the same private mechanism for review or audit follow-ups that must remain pending. Pending adoption performs no interrogation, capture breakdown, `in_progress` transition, or specialist dispatch.
 - **Start tracked work:** only when the Chef separately asks to start the item or confirms a proposal, begin capture on the pending full or lite ledger. Jeff's thin-orchestrator role and every tracked-work restriction then apply. Recording consent and execution consent are distinct.
 
 **Assess→fork (one gate inside Entry, not a fifth route).** After a short assess of ordinary intent, **pause before the first durable write** when any of: method / harness / skill / agent / validator / dispatch change; shipped payload or version / tag cut; multi-file or cross-cutting behavior change; needs crisp acceptance criteria or independent review; or should survive another session. Never pause for attempt counts or pure investigation. When the pause fires, open with the Chef-facing grounder (what + why), then **one** question with these options:
