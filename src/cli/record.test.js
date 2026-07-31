@@ -3017,6 +3017,70 @@ test('parallel refutes cover every blocking finding and settle each stage union 
   }
 });
 
+test('issue 153 refute recording has the same outcome for every completion order', async () => {
+  const blockers = [
+    blockingFinding({ line: 151, kickTo: 'refactor', what: 'The first blocker survives.' }),
+    blockingFinding({ line: 152, what: 'The second blocker is refuted.' }),
+    blockingFinding({ line: 153, what: 'The third blocker survives.' }),
+  ];
+  const refutes = blockers.map((finding, index) => refuteReturn(
+    `refuter-${index}`,
+    finding,
+    index === 1
+      ? { verdict: 'refuted', rationale: 'The boundary rejects this input.' }
+      : {},
+  ));
+  const orders = [
+    [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+  ];
+  const outcomes = [];
+
+  for (const order of orders) {
+    const task = canonicalTask({
+      stage: 'review',
+      agents: {
+        implementer_agent_id: 'implementer',
+        reviewer_agent_id: 'reviewer',
+        reviewer2_agent_id: null,
+        audit_agent_id: null,
+      },
+      tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+      review: {
+        verdict: 'needs-work',
+        reviewer_agent_id: 'reviewer',
+        findings: structuredClone(blockers),
+        evidence: ['review evidence'],
+      },
+    });
+    const { root, taskDir } = await makeRoot(task);
+    try {
+      for (const index of order) {
+        await recordSpecialistReturn(root, 'refute', '18', refutes[index]);
+      }
+      const recorded = await readTask(taskDir);
+      outcomes.push({
+        status: recorded.status,
+        stage: recorded.stage,
+        findings: recorded.review.findings,
+        refutes: [...recorded.refutes].sort((left, right) => left.finding.localeCompare(right.finding)),
+        kickbacks: recorded.kickbacks.map((/** @type {any} */ { from, to, reason }) => ({ from, to, reason })),
+        convergence: recorded.convergence,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  for (const outcome of outcomes.slice(1)) assert.deepEqual(outcome, outcomes[0]);
+  assert.equal(outcomes[0].refutes.length, blockers.length);
+  assert.deepEqual(outcomes[0].kickbacks, [{
+    from: 'review',
+    to: 'implement',
+    reason: 'The first blocker survives.; The third blocker survives.',
+  }]);
+  assert.equal(outcomes[0].convergence.stages.review.blockingKickbacks, 1);
+});
+
 test('issue 72 refutes bind blockers by exact file-line-what identity', async (t) => {
   const short = blockingFinding({ what: 'The recording path loses a result' });
   const long = blockingFinding({ what: 'The recording path loses a result during reassessment.' });

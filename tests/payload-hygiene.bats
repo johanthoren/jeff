@@ -839,3 +839,43 @@ CASES
     fi
   done
 }
+
+# ---------------------------------------------------------------------------
+# task #153: all source-bound refutes fan out concurrently
+#
+# The shipped dispatch skill is the orchestrator contract. This assertion
+# requires the complete rule without pinning its exact sentence.
+# ---------------------------------------------------------------------------
+
+@test "#153 cook dispatches all per-finding refutes concurrently and records any order" {
+  local rule
+  rule="$(awk '/^\*\*Parallel refutes\.\*\*/ { in_rule = 1 } in_rule && /^[[:space:]]*$/ { exit } in_rule { print }' "$REPO/skills/cook/SKILL.md")"
+  [ -n "$rule" ] || {
+    echo "cook SKILL.md has no Parallel refutes rule"
+    return 1
+  }
+  grep -qiE 'all[^.]*refute[^.]*concurrent|concurrent[^.]*all[^.]*refute' <<<"$rule" || {
+    echo "Parallel refutes does not dispatch all refutes concurrently"
+    return 1
+  }
+  grep -qiE 'source[-[:space:]]bound|bound[^.]{0,80}(source|judgment)|tied[^.]{0,80}(source|judgment)' <<<"$rule" || {
+    echo "Parallel refutes does not bind each refute to its judgment source"
+    return 1
+  }
+  grep -qiE 'fresh|new[^.]{0,60}(specialist|context)|(specialist|context)[^.]{0,60}new' <<<"$rule" || {
+    echo "Parallel refutes does not require fresh specialists"
+    return 1
+  }
+  grep -qiE 'blind|unaware[^.]{0,80}(other|remaining)|without[^.]{0,40}(seeing|access|knowledge)[^.]{0,80}(other|remaining)|(brief|show|giv|receiv|expos|access)[[:alpha:]]*[^.]{0,80}(only|exactly)[^.]{0,60}(assigned|its|one)[^.]{0,30}finding' <<<"$rule" || {
+    echo "Parallel refutes does not keep specialists blind to other findings"
+    return 1
+  }
+  grep -qiE 'one[^.]*per[^.]*finding' <<<"$rule" || {
+    echo "Parallel refutes does not preserve one specialist per finding"
+    return 1
+  }
+  grep -qiE '(record|return)[^.]*any order|order[^.]*irrelevant' <<<"$rule" || {
+    echo "Parallel refutes does not make recording order irrelevant"
+    return 1
+  }
+}
