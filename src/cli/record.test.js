@@ -2261,35 +2261,42 @@ test('issue 122 explicit task verification binds the complete gate record to the
       `${JSON.stringify(canonicalTask({ id: 19, slug: 'peer-task', title: 'Peer task' }), null, 2)}\n`,
       'utf8',
     );
-    const peerBefore = await readFile(join(peerTaskDir, 'task.json'), 'utf8');
+    const earlierBefore = await readFile(join(taskDir, 'task.json'), 'utf8');
     runGit(root, ['add', '.']);
     runGit(root, ['commit', '-qm', 'baseline']);
     const gatedHash = runGit(root, ['rev-parse', 'HEAD']);
 
 
-    const result = runCook(root, ['verify', '--task', '18']);
-    const task = await readTask(taskDir);
+    const result = runCook(root, ['verify', '--task', '19']);
+    const selectedTask = await readTask(peerTaskDir);
 
     assert.equal(result.code, 0, result.stderr);
-    assert.equal(task.tests.green, true);
-    assert.deepEqual(task.tests.evidence, [{
-      command: 'true',
-      output: 'cook: verify green (true)',
-    }]);
     assert.deepEqual({
-      hash: task.tests.gate.hash,
-      clean: task.tests.gate.clean,
-      green: task.tests.gate.green,
-      command: task.tests.gate.command,
-      atIsNonempty: typeof task.tests.gate.at === 'string' && task.tests.gate.at.length > 0,
+      selectedGreen: selectedTask.tests.green,
+      selectedEvidence: selectedTask.tests.evidence,
+      selectedGate: selectedTask.tests.gate && {
+        hash: selectedTask.tests.gate.hash,
+        clean: selectedTask.tests.gate.clean,
+        green: selectedTask.tests.gate.green,
+        command: selectedTask.tests.gate.command,
+        atIsNonempty: typeof selectedTask.tests.gate.at === 'string' && selectedTask.tests.gate.at.length > 0,
+      },
+      earlierUnchanged: await readFile(join(taskDir, 'task.json'), 'utf8') === earlierBefore,
     }, {
-      hash: gatedHash,
-      clean: true,
-      green: true,
-      command: 'true',
-      atIsNonempty: true,
+      selectedGreen: true,
+      selectedEvidence: [{
+        command: 'true',
+        output: 'cook: verify green (true)',
+      }],
+      selectedGate: {
+        hash: gatedHash,
+        clean: true,
+        green: true,
+        command: 'true',
+        atIsNonempty: true,
+      },
+      earlierUnchanged: true,
     });
-    assert.equal(await readFile(join(peerTaskDir, 'task.json'), 'utf8'), peerBefore);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
