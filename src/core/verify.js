@@ -129,6 +129,15 @@ export async function runVerify(root, taskId) {
     }
   }
 
+  let hash = '';
+  if (taskId !== undefined) {
+    const head = git(root, ['rev-parse', 'HEAD']);
+    hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
+    if (!hash) {
+      return { code: 1, stdout: [], stderr: ['cook: verify: could not determine the current Git HEAD.'] };
+    }
+  }
+
   const mode = await readMode(root);
   const cmd = await resolveCommand(root, mode);
 
@@ -163,8 +172,6 @@ export async function runVerify(root, taskId) {
   if (mode !== 'lite') logTestRun(root, cmd, rc === 0 ? 'green' : 'red');
 
   if (taskId !== undefined) {
-    const head = git(root, ['rev-parse', 'HEAD']);
-    const hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
     const clean = !treeDirty(root);
     const output = verdict.stdout[0] ?? verdict.stderr[0];
     try {
