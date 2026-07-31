@@ -213,7 +213,7 @@ canonical writers include both.
 
 The lite **run-ledger** is the `task.json` shape above minus the registry-only obligations: `id` may be a string.
 
-- `externalRef` (string, lite only): the plan location a ledger was **adopted** from by `cook on <ref>`: a markdown plan ref (`docs/plans/foo.md`, `PLAN.md`, or `PLAN.md#anchor`), and in later adapters a tracker ref. On adoption `id` is set to this same ref. It is the **idempotency key**: re-running `cook on <ref>` resumes the ledger whose `externalRef` matches rather than creating a second one. Absent on registry (full-mode) tasks.
+- `externalRef` (string, lite only): the plan location connected to a ledger by lite's private adoption wiring: a markdown plan ref (`docs/plans/foo.md`, `PLAN.md`, or `PLAN.md#anchor`), and in later adapters a tracker ref. The writer sets `id` to this same ref. It is the **idempotency key**: named-task routing first resumes the local ledger whose `id` or `externalRef` matches rather than creating a second one. Absent on registry (full-mode) tasks.
 
 ## Dropped from the old schema
 

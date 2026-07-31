@@ -649,3 +649,193 @@ EOF
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
+
+# ===========================================================================
+# issue #144: `cook <id>` and `cook on <ref>` share the host start route
+#
+# Seam: the shipped skill is the host router. The checked-JS CLI deliberately
+# has no pipeline starter, so CLI execution cannot prove host orchestration.
+# These assertions bind the payload decisions a consuming host observes, while
+# tests/lite-adopt.bats and tests/gh-issues.bats retain the private pending
+# adoption helper's filesystem, idempotency, and failure coverage.
+# ===========================================================================
+
+@test "#144 host routing sends both task spellings through one start or resume path" {
+  local activation routing shared_row
+  activation="$(
+    awk '
+      /^### Activating jeff/ { in_section = 1 }
+      /^### Request routing/ { if (in_section) exit }
+      in_section { print }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+  routing="$(
+    awk '
+      /^### Request routing/ { in_section = 1 }
+      /^### Lite mode/ { if (in_section) exit }
+      in_section { print }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+
+  if grep -qF -- 'cook on <ref>' <<<"$activation"; then
+    echo "cook on <ref> is still exposed as activation instead of task start"
+    return 1
+  fi
+  if grep -qiE 'adoptPlan|checked[- ]JS[^.]{0,120}on|on[^.]{0,120}adopt' <<<"$activation"; then
+    echo "the private adoption invocation is exposed in activation"
+    return 1
+  fi
+
+  shared_row="$(grep -E 'cook <(id|ref|taskId)>.*cook on <ref>|cook on <ref>.*cook <(id|ref|taskId)>' <<<"$routing" || true)"
+  [ -n "$shared_row" ] || {
+    echo "request routing does not place cook <id> and cook on <ref> on one route"
+    return 1
+  }
+  grep -qiE 'pipeline|start|resume' <<<"$shared_row" || {
+    echo "the shared route does not start or resume the pipeline"
+    return 1
+  }
+  if grep -qiE 'adopt|register|wiring|private|internal|checked[- ]JS|pending[ -]?only' <<<"$shared_row"; then
+    echo "the Chef-facing shared route still presents cook on as adoption-only wiring"
+    return 1
+  fi
+  grep -qiE '(current|recorded)[[:space:]-]*(stage|phase)|(stage|phase)[[:space:]-]*(current|recorded)' <<<"$routing" || {
+    echo "request routing does not preserve the ledger's current stage"
+    return 1
+  }
+}
+
+@test "#144 lite host routing names its private adoption seam and preserves outcomes" {
+  local section compact seam
+  section="$(
+    awk '
+      /^## Named-task start \+ capture-augments \(lite\)/ { in_section = 1 }
+      in_section && /^## / && !/^## Named-task start \+ capture-augments \(lite\)/ { exit }
+      in_section { print }
+    ' "$REPO/skills/cook/reference/lite-mode.md"
+  )"
+  [ -n "$section" ]
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  while IFS=';' read -r pattern message; do
+    grep -qiE "$pattern" <<<"$compact" || {
+      echo "$message"
+      return 1
+    }
+  done <<'CASES'
+(local (ledger|task)[^.]{0,180}configured[^.]{0,120}(external|plan store|GitHub)|configured[^.]{0,180}(external|plan store|GitHub)[^.]{0,120}local (ledger|task));lite routing does not state local-first and configured-external resolution together
+(private|internal)[^.]{0,120}(idempotent|adopt|wiring)|(idempotent|adopt|wiring)[^.]{0,120}(private|internal);adoption is not private idempotent wiring
+(continue|proceed|immediate)[^.]{0,160}(capture|(current|recorded)[[:space:]-]*(stage|phase))|(capture|(current|recorded)[[:space:]-]*(stage|phase))[^.]{0,160}(continue|proceed|immediate);private wiring still stops before the recorded pipeline stage
+(neither|no such|missing (local|task))[^.]{0,220}(partial ledger|external mutation|mutating the external)|(partial ledger|external mutation|mutating the external)[^.]{0,220}(neither|no such|missing (local|task));missing task routing does not promise a mutation-free failure
+CASES
+
+  seam="$(
+    awk '
+      BEGIN { RS = ""; ORS = "\n\n" }
+      {
+        paragraph = tolower($0)
+        names_private = paragraph ~ /(private|internal)/
+        names_callable = paragraph ~ /adoptplan/ ||
+          (paragraph ~ /checked[- ]js/ &&
+           paragraph ~ /(^|[^[:alnum:]_])on([^[:alnum:]_]|$)/)
+        names_invocation = paragraph ~ /(invoke|call|dispatch|run)/
+        if (names_private && names_callable && names_invocation) print
+      }
+    ' <<<"$section"
+  )"
+  [ -n "$seam" ] || {
+    echo "lite routing does not name a callable private checked-JS on/adoptPlan seam"
+    return 1
+  }
+}
+
+@test "#144 pending adoption remains private while public prose drops adoption-only cook on" {
+  local entry record commands
+  entry="$(
+    awk '
+      /^## Entry/ { in_section = 1 }
+      /^## The loop/ { if (in_section) exit }
+      in_section { print }
+    ' "$REPO/skills/cook/SKILL.md"
+  )"
+  record="$(grep -F -- '**Record future work:**' <<<"$entry" || true)"
+  [ -n "$record" ] || {
+    echo "Entry no longer defines Record future work"
+    return 1
+  }
+  grep -qiE '(private|internal)[^.]{0,100}(pending[ -]?adoption|adoption)|(pending[ -]?adoption|adoption)[^.]{0,100}(private|internal)' <<<"$record" || {
+    echo "Record future work does not use a private pending-adoption mechanism"
+    return 1
+  }
+  if grep -qiE 'cook on|adoptPlan|checked[- ]JS' <<<"$record"; then
+    echo "Record future work still presents cook on <ref> as adoption-only control"
+    return 1
+  fi
+
+  commands="$(
+    awk '
+      /^## 8\. Commands/ { in_section = 1 }
+      /^## 9\. Ambient entry/ { if (in_section) exit }
+      in_section { print }
+    ' "$REPO/docs/specs/jeff-design.md"
+  )"
+  if grep -qE '(^|[`,[:space:]])on([`,[:space:]]|$)' <<<"$commands"; then
+    echo "the design still lists on as a public CLI command"
+    return 1
+  fi
+  if grep -qF -- 'Adopting a plan: `cook on`' "$REPO/skills/cook/reference/lite-mode.md"; then
+    echo "the lite reference still defines cook on as an adoption-only terminal"
+    return 1
+  fi
+  if grep -qF -- 'adopted` from by `cook on <ref>`' "$REPO/skills/cook/reference/jeff-state-schema.md"; then
+    echo "the state reference still attributes pending adoption to a public cook on command"
+    return 1
+  fi
+}
+
+@test "#144 README and migration reject adoption-only cook on" {
+  local readme_setup readme_use migration route compact section
+  local adoption_only='cook on[^.]{0,160}(adopt|register|pending|bookkeeping|not execution|does not start|without start)|(adopt|register|pending|bookkeeping|not execution|does not start|without start)[^.]{0,160}cook on'
+
+  readme_setup="$(
+    awk '/^## Set up/ { in_section = 1 } /^## Use/ { if (in_section) exit } in_section { print }' \
+      "$REPO/README.md"
+  )"
+  readme_use="$(
+    awk '/^## Use/ { in_section = 1 } in_section && /^## / && !/^## Use/ { exit } in_section { print }' \
+      "$REPO/README.md"
+  )"
+  migration="$(
+    awk '
+      /^## Compatibility notes/ { in_section = 1 }
+      in_section && /^## / && !/^## Compatibility notes/ { exit }
+      in_section { print }
+    ' "$REPO/skills/cook/reference/migration.md"
+  )"
+  [ -n "$readme_setup" ]
+  [ -n "$readme_use" ]
+  [ -n "$migration" ]
+
+  route="$(grep -Ei 'cook <(id|ref)>.*cook on <(id|ref)>|cook on <(id|ref)>.*cook <(id|ref)>' <<<"$readme_use" || true)"
+  grep -qiE '(equivalent|same|either)' <<<"$route" || {
+    echo "README Use does not present both cook forms as the same start route"
+    return 1
+  }
+  grep -qiE 'start|resume' <<<"$route" || {
+    echo "README Use does not identify the shared route as start or resume"
+    return 1
+  }
+
+  compact="$(tr '\n' ' ' <<<"$migration")"
+  grep -qiE 'string ids?[^.]{0,160}lite ledgers?[^.]{0,120}external tasks?|external tasks?[^.]{0,160}lite ledgers?[^.]{0,120}string ids?' <<<"$compact" || {
+    echo "migration compatibility notes no longer tie lite string ids to external tasks"
+    return 1
+  }
+  for section in "$readme_setup" "$readme_use" "$migration"; do
+    compact="$(tr '\n' ' ' <<<"$section")"
+    if grep -qiE "$adoption_only" <<<"$compact"; then
+      echo "an operator-facing owning section still ties cook on to adoption-only behavior"
+      return 1
+    fi
+  done
+}

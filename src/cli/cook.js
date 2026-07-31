@@ -77,7 +77,6 @@ function usageReport() {
       '  show <id>    Print one task ledger.',
       '  init         Activate Jeff and scaffold .jeff/.',
       '  lite         Activate lite mode and locally Git-exclude .jeff/.',
-      '  on <ref>     Adopt a markdown plan or GitHub issue in lite mode.',
       '  plan <sub>   Read or update a markdown plan or GitHub issue.',
       '  indiff <base-ref> <pre-ref>  Bound refactor changes to the implement diff.',
       '  deinit       Mark Jeff inactive while preserving task state.',

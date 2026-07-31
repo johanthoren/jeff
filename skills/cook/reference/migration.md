@@ -230,5 +230,5 @@ cross-order constraint is each order's `dependsOn`, preserved as `deps`.
   status/stage/priority enums match. No per-task edits are needed.
 - `test-runs.jsonl` uses the same `{hash, dirty, result, suite, at}` line shape
   jeff writes, so `cook verify` / `cook baseline check` read it directly.
-- Numeric ids carry over as-is (full mode wants integer ids). String ids only
-  appear in lite ledgers adopted via `cook on`.
+- Numeric ids carry over as-is (full mode wants integer ids). String ids appear
+  only in lite ledgers keyed to external tasks.

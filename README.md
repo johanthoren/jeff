@@ -171,8 +171,9 @@ Activate Jeff per repo, once. Two modes:
   (`cook init`.)
 - **Lite:** a shared or public repo whose work already lives elsewhere, in
   GitHub issues or a plan file. "Jeff, set up lite here." The registry stays
-  local and git-excluded; your tracker owns the work. Adopt an issue with
-  "Jeff, work issue #42." (`cook lite`, then `cook on #42`.)
+  local and git-excluded; your tracker owns the work. Start an issue with
+  "Jeff, work issue #42." (`cook lite`, then either `cook #42` or
+  `cook on #42`; lookup and local ledger wiring are automatic.)
 
 ## Use
 
@@ -183,11 +184,11 @@ deserves durability:
 
 - **Explore:** keep quick, reversible work in the current context.
 - **Remember:** an explicit Remember request is the consent to write durable memory without creating work. Full mode uses `.jeff/memory/`; elsewhere Jeff prefers a suitable existing tracked memory, decisions, learnings, or handoff file and preserves its purpose and format, then falls back to local `.jeff/memory/`. Without an explicit Remember (or other persistence) request, ordinary Explore work does not write durable memory. Never use `AGENTS.md`, a README, or ordinary product documentation as a memory dump.
-- **Record:** create pending future work without starting it. In lite mode, the
-  external item is also registered as an idempotent local pending ledger; this
-  is adoption for bookkeeping, not execution.
-- **Start:** explicitly ask Jeff to begin capture on a recorded item and run it
-  through the pipeline.
+- **Record:** create pending future work without starting it. In lite mode, Jeff
+  also registers the external item as an idempotent local pending ledger. This
+  internal bookkeeping does not start execution.
+- **Start:** explicitly ask Jeff to begin or resume a recorded item and run it
+  through the pipeline. `cook <id>` and `cook on <id>` are equivalent start forms.
 
 Jeff suggests tracking only when a meaningful obligation emerges, and explains
 what to track, why structure helps, and how to record or start it. Recording and
