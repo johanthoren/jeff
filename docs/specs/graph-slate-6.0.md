@@ -44,8 +44,16 @@ Toolchain prerequisites: a POSIX system with git, Node.js ≥ 22.19, and `bats`
   failing tests first (RED proven), a separate implementer makes them green,
   independent review, audit where flagged. One branch and one PR per item to
   `main`. **Johan approves every merge; never merge or push `main` yourself.**
-- Do not bump the version mid-slate. When item 7 lands, a final release task
-  cuts **6.0.0** in one consolidated major (see §Release).
+- Each item carries its matching prerelease version in lockstep metadata:
+  item 1 is `6.0.0-alpha.1`, item 2 is `6.0.0-alpha.2`, item 3 is
+  `6.0.0-alpha.3`, item 4 is `6.0.0-alpha.4`, item 5 is
+  `6.0.0-alpha.5`, item 6 is `6.0.0-alpha.6`, and item 7 is
+  `6.0.0-alpha.7`. After Johan approves and merges each item, a separate
+  operation task with exact operator approval creates that alpha's immutable
+  bare tag, publishes it to npm `next`, and then refreshes the dogfood installs
+  on Pi, OMP, Claude Code, and Codex. npm `latest` remains stable `5.0.0`.
+  After `6.0.0-alpha.7` dogfoods at least one real drain, a separately approved
+  task cuts plain `6.0.0` (see §Release).
 - Before touching anything, read: `AGENTS.md` (iron rules),
   `docs/maintaining-jeff.md`, `docs/specs/jeff-design.md`,
   `skills/cook/reference/jeff-state-schema.md`, `skills/cook/SKILL.md`.
@@ -596,12 +604,20 @@ Audit: **required** (git operations, filesystem, concurrency).
 
 ## Release: 6.0.0
 
-After item 7 lands and has dogfooded at least one real drain in this repo:
+Each item carries its matching prerelease version in lockstep metadata: item 1
+is `6.0.0-alpha.1`, item 2 is `6.0.0-alpha.2`, item 3 is `6.0.0-alpha.3`, item
+4 is `6.0.0-alpha.4`, item 5 is `6.0.0-alpha.5`, item 6 is `6.0.0-alpha.6`, and
+item 7 is `6.0.0-alpha.7`.
 
-- One release task cuts **6.0.0**: consolidated notes covering all seven items
-  (the semantic changes in items 4 and 5 are the majority-defining behavior
-  changes), `package.json` bump, bare tag `6.0.0` (no `v` prefix), publish per
-  the existing release process (`make release-check`, `docs/maintaining-jeff.md`
-  owns the cut ceremony; the version cut itself is Johan's call to approve).
-- Until then, `main` carries the slate unreleased: this repo dogfoods `main`;
-  every other project stays on released 5.0.0.
+- After Johan approves and merges each item, a separate operation task with
+  exact operator approval creates that alpha's immutable bare tag (no `v`
+  prefix), publishes it through the existing release process to npm `next`,
+  and then refreshes the dogfood installs on Pi, OMP, Claude Code, and Codex.
+  Never move or reuse an alpha tag or version. npm `latest` remains stable
+  `5.0.0` throughout the alpha track.
+- After `6.0.0-alpha.7` dogfoods at least one real drain in this repo, a
+  separately approved release task cuts plain **6.0.0**: consolidated notes
+  covering all seven items (the semantic changes in items 4 and 5 are the
+  majority-defining behavior changes), `package.json` bump, bare tag `6.0.0`
+  (no `v` prefix), and publish per the existing release process
+  (`make release-check`; the version cut itself is Johan's call to approve).

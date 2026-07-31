@@ -144,6 +144,8 @@ Every specialist inherits the orchestrator provider/model unchanged. Per-stage e
 
 **Parallel judgments.** After a code checkpoint, dispatch review and required audit concurrently. After operation execution, dispatch verify and required audit concurrently. Either return may be recorded first; completion waits for every required judgment.
 
+**Parallel refutes.** When more than one blocking finding remains, dispatch all source-bound refute specialists concurrently: one fresh specialist per finding, each blind to the others. Returns may be recorded in any order.
+
 **Audit floor.** For code, run the security scanner over the diff before review/audit. For an operation, raise `audit.required` when the plan or mechanical risk floor includes destructive filesystem or Git work, path resolution, release/external state, credentials, or another security-sensitive boundary. The plan's audit call is a floor, never a ceiling.
 
 **Dual review on complex tasks.** When `complexity` is `complex`, dispatch **two** review specialists concurrently (both `cook-review`, distinct agent ids), decorrelated by brief emphasis: one weighted toward correctness-vs-acceptance-criteria and test integrity, the other toward standards, simplification, and boundary safety. **Pass requires both to pass; the blocking set is the union of both reviews** (dedupe identical findings, keeping the stricter class). Record both ids (`agents.reviewer_agent_id`, `agents.reviewer2_agent_id`); each must be distinct from the implementer. Simple tasks dispatch one reviewer, unchanged.
