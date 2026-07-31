@@ -250,6 +250,24 @@ clean_tree() {
   [ ! -f "$sentinel" ]
 }
 
+@test "issue 122: bare verify refuses tracked work before running the suite" {
+  local sentinel="$TMP/tracked-suite-ran"
+  local task_dir="$BK/tasks/lite-122-verify-gate"
+  write_full_config_with_cmd "printf ran > '$sentinel'"
+  mkdir -p "$task_dir"
+  jq -n '{schemaVersion:1, category:"code", id:"#122", status:"in_progress"}' \
+    > "$task_dir/task.json"
+
+  run cook verify
+
+  if [ -f "$sentinel" ]; then
+    echo "configured suite ran before tracked-work refusal" >&2
+    return 1
+  fi
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cook verify --task <id>"* ]]
+}
+
 @test "verify/worktree AC1: configured suites keep their exact status in a linked worktree" {
   make_linked_worktree
   mkdir -p "$LINKED_ROOT/.jeff"

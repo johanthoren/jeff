@@ -65,6 +65,8 @@ test('help and no-argument routing share the successful Node CLI destination', (
   assert.equal(noArguments.stdout, help.stdout);
   assert.equal(shortHelp.stdout, help.stdout);
   assert.equal(longHelp.stdout, help.stdout);
+  assert.match(help.stdout, /cook verify --task <id>/);
+  assert.match(help.stdout, /standalone baseline/i);
 });
 
 test('shipped operational surfaces route to Node with no live cook.sh reference', async () => {

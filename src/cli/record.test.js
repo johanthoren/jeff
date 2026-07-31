@@ -2223,19 +2223,63 @@ test('issue 70 record accepts a terminal review at the current clean verified HE
   }
 });
 
-test('issue 70 terminal recording requires a present verification gate atomically', async () => {
-  const { root, taskDir } = await makeRoot(terminalReviewTask());
-  try {
-    const task = await readTask(taskDir);
-    delete task.tests.gate;
-    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
-    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+test('issue 70 terminal recording rejects absent and null verification gates atomically', async (t) => {
+  for (const gateState of ['absent', 'null']) {
+    await t.test(gateState, async () => {
+      const { root, taskDir } = await makeRoot(terminalReviewTask());
+      try {
+        const task = await readTask(taskDir);
+        if (gateState === 'absent') delete task.tests.gate;
+        else task.tests.gate = null;
+        await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
-    await assert.rejects(
-      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer')),
-      /\[record-transition\]/,
-    );
-    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+        await assert.rejects(
+          recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer')),
+          /\[record-transition\]/,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 122 explicit task verification binds the complete gate record to the named task', async () => {
+  const { root, taskDir } = await makeRoot();
+  try {
+    await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+    runGit(root, ['init', '-q']);
+    runGit(root, ['config', 'user.email', 'tests@example.com']);
+    runGit(root, ['config', 'user.name', 'Tests']);
+    runGit(root, ['config', 'commit.gpgsign', 'false']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'baseline']);
+    const gatedHash = runGit(root, ['rev-parse', 'HEAD']);
+
+    const result = runCook(root, ['verify', '--task', '18']);
+    const task = await readTask(taskDir);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(task.tests.green, true);
+    assert.deepEqual(task.tests.evidence, [{
+      command: 'true',
+      output: 'cook: verify green (true)',
+    }]);
+    assert.deepEqual({
+      hash: task.tests.gate.hash,
+      clean: task.tests.gate.clean,
+      green: task.tests.gate.green,
+      command: task.tests.gate.command,
+      atIsNonempty: typeof task.tests.gate.at === 'string' && task.tests.gate.at.length > 0,
+    }, {
+      hash: gatedHash,
+      clean: true,
+      green: true,
+      command: 'true',
+      atIsNonempty: true,
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
