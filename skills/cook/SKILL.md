@@ -201,7 +201,7 @@ The independent counters are `review`/`audit` for code and `verify`/`audit` for 
 
 Code tasks keep the existing test protocol:
 - Plan, implement, and refactor run targeted tests only.
-- Jeff runs the full suite exactly once per final code checkpoint through `cook verify`; only that run sets `tests.green`, `tests.evidence`, and `tests.gate`.
+- Jeff runs the full suite exactly once per final code checkpoint through `cook verify --task <id>`; only that binding form sets `tests.green`, `tests.evidence`, and `tests.gate`. Bare `cook verify` is a standalone baseline run and is refused while any task is in progress.
 - On RED, Jeff routes to the responsible code stage and never fixes it.
 - Review and required audit run concurrently after the checkpoint.
 

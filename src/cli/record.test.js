@@ -2223,19 +2223,103 @@ test('issue 70 record accepts a terminal review at the current clean verified HE
   }
 });
 
-test('issue 70 terminal recording requires a present verification gate atomically', async () => {
-  const { root, taskDir } = await makeRoot(terminalReviewTask());
+test('issue 70 terminal recording rejects absent and null verification gates atomically', async (t) => {
+  for (const gateState of ['absent', 'null']) {
+    await t.test(gateState, async () => {
+      const { root, taskDir } = await makeRoot(terminalReviewTask());
+      try {
+        const task = await readTask(taskDir);
+        if (gateState === 'absent') delete task.tests.gate;
+        else task.tests.gate = null;
+        await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+        await assert.rejects(
+          recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer')),
+          /\[record-transition\]/,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 122 explicit task verification binds the complete gate record to the named task', async () => {
+  const { root, taskDir } = await makeRoot();
   try {
-    const task = await readTask(taskDir);
-    delete task.tests.gate;
-    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+    await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+    runGit(root, ['init', '-q']);
+    runGit(root, ['config', 'user.email', 'tests@example.com']);
+    runGit(root, ['config', 'user.name', 'Tests']);
+    runGit(root, ['config', 'commit.gpgsign', 'false']);
+    const peerTaskDir = join(root, '.jeff', 'tasks', '019-peer-task');
+    await mkdir(peerTaskDir, { recursive: true });
+    await writeFile(
+      join(peerTaskDir, 'task.json'),
+      `${JSON.stringify(canonicalTask({ id: 19, slug: 'peer-task', title: 'Peer task' }), null, 2)}\n`,
+      'utf8',
+    );
+    const earlierBefore = await readFile(join(taskDir, 'task.json'), 'utf8');
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'baseline']);
+    const gatedHash = runGit(root, ['rev-parse', 'HEAD']);
+
+
+    const result = runCook(root, ['verify', '--task', '19']);
+    const selectedTask = await readTask(peerTaskDir);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual({
+      selectedGreen: selectedTask.tests.green,
+      selectedEvidence: selectedTask.tests.evidence,
+      selectedGate: selectedTask.tests.gate && {
+        hash: selectedTask.tests.gate.hash,
+        clean: selectedTask.tests.gate.clean,
+        green: selectedTask.tests.gate.green,
+        command: selectedTask.tests.gate.command,
+        atIsNonempty: typeof selectedTask.tests.gate.at === 'string' && selectedTask.tests.gate.at.length > 0,
+      },
+      earlierUnchanged: await readFile(join(taskDir, 'task.json'), 'utf8') === earlierBefore,
+    }, {
+      selectedGreen: true,
+      selectedEvidence: [{
+        command: 'true',
+        output: 'cook: verify green (true)',
+      }],
+      selectedGate: {
+        hash: gatedHash,
+        clean: true,
+        green: true,
+        command: 'true',
+        atIsNonempty: true,
+      },
+      earlierUnchanged: true,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 122 explicit task verification fails atomically when Git has no HEAD', async () => {
+  const { root, taskDir } = await makeRoot();
+  try {
+    await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+    runGit(root, ['init', '-q']);
+    await writeFile(join(root, '.git', 'info', 'exclude'), '.jeff/\n', 'utf8');
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
-    await assert.rejects(
-      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer')),
-      /\[record-transition\]/,
-    );
-    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    const result = runCook(root, ['verify', '--task', '18']);
+    const after = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    assert.deepEqual({
+      exitedNonzero: result.code !== 0,
+      ledgerUnchanged: after === before,
+    }, {
+      exitedNonzero: true,
+      ledgerUnchanged: true,
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -3,7 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync, lstatSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { readProfile, readMode, readConfig } from './store.js';
+import { collectTasks, readProfile, readMode, readConfig } from './store.js';
 import { git, treeDirty, testRunsLogPath } from './git.js';
 import { updateTask } from './record.js';
 
@@ -117,6 +117,27 @@ function logTestRun(root, cmd, result) {
  * @returns {Promise<Verdict>}
  */
 export async function runVerify(root, taskId) {
+  if (taskId === undefined) {
+    let tasks;
+    try {
+      tasks = await collectTasks(root);
+    } catch {
+      return { code: 1, stdout: [], stderr: ['cook: verify: could not read the task store; refusing standalone verification.'] };
+    }
+    if (tasks.some((task) => task.status === 'in_progress')) {
+      return { code: 1, stdout: [], stderr: ['cook: tracked work is in progress; run `cook verify --task <id>` to bind the gate.'] };
+    }
+  }
+
+  let hash = '';
+  if (taskId !== undefined) {
+    const head = git(root, ['rev-parse', 'HEAD']);
+    hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
+    if (!hash) {
+      return { code: 1, stdout: [], stderr: ['cook: verify: could not determine the current Git HEAD.'] };
+    }
+  }
+
   const mode = await readMode(root);
   const cmd = await resolveCommand(root, mode);
 
@@ -151,8 +172,6 @@ export async function runVerify(root, taskId) {
   if (mode !== 'lite') logTestRun(root, cmd, rc === 0 ? 'green' : 'red');
 
   if (taskId !== undefined) {
-    const head = git(root, ['rev-parse', 'HEAD']);
-    const hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
     const clean = !treeDirty(root);
     const output = verdict.stdout[0] ?? verdict.stderr[0];
     try {
