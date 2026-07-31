@@ -120,9 +120,9 @@ count_ledgers() {
 @test "#144 CLI help does not expose pending adoption as an operator command" {
   run cook help
   [ "$status" -eq 0 ]
-  run grep -c "^  on " <<< "$output"
+  run grep -Ei '(^  on([[:space:]]|$)|adopt(plan|ion|ing|ed)?|pending[ -]?adoption)' <<<"$output"
   [ "$status" -ne 0 ]
-  [ "$output" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "adopt/flat-file: cook on docs/plans/foo.md creates ledger in lite mode" {
