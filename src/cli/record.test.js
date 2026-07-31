@@ -2254,9 +2254,18 @@ test('issue 122 explicit task verification binds the complete gate record to the
     runGit(root, ['config', 'user.email', 'tests@example.com']);
     runGit(root, ['config', 'user.name', 'Tests']);
     runGit(root, ['config', 'commit.gpgsign', 'false']);
+    const peerTaskDir = join(root, '.jeff', 'tasks', '019-peer-task');
+    await mkdir(peerTaskDir, { recursive: true });
+    await writeFile(
+      join(peerTaskDir, 'task.json'),
+      `${JSON.stringify(canonicalTask({ id: 19, slug: 'peer-task', title: 'Peer task' }), null, 2)}\n`,
+      'utf8',
+    );
+    const peerBefore = await readFile(join(peerTaskDir, 'task.json'), 'utf8');
     runGit(root, ['add', '.']);
     runGit(root, ['commit', '-qm', 'baseline']);
     const gatedHash = runGit(root, ['rev-parse', 'HEAD']);
+
 
     const result = runCook(root, ['verify', '--task', '18']);
     const task = await readTask(taskDir);
@@ -2279,6 +2288,30 @@ test('issue 122 explicit task verification binds the complete gate record to the
       green: true,
       command: 'true',
       atIsNonempty: true,
+    });
+    assert.equal(await readFile(join(peerTaskDir, 'task.json'), 'utf8'), peerBefore);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 122 explicit task verification fails atomically when Git has no HEAD', async () => {
+  const { root, taskDir } = await makeRoot();
+  try {
+    await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+    runGit(root, ['init', '-q']);
+    await writeFile(join(root, '.git', 'info', 'exclude'), '.jeff/\n', 'utf8');
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    const result = runCook(root, ['verify', '--task', '18']);
+    const after = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    assert.deepEqual({
+      exitedNonzero: result.code !== 0,
+      ledgerUnchanged: after === before,
+    }, {
+      exitedNonzero: true,
+      ledgerUnchanged: true,
     });
   } finally {
     await rm(root, { recursive: true, force: true });
