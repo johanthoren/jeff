@@ -68,7 +68,7 @@ function usageReport() {
       '',
       'Subcommands:',
       '  validate     Check .jeff state against the schema and invariants.',
-      '  verify       Run the configured full-suite gate.',
+      '  verify       Run a standalone baseline; use `cook verify --task <id>` to bind a task gate.',
       '  record       Record a specialist or council result.',
       '  approve <id> <operator>  Grant the exact pending operation request.',
       '  baseline check [<hash>]  Check the green, clean baseline log.',

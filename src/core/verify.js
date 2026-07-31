@@ -3,7 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, appendFileSync, lstatSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
-import { readProfile, readMode, readConfig } from './store.js';
+import { collectTasks, readProfile, readMode, readConfig } from './store.js';
 import { git, treeDirty, testRunsLogPath } from './git.js';
 import { updateTask } from './record.js';
 
@@ -117,6 +117,18 @@ function logTestRun(root, cmd, result) {
  * @returns {Promise<Verdict>}
  */
 export async function runVerify(root, taskId) {
+  if (taskId === undefined) {
+    let tasks;
+    try {
+      tasks = await collectTasks(root);
+    } catch {
+      return { code: 1, stdout: [], stderr: ['cook: verify: could not read the task store; refusing standalone verification.'] };
+    }
+    if (tasks.some((task) => task.status === 'in_progress')) {
+      return { code: 1, stdout: [], stderr: ['cook: tracked work is in progress; run `cook verify --task <id>` to bind the gate.'] };
+    }
+  }
+
   const mode = await readMode(root);
   const cmd = await resolveCommand(root, mode);
 
