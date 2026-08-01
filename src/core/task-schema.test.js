@@ -2805,3 +2805,22 @@ test('convergence INV-7 through INV-11 are enforced by the authoritative core', 
     });
   }
 });
+
+test('Item 3 pipelineVersion accepts legacy absence and a nonempty version, and rejects invalid values', async (t) => {
+  await t.test('legacy absence remains valid', async () => {
+    const result = await verdictFor(canonicalTask());
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  await t.test('nonempty string is valid', async () => {
+    const result = await verdictFor(canonicalTask({ pipelineVersion: '6.0.0-alpha.2' }));
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  for (const pipelineVersion of ['', 0, null]) {
+    await t.test(`rejects ${JSON.stringify(pipelineVersion)}`, async () => {
+      const result = await verdictFor(canonicalTask({ pipelineVersion }));
+      assertNamedFailure(result, 'pipelineVersion');
+    });
+  }
+});

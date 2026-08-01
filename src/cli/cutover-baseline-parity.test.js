@@ -136,6 +136,7 @@ test('on preserves baseline argument, mode, ref, adoption, and resume behavior',
     delete expected.updatedAt;
     delete actual.createdAt;
     delete actual.updatedAt;
+    delete actual.pipelineVersion;
     assert.deepEqual(actual, expected);
   });
 });

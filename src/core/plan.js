@@ -656,10 +656,19 @@ export async function adoptPlan(root, ...args) {
     const fetched = ghFetchBody(ref);
     if (typeof fetched !== 'string') return fetched;
   }
+  let pipelineVersion;
+  try {
+    const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+    if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) throw new Error();
+    pipelineVersion = packageJson.version;
+  } catch {
+    return die('cook on: could not read the pipeline version.');
+  }
 
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const task = {
     schemaVersion: 1,
+    pipelineVersion,
     id: ref,
     externalRef: ref,
     slug: 'lite-adopt',

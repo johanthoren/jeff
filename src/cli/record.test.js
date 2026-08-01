@@ -2,11 +2,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as recordCore from '../core/record.js';
 import { runVerify } from '../core/verify.js';
 
@@ -4032,4 +4032,251 @@ test('recording against abandoned lock state returns a bounded named outcome wit
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+/** @param {string} root @param {string[]} args */
+function runCookAsync(root, args) {
+  return new Promise((resolveRun) => {
+    const child = spawn(process.execPath, [COOK_JS, ...args], {
+      env: { ...process.env, COOK_ROOT: root },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('close', (code) => resolveRun({ code: code ?? -1, stdout, stderr }));
+  });
+}
+
+/** @param {string} taskDir */
+async function readJournal(taskDir) {
+  const raw = await readFile(join(taskDir, 'journal.jsonl'), 'utf8');
+  return raw.trimEnd().split('\n').map((line) => JSON.parse(line));
+}
+
+test('Item 3 journal contract', async (t) => {
+  await t.test('automatic record rejection leaves task bytes unchanged when the journal cannot be written', async () => {
+    const { root, taskDir } = await makeRoot();
+    const taskPath = join(taskDir, 'task.json');
+    const journalPath = join(taskDir, 'journal.jsonl');
+    try {
+      const before = await readFile(taskPath);
+      await mkdir(journalPath);
+      let rejection;
+      try {
+        await recordSpecialistReturn(root, 'plan', '18', planReturn());
+      } catch (error) {
+        rejection = /** @type {Error} */ (error);
+      }
+      assert.ok(rejection, 'automatic record must reject when its journal append fails');
+      assert.deepEqual(await readFile(taskPath), before);
+      assert.match(rejection.message, /\[journal(?:[-\w]*)?\]/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('concurrent CLI appends allocate monotonic sequence numbers under the store lock', async () => {
+    const { root, taskDir } = await makeRoot();
+    try {
+      const notes = Array.from({ length: 6 }, (_, index) => `dispatch-${index}`);
+      const results = await Promise.all(notes.map((note) => (
+        runCookAsync(root, ['journal', '18', 'intent', '--stage', 'plan', '--note', note])
+      )));
+      for (const result of results) assert.equal(result.code, 0, result.stderr);
+
+      const events = await readJournal(taskDir);
+      assert.deepEqual(events.map(({ seq }) => seq), [0, 1, 2, 3, 4, 5]);
+      assert.deepEqual(
+        events.map(({ note }) => note).sort(),
+        notes.sort(),
+      );
+      assert.ok(events.every(({ event, stage, at }) => (
+        event === 'intent'
+        && stage === 'plan'
+        && typeof at === 'string'
+        && Number.isFinite(Date.parse(at))
+      )));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('append warns and skips malformed, blank, and unsafe-sequence records without changing prior bytes', async () => {
+    const { root, taskDir } = await makeRoot();
+    const journal = join(taskDir, 'journal.jsonl');
+    try {
+      const prior = [
+        JSON.stringify({ seq: 0, at: '2026-08-01T00:00:00Z', event: 'intent', stage: 'plan' }),
+        '',
+        '{ malformed journal line',
+        JSON.stringify({
+          seq: 1e308,
+          at: '2026-08-01T00:00:01Z',
+          event: 'record',
+          stage: 'plan',
+          agent: 'unsafe-sequence-agent',
+        }),
+        JSON.stringify({
+          seq: 3,
+          at: '2026-08-01T00:00:02Z',
+          event: 'record',
+          stage: 'plan',
+          agent: 'prior-agent',
+        }),
+        '',
+      ].join('\n');
+      await writeFile(journal, prior, 'utf8');
+      const result = runCook(root, ['journal', '18', 'intent', '--stage', 'plan']);
+      assert.equal(result.code, 0, result.stderr);
+      const after = await readFile(journal, 'utf8');
+      assert.equal(after.slice(0, prior.length), prior);
+      assert.deepEqual(
+        result.stderr.trim().split('\n'),
+        [
+          'cook: journal: malformed line 2; skipped',
+          'cook: journal: malformed line 3; skipped',
+          'cook: journal: malformed line 4; skipped',
+        ],
+      );
+      const appendedLine = after.slice(prior.length).trimEnd();
+      assert.ok(appendedLine);
+      const appended = JSON.parse(appendedLine);
+      assert.deepEqual(
+        { seq: appended.seq, event: appended.event, stage: appended.stage },
+        { seq: 4, event: 'intent', stage: 'plan' },
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('successful specialist record appends the observed stage and agent', async () => {
+    const { root, taskDir } = await makeRoot();
+    try {
+      await recordSpecialistReturn(root, 'plan', '18', planReturn());
+      const events = await readJournal(taskDir);
+      assert.equal(events.length, 1);
+      assert.deepEqual(
+        { seq: events[0].seq, event: events[0].event, stage: events[0].stage, agent: events[0].agent },
+        { seq: 0, event: 'record', stage: 'plan', agent: 'plan-agent' },
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('successful council record appends one ordered real-agent event per member', async () => {
+    const councilResult = councilReturn();
+    const councilMembers = /** @type {{agent_id: string}[]} */ (councilResult.council.members);
+    const { root, taskDir } = await makeRoot(councilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', councilResult);
+      const events = await readJournal(taskDir);
+      assert.deepEqual(
+        events.map(({ seq, event, stage, agent }) => ({ seq, event, stage, agent })),
+        councilMembers.map(({ agent_id: agent }, seq) => ({
+          seq,
+          event: 'record',
+          stage: 'council',
+          agent,
+        })),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('successful approval appends a record after the approval request record', async () => {
+    const approvalBoundary = 'Rewrite the shared release registry entry from source to destination.';
+    const grantedBy = 'Chef';
+    const { root, taskDir } = await makeRoot(operationTask({
+      stage: 'execute',
+      plan: operationPlanState({
+        requiresApproval: true,
+        approvalBoundary,
+      }),
+    }));
+    try {
+      await recordSpecialistReturn(root, 'execute', '18', executeReturn('executor', {
+        result: 'approval-required',
+        approvalRequired: approvalBoundary,
+      }));
+      await recordCore.recordApproval(root, '18', grantedBy);
+
+      const events = await readJournal(taskDir);
+      assert.deepEqual(events.map(({ seq, event }) => ({ seq, event })), [
+        { seq: 0, event: 'record' },
+        { seq: 1, event: 'record' },
+      ]);
+      assert.deepEqual(
+        {
+          event: events[1].event,
+          stage: events[1].stage,
+          agent: events[1].agent,
+        },
+        { event: 'record', stage: 'execute', agent: grantedBy },
+      );
+      assert.equal(typeof events[1].at, 'string');
+      assert.ok(Number.isFinite(Date.parse(events[1].at)));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('tracked verification appends the observed gate result', async () => {
+    const { root, taskDir } = await makeRoot();
+    try {
+      await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+      runGit(root, ['init', '-q']);
+      runGit(root, ['config', 'user.email', 'tests@example.com']);
+      runGit(root, ['config', 'user.name', 'Tests']);
+      runGit(root, ['config', 'commit.gpgsign', 'false']);
+      runGit(root, ['add', '.']);
+      runGit(root, ['commit', '-qm', 'journal gate fixture']);
+      const hash = runGit(root, ['rev-parse', 'HEAD']);
+
+      const result = await runVerify(root, '18');
+      assert.equal(result.code, 0, result.stderr.join('\n'));
+      const events = await readJournal(taskDir);
+      assert.equal(events.length, 1);
+      assert.deepEqual(
+        {
+          seq: events[0].seq,
+          event: events[0].event,
+          hash: events[0].hash,
+          green: events[0].green,
+          clean: events[0].clean,
+        },
+        { seq: 0, event: 'gate', hash, green: true, clean: true },
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('canonical lite adoption stamps the package pipeline version', async () => {
+    const { root } = await makeRoot();
+    try {
+      const ref = 'plan.md';
+      await writeFile(join(root, ref), '# Journal plan\n', 'utf8');
+      const result = runCook(root, ['on', ref]);
+      assert.equal(result.code, 0, result.stderr);
+
+      const entries = await readdir(join(root, '.jeff', 'tasks'));
+      let adopted;
+      for (const entry of entries) {
+        const task = JSON.parse(await readFile(join(root, '.jeff', 'tasks', entry, 'task.json'), 'utf8'));
+        if (task.externalRef === ref) adopted = task;
+      }
+      assert.ok(adopted, 'expected the canonical lite writer to create a ledger');
+      const packageJson = JSON.parse(await readFile(join(HERE, '..', '..', 'package.json'), 'utf8'));
+      assert.equal(adopted.pipelineVersion, packageJson.version);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

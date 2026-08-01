@@ -222,6 +222,7 @@
  * @typedef {Object} CanonicalTaskJson
  * @property {1} schemaVersion
  * @property {1} [operationStateVersion]
+ * @property {string} [pipelineVersion]
  * @property {number | string} id
  * @property {string} slug
  * @property {string} title

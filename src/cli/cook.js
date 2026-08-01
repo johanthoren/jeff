@@ -23,6 +23,7 @@ import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
 import { git, indiffReport } from '../core/git.js';
 import { recordApproval, recordSpecialistFile } from '../core/record.js';
+import { appendTaskJournal, isJournalIntentStage } from '../core/journal.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -71,6 +72,7 @@ function usageReport() {
       '  verify       Run a standalone baseline; use `cook verify --task <id>` to bind a task gate.',
       '  record       Record a specialist or council result.',
       '  approve <id> <operator>  Grant the exact pending operation request.',
+      '  journal <id> <intent|external>  Append an operator journal event.',
       '  baseline check [<hash>]  Check the green, clean baseline log.',
       '  ls           List tasks.',
       '  status       Report in-flight tasks and backlog health.',
@@ -110,6 +112,51 @@ const VERBS = {
 /** @type {Record<string, (root: string, ...args: string[]) => Promise<{ code: number, stdout: string[], stderr: string[] }>>} */
 const PLAN_VERBS = { section: planSection, check: planCheck, append: planAppend };
 
+/**
+ * @param {string[]} args
+ * @returns {{ id: string, value: import('../core/journal.js').JournalAppend } | { error: string }}
+ */
+function parseJournalArgs(args) {
+  if (args.length < 2 || args[0] === '' || args[1] === '') {
+    return { error: 'cook: usage: cook journal <id> <intent|external> [--stage <s>] [--note <text>]' };
+  }
+  const [id, event, ...options] = args;
+  if (event !== 'intent' && event !== 'external') {
+    return { error: `cook: journal: unsupported event '${event}'` };
+  }
+
+  /** @type {string | undefined} */
+  let stage;
+  /** @type {string | undefined} */
+  let note;
+  for (let index = 0; index < options.length; index += 1) {
+    const option = options[index];
+    if (option !== '--stage' && option !== '--note') {
+      const kind = option.startsWith('-') ? 'unknown option' : 'unexpected argument';
+      return { error: `cook: journal: ${kind} '${option}'` };
+    }
+    if ((option === '--stage' && stage !== undefined) || (option === '--note' && note !== undefined)) {
+      return { error: `cook: journal: duplicate option '${option}'` };
+    }
+    const value = options[index + 1];
+    if (value === undefined || value.startsWith('-')) {
+      return { error: `cook: journal: option '${option}' requires a value` };
+    }
+    if (option === '--stage') stage = value;
+    else note = value;
+    index += 1;
+  }
+
+  if (event === 'intent') {
+    if (stage === undefined) return { error: 'cook: journal: intent requires --stage <s>' };
+    if (!isJournalIntentStage(stage)) return { error: `cook: journal: unsupported intent stage '${stage}'` };
+    return { id, value: { event, stage, ...(note === undefined ? {} : { note }) } };
+  }
+  if (stage !== undefined) return { error: 'cook: journal: external does not accept --stage' };
+  return { id, value: { event, ...(note === undefined ? {} : { note }) } };
+}
+
+
 async function main() {
   const argv = process.argv.slice(2);
   const sub = argv[0];
@@ -146,6 +193,21 @@ async function main() {
     if (rest[0]?.startsWith('-')) process.stderr.write(`cook: verify: unknown option '${rest[0]}'\n`);
     else process.stderr.write(`cook: verify: unexpected argument '${rest[0]}'\n`);
     return process.exit(1);
+  }
+
+  if (sub === 'journal') {
+    const parsed = parseJournalArgs(rest);
+    if ('error' in parsed) {
+      process.stderr.write(`${parsed.error}\n`);
+      return process.exit(1);
+    }
+    try {
+      await appendTaskJournal(root, parsed.id, parsed.value);
+      return emit({ code: 0, stdout: [`cook: journaled ${parsed.value.event} for task ${parsed.id}`], stderr: [] });
+    } catch (error) {
+      process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
+      return process.exit(1);
+    }
   }
 
   if (sub === 'approve') {

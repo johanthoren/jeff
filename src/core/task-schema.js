@@ -711,6 +711,9 @@ export function taskSchemaViolations(task, { lite }) {
   /** @type {string[]} */
   const out = [];
   requireField(out, 'schemaVersion', task.schemaVersion === 1);
+  if (Object.hasOwn(task, 'pipelineVersion')) {
+    requireField(out, 'pipelineVersion', typeof task.pipelineVersion === 'string' && task.pipelineVersion.length > 0);
+  }
   requireField(out, 'id', lite ? isId(task.id) : Number.isInteger(task.id) && task.id > 0);
   requireField(out, 'slug', typeof task.slug === 'string' && (lite || KEBAB_SLUG.test(task.slug)));
   requireField(out, 'title', typeof task.title === 'string');
