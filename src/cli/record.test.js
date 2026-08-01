@@ -2868,7 +2868,12 @@ test('implementation resets a current-cycle judgment despite a later implement k
 
   for (const [source, agentField] of cases) {
     await t.test(`${source} judgment`, async () => {
-      const priorCycle = { at: '2026-07-12T01:00:00+01:00', review: {}, review2: null, audit: {} };
+      const priorCycle = {
+        at: '2026-07-12T01:00:00+01:00',
+        review: { verdict: 'na', reviewer_agent_id: null, findings: [], evidence: [] },
+        review2: null,
+        audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+      };
       const currentReview = {
         verdict: source === 'review' ? 'needs-work' : 'pass',
         reviewer_agent_id: 'reviewer-current',
@@ -2939,7 +2944,12 @@ test('implementation preserves judgments when history consumed the latest judgme
         findings: [],
         evidence: [{ command: 'review-security --json', output: 'no findings' }],
       };
-      const history = [{ at: boundary, review: {}, review2: null, audit: {} }];
+      const history = [{
+        at: boundary,
+        review: { verdict: 'na', reviewer_agent_id: null, findings: [], evidence: [] },
+        review2: null,
+        audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+      }];
       const task = canonicalTask({
         stage: 'implement',
         agents: {
@@ -3247,7 +3257,12 @@ test('judgment contracts require a nonnegative active cycle identity', async (t)
 
 test('judgment cycle rejects stale and replayed returns without changing current evidence', async () => {
   const task = /** @type {any} */ (parallelJudgmentTask());
-  task.judgmentHistory = [{ at: '2026-07-12T00:00:01Z', review: {}, review2: null, audit: {} }];
+  task.judgmentHistory = [{
+    at: '2026-07-12T00:00:01Z',
+    review: { verdict: 'na', reviewer_agent_id: null, findings: [], evidence: [] },
+    review2: null,
+    audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+  }];
   const { root, taskDir } = await makeRoot(task);
   try {
     const stale = reviewReturn('reviewer-stale', { cycle: 0 });
