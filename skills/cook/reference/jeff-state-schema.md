@@ -116,7 +116,10 @@ The 6.0 event vocabulary is closed:
 `cook journal <id> intent --stage <s> [--note <text>]` and `cook journal
 <id> external [--note <text>]` are the operator-authored surfaces. Successful
 `cook record`, `cook approve`, and tracked `cook verify --task <id>` append
-their `record` or `gate` events automatically after the task transition writes.
+their required `record` or `gate` events automatically after candidate validation
+and before task persistence, all under the shared store lock. If later task
+persistence fails, the appended provenance remains because there is no cross-file
+rollback.
 Malformed JSON or invalid event shapes warn and are skipped when reading; their
 bytes stay unchanged. Appends fail closed and surface containment, lock, read,
 or write errors. The journal is operational provenance, not validated state:
