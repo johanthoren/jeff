@@ -112,12 +112,8 @@ function haveActiveBlockersSurvivedRefute(task) {
 /** @param {MutableRecordTask} task @param {string} at */
 function judgmentHistoryEntry(task, at) {
   if (isOperation(task)) {
-    const cycle = currentOperationCycle(task);
-    const historyCycle = task.judgmentHistory?.length ?? 0;
     return {
-      cycle: hasBoundPendingApprovalRequest(task) && cycle === historyCycle + 1
-        ? historyCycle
-        : cycle,
+      cycle: task.judgmentHistory?.length ?? 0,
       at,
       verification: task.verification,
       audit: task.audit,

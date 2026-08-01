@@ -1092,6 +1092,97 @@ test('issue 101 execute can kick an operation back to capture or plan', async (t
   }
 });
 
+test('issue 157 scoped operation council recovery accepts divergent execution and judgment history cycles', async () => {
+  const { root, taskDir } = await makeRoot(operationTask({
+    stage: 'execute',
+    convergence: {
+      cap: 1,
+      stages: { verify: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
+      council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+    },
+  }));
+  try {
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await recordSpecialistReturn(root, 'execute', '18', executeReturn(`executor-${cycle}`, {
+        result: 'kickback',
+        actions: ['Inspected the bounded source state.'],
+        evidence: [{ command: 'inspect source state', output: 'the operation plan needs revision' }],
+        kickback: { to: 'plan', reason: 'The bounded operation plan needs revision.' },
+      }));
+      await recordSpecialistReturn(
+        root,
+        'plan',
+        '18',
+        operationPlanReturn({}, `operation-plan-${cycle}`),
+      );
+    }
+
+    await recordSpecialistReturn(root, 'execute', '18', executeReturn('executor-3'));
+    const finding = blockingFinding({
+      kickTo: 'execute',
+      what: 'The destination registry contains two entries.',
+    });
+    await recordSpecialistReturn(root, 'verify', '18', verifyReturn('verifier-3', {
+      cycle: 3,
+      verdict: 'needs-work',
+      postconditions: [{
+        postcondition: 'The source is absent and the destination exists exactly once.',
+        ok: false,
+        evidence: 'independent read found two destination entries',
+      }],
+      findings: [finding],
+    }));
+    await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('verify-refuter-3', finding, { source: 'verify', cycle: 3 }),
+    );
+
+    const beforeFix = await readTask(taskDir);
+    assert.equal(beforeFix.execution.cycle, 3);
+    assert.equal(beforeFix.judgmentHistory, undefined);
+    assert.equal(beforeFix.convergence.stages.verify.blockingKickbacks, 1);
+
+    await recordSpecialistReturn(root, 'execute', '18', executeReturn('executor-4'));
+    await recordSpecialistReturn(root, 'verify', '18', verifyReturn('verifier-4', {
+      cycle: 4,
+      verdict: 'needs-work',
+      postconditions: beforeFix.verification.postconditions,
+      findings: [finding],
+    }));
+    await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('verify-refuter-4', finding, { source: 'verify', cycle: 4 }),
+    );
+
+    await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+    await recordSpecialistReturn(root, 'execute', '18', executeReturn('executor-5'));
+    await recordSpecialistReturn(root, 'verify', '18', verifyReturn('verifier-5', { cycle: 5 }));
+
+    const beforeRecovery = await readTask(taskDir);
+    assert.deepEqual(
+      beforeRecovery.judgmentHistory.map((/** @type {any} */ entry) => entry.cycle),
+      [0, 1],
+    );
+    assert.equal(beforeRecovery.convergence.council.cycle, 4);
+    assert.equal(beforeRecovery.execution.cycle, 5);
+
+    const recovered = await recordSpecialistReturn(
+      root,
+      'council',
+      '18',
+      operationCouncilReturn('scoped-fix-shipped'),
+    );
+    assert.deepEqual([recovered.status, recovered.stage], ['done', 'done']);
+    assert.equal(recovered.convergence.council.outcome, 'scoped-fix-shipped');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 101 surviving blocker: complex operation completes without code-review identities in either judgment order', async (t) => {
   for (const order of [['verify', 'audit'], ['audit', 'verify']]) {
     await t.test(order.join(' then '), async () => {
