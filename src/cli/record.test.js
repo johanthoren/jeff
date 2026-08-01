@@ -4058,6 +4058,27 @@ async function readJournal(taskDir) {
 }
 
 test('Item 3 journal contract', async (t) => {
+  await t.test('automatic record rejection leaves task bytes unchanged when the journal cannot be written', async () => {
+    const { root, taskDir } = await makeRoot();
+    const taskPath = join(taskDir, 'task.json');
+    const journalPath = join(taskDir, 'journal.jsonl');
+    try {
+      const before = await readFile(taskPath);
+      await mkdir(journalPath);
+      let rejection;
+      try {
+        await recordSpecialistReturn(root, 'plan', '18', planReturn());
+      } catch (error) {
+        rejection = /** @type {Error} */ (error);
+      }
+      assert.ok(rejection, 'automatic record must reject when its journal append fails');
+      assert.deepEqual(await readFile(taskPath), before);
+      assert.match(rejection.message, /\[journal(?:[-\w]*)?\]/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   await t.test('concurrent CLI appends allocate monotonic sequence numbers under the store lock', async () => {
     const { root, taskDir } = await makeRoot();
     try {
@@ -4084,24 +4105,44 @@ test('Item 3 journal contract', async (t) => {
     }
   });
 
-  await t.test('append skips a malformed line with a warning and continues from the greatest valid sequence', async () => {
+  await t.test('append warns and skips malformed, blank, and unsafe-sequence records without changing prior bytes', async () => {
     const { root, taskDir } = await makeRoot();
     const journal = join(taskDir, 'journal.jsonl');
     try {
-      await writeFile(journal, [
+      const prior = [
         JSON.stringify({ seq: 0, at: '2026-08-01T00:00:00Z', event: 'intent', stage: 'plan' }),
-        '{ malformed journal line',
-        JSON.stringify({ seq: 3, at: '2026-08-01T00:00:01Z', event: 'record', stage: 'plan', agent: 'prior-agent' }),
         '',
-      ].join('\n'), 'utf8');
-
+        '{ malformed journal line',
+        JSON.stringify({
+          seq: 1e308,
+          at: '2026-08-01T00:00:01Z',
+          event: 'record',
+          stage: 'plan',
+          agent: 'unsafe-sequence-agent',
+        }),
+        JSON.stringify({
+          seq: 3,
+          at: '2026-08-01T00:00:02Z',
+          event: 'record',
+          stage: 'plan',
+          agent: 'prior-agent',
+        }),
+        '',
+      ].join('\n');
+      await writeFile(journal, prior, 'utf8');
       const result = runCook(root, ['journal', '18', 'intent', '--stage', 'plan']);
       assert.equal(result.code, 0, result.stderr);
-      assert.match(result.stderr, /(?:journal.*malformed|malformed.*journal)/i);
-
-      const lines = (await readFile(journal, 'utf8')).trimEnd().split('\n');
-      assert.equal(lines[1], '{ malformed journal line');
-      const appendedLine = lines.at(-1);
+      const after = await readFile(journal, 'utf8');
+      assert.equal(after.slice(0, prior.length), prior);
+      assert.deepEqual(
+        result.stderr.trim().split('\n'),
+        [
+          'cook: journal: malformed line 2; skipped',
+          'cook: journal: malformed line 3; skipped',
+          'cook: journal: malformed line 4; skipped',
+        ],
+      );
+      const appendedLine = after.slice(prior.length).trimEnd();
       assert.ok(appendedLine);
       const appended = JSON.parse(appendedLine);
       assert.deepEqual(
@@ -4128,8 +4169,29 @@ test('Item 3 journal contract', async (t) => {
     }
   });
 
+  await t.test('successful council record appends one ordered real-agent event per member', async () => {
+    const councilResult = councilReturn();
+    const { root, taskDir } = await makeRoot(councilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', councilResult);
+      const events = await readJournal(taskDir);
+      assert.deepEqual(
+        events.map(({ seq, event, stage, agent }) => ({ seq, event, stage, agent })),
+        councilResult.council.members.map(({ agent_id: agent }, seq) => ({
+          seq,
+          event: 'record',
+          stage: 'council',
+          agent,
+        })),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   await t.test('successful approval appends a record after the approval request record', async () => {
     const approvalBoundary = 'Rewrite the shared release registry entry from source to destination.';
+    const grantedBy = 'Chef';
     const { root, taskDir } = await makeRoot(operationTask({
       stage: 'execute',
       plan: operationPlanState({
@@ -4142,13 +4204,21 @@ test('Item 3 journal contract', async (t) => {
         result: 'approval-required',
         approvalRequired: approvalBoundary,
       }));
-      await recordCore.recordApproval(root, '18', 'Chef');
+      await recordCore.recordApproval(root, '18', grantedBy);
 
       const events = await readJournal(taskDir);
       assert.deepEqual(events.map(({ seq, event }) => ({ seq, event })), [
         { seq: 0, event: 'record' },
         { seq: 1, event: 'record' },
       ]);
+      assert.deepEqual(
+        {
+          event: events[1].event,
+          stage: events[1].stage,
+          agent: events[1].agent,
+        },
+        { event: 'record', stage: 'execute', agent: grantedBy },
+      );
       assert.equal(typeof events[1].at, 'string');
       assert.ok(Number.isFinite(Date.parse(events[1].at)));
     } finally {

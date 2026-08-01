@@ -100,3 +100,80 @@ require_success() {
   ' "$TASK_DIR/journal.jsonl"
   require_success
 }
+
+@test "Item 3 rejects a hardlinked journal without changing the outside inode" {
+  local victim="$TMP/outside-victim"
+  local snapshot="$TMP/outside-victim.before"
+  local journal="$TASK_DIR/journal.jsonl"
+  printf '%s\n' '{"seq":0,"at":"2026-08-01T00:00:00Z","event":"intent","stage":"plan"}' > "$victim"
+  cp "$victim" "$snapshot"
+
+  run node -e 'require("node:fs").linkSync(process.argv[1], process.argv[2])' "$victim" "$journal"
+  if [ "$status" -ne 0 ]; then
+    case "$output" in
+      *"code: 'EPERM'"*|*"code: 'ENOSYS'"*|*"code: 'ENOTSUP'"*|*"code: 'EOPNOTSUPP'"*)
+        skip "host does not support hard links: $output"
+        ;;
+      *)
+        printf '%s\n' "$output"
+        return 1
+        ;;
+    esac
+  fi
+
+  run cook journal 18 intent --stage plan
+  local append_status="$status"
+  local append_output="$output"
+  local failures=0
+  if [ "$append_status" -eq 0 ]; then
+    printf 'hardlinked journal append unexpectedly succeeded\n'
+    failures=$((failures + 1))
+  fi
+  if [[ ! "$append_output" =~ \[journal[^]]*\] ]]; then
+    printf 'missing named journal rejection: %s\n' "$append_output"
+    failures=$((failures + 1))
+  fi
+  if ! cmp -s "$victim" "$snapshot"; then
+    printf 'outside hardlink victim bytes changed\n'
+    failures=$((failures + 1))
+  fi
+  [ "$failures" -eq 0 ]
+}
+
+@test "Item 3 journal CLI rejects the malformed invocation matrix without creating bytes" {
+  local cases=(
+    "missing id|"
+    "missing event|18"
+    "unsupported event|18 gate"
+    "missing option value|18 intent --stage plan --note"
+    "unsupported intent stage|18 intent --stage deploy"
+    "duplicate option|18 intent --stage plan --stage plan"
+    "unknown option|18 intent --stage plan --unknown"
+    "extra positional|18 intent --stage plan extra"
+    "intent without stage|18 intent"
+    "external with stage|18 external --stage external"
+  )
+  local failures=0
+  local case_data label arguments
+
+  for case_data in "${cases[@]}"; do
+    rm -f "$TASK_DIR/journal.jsonl"
+    IFS='|' read -r label arguments <<< "$case_data"
+    local argv=()
+    if [ -n "$arguments" ]; then
+      read -r -a argv <<< "$arguments"
+    fi
+
+    run cook journal "${argv[@]}"
+    if [ "$status" -eq 0 ]; then
+      printf '%s unexpectedly succeeded\n' "$label"
+      failures=$((failures + 1))
+    fi
+    if [ -e "$TASK_DIR/journal.jsonl" ]; then
+      printf '%s created journal bytes\n' "$label"
+      failures=$((failures + 1))
+    fi
+  done
+
+  [ "$failures" -eq 0 ]
+}
