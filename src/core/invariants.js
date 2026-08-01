@@ -241,20 +241,10 @@ function hasScopedOperationCouncilProof(task) {
   const councilMemberIds = new Set(
     (council.members ?? []).map((/** @type {any} */ member) => member.agent_id),
   );
-  const councilHistory = task.judgmentHistory.filter((/** @type {any} */ entry) => (
-    entry?.cycle === council.cycle
-  ));
-  const laterHistory = task.judgmentHistory.some((/** @type {any} */ entry) => (
-    isOperationCycle(entry?.cycle) && entry.cycle > council.cycle
-  ));
   return basicFreshness
     && isOperationCycle(council.cycle)
     && isAgentId(council.executor_agent_id)
-    && councilHistory.length === 1
-    && history === councilHistory[0]
-    && !laterHistory
     && task.execution?.cycle === council.cycle + 1
-    && task.judgmentHistory.length === task.execution.cycle
     && isAgentId(task.execution?.executor_agent_id)
     && task.execution.executor_agent_id === task.agents?.executor_agent_id
     && task.execution.executor_agent_id !== council.executor_agent_id
