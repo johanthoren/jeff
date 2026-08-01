@@ -139,11 +139,21 @@
  */
 
 /**
+ * @typedef {Object} KickbackFinding
+ * @property {'review' | 'review2' | 'audit'} source
+ * @property {string} file
+ * @property {number} line
+ * @property {string} what
+ * @property {'implement' | 'refactor'} kickTo
+ */
+
+/**
  * @typedef {Object} Kickback
  * @property {KickbackSource} from
  * @property {TaskStage} to
  * @property {string} reason
  * @property {string} at
+ * @property {KickbackFinding[]} [findings]
  */
 
 /**
@@ -207,6 +217,15 @@
  */
 
 /**
+ * @typedef {Object} CodeJudgmentHistory
+ * @property {string} at
+ * @property {Review} review
+ * @property {Review | null} review2
+ * @property {Audit} audit
+ * @property {{reviewer_agent_id: string | null, reviewer2_agent_id: string | null, audit_agent_id: string | null}} agents
+ */
+
+/**
  * @typedef {Object} OperationJudgmentHistory
  * @property {number} [cycle]
  * @property {string} at
@@ -245,7 +264,7 @@
  * @property {Approval[]} [approvals]
  * @property {OperationVerification} [verification]
  * @property {Refute[]} [refutes]
- * @property {OperationJudgmentHistory[]} [judgmentHistory]
+ * @property {Array<CodeJudgmentHistory | OperationJudgmentHistory>} [judgmentHistory]
  * @property {unknown[]} commits
  * @property {Kickback[]} kickbacks
  * @property {string | null} blockedReason

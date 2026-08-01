@@ -193,6 +193,12 @@ Every active judgment finding self-classifies as blocking or follow-up. A blocki
 
 The independent counters are `review`/`audit` for code and `verify`/`audit` for operation. The 3rd would-be kickback from either source triggers the one council before any other source counter increments or ordinary kickback is appended.
 
+Ordinary code judgment kickbacks carry the exact surviving blockers in optional `findings`: `[{source,file,line,what,kickTo}]`, where `source` is `review | review2 | audit` and `kickTo` is `implement | refactor`. Council-block kickbacks keep their existing untyped shape.
+
+A code repair at `implement` or `refactor` is scoped only when every judgment kickback in the active round has a nonempty typed findings contract, every finding targets `implement` or `refactor`, the returned repair `files` are nonempty and confined to the union of finding files, and no council is pending or convened. The scoped repair archives the whole current judgment entry once, resets every raising source, preserves each independently passing sibling outcome and identity byte-for-byte, leaves convergence counters unchanged, and settles to the vacant judgment source. A review kickback resets both review slots; an audit kickback resets only audit; both sources reset all three slots. Every ineligible path uses the existing full judgment reset.
+
+The scoped implement or refactor brief quotes the typed findings contract verbatim. The fresh re-judgment brief quotes the same contract as "the kicked findings this cycle must resolve". Fresh judges still inspect the full diff; only independently passing sibling judgments are retained. This trades a sibling re-run for a file-confined proof, not for narrower judgment. Every implement or refactor repair invalidates the full-suite gate, and Jeff re-runs that gate on the new checkpoint as the mandatory anchor.
+
 ## Git (be smart; interrupt rarely)
 
 - Run `cook validate` before every commit. Never block on a dirty tree; never ask the Chef to stash or clean.

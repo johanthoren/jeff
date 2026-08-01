@@ -25,6 +25,8 @@ const KICKBACK_DESTINATIONS = STAGES;
 const ISO_DATETIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 const KEBAB_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OPERATION_FINDING_DESTINATIONS = ['capture', 'plan', 'execute'];
+const CODE_JUDGMENT_SOURCES = ['review', 'review2', 'audit'];
+const CODE_REPAIR_DESTINATIONS = ['implement', 'refactor'];
 const AUDIT_CATEGORIES = [
   'secrets',
   'injection_sql',
@@ -173,6 +175,19 @@ function validateKickbacks(value, out) {
     requireField(out, `${field}.to`, isOneOf(kickback.to, KICKBACK_DESTINATIONS));
     requireField(out, `${field}.reason`, typeof kickback.reason === 'string');
     requireField(out, `${field}.at`, isIsoDateTime(kickback.at));
+    if (kickback.findings === undefined) return;
+    requireField(out, `${field}.findings`, Array.isArray(kickback.findings));
+    if (!Array.isArray(kickback.findings)) return;
+    kickback.findings.forEach((/** @type {any} */ finding, /** @type {number} */ findingIndex) => {
+      const findingField = `${field}.findings[${findingIndex}]`;
+      requireField(out, findingField, isType(finding, 'object'));
+      if (!isType(finding, 'object')) return;
+      requireField(out, `${findingField}.source`, isOneOf(finding.source, CODE_JUDGMENT_SOURCES));
+      requireField(out, `${findingField}.file`, isNonemptyString(finding.file));
+      requireField(out, `${findingField}.line`, Number.isInteger(finding.line) && finding.line >= 1);
+      requireField(out, `${findingField}.what`, isNonemptyString(finding.what));
+      requireField(out, `${findingField}.kickTo`, isOneOf(finding.kickTo, CODE_REPAIR_DESTINATIONS));
+    });
   });
 }
 

@@ -239,27 +239,66 @@ function kickFalseVerificationToExecute(task, at) {
   task.status = 'in_progress';
 }
 
-/** @param {MutableRecordTask} task @param {string} at */
-function archiveAndResetJudgments(task, at) {
+/** @param {MutableRecordTask} task @param {string} at @param {Set<string>} [sources] */
+function archiveAndResetJudgments(task, at, sources) {
   task.judgmentHistory = [
     ...(task.judgmentHistory ?? []),
     judgmentHistoryEntry(task, at),
   ];
-  task.agents.audit_agent_id = null;
-  task.audit = { required: task.audit.required, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] };
+  if (sources === undefined || sources.has('audit')) {
+    task.agents.audit_agent_id = null;
+    task.audit = { required: task.audit.required, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] };
+  }
   if (isOperation(task)) {
     task.agents.verifier_agent_id = null;
     task.verification = { verdict: null, verifier_agent_id: null, postconditions: [], findings: [], evidence: [] };
     return;
   }
-  task.agents.reviewer_agent_id = null;
-  task.agents.reviewer2_agent_id = null;
-  task.review = { verdict: null, reviewer_agent_id: null, findings: [], evidence: [] };
-  task.review2 = null;
+  if (sources === undefined || sources.has('review')) {
+    task.agents.reviewer_agent_id = null;
+    task.agents.reviewer2_agent_id = null;
+    task.review = { verdict: null, reviewer_agent_id: null, findings: [], evidence: [] };
+    task.review2 = null;
+  }
 }
 
-/** @param {MutableRecordTask} task @param {string} at */
-function resetJudgmentsAfterFix(task, at) {
+/**
+ * @param {MutableRecordTask} task
+ * @param {Record<string, any>[]} kickbacks
+ * @param {unknown} files
+ */
+function isScopedCodeRepair(task, kickbacks, files) {
+  const council = task.convergence?.council;
+  if (isOperation(task)
+    || council?.stage != null
+    || council?.convened === true
+    || !Array.isArray(files)
+    || files.length === 0
+    || kickbacks.length === 0) return false;
+  const findings = kickbacks.flatMap((kickback) => (
+    Array.isArray(kickback.findings) ? kickback.findings : []
+  ));
+  return kickbacks.every((kickback) => (
+    Array.isArray(kickback.findings)
+    && kickback.findings.length > 0
+    && kickback.findings.every((/** @type {any} */ finding) => (
+      ['review', 'review2', 'audit'].includes(finding.source)
+      && typeof finding.file === 'string'
+      && finding.file.length > 0
+      && Number.isInteger(finding.line)
+      && finding.line >= 1
+      && typeof finding.what === 'string'
+      && finding.what.length > 0
+      && ['implement', 'refactor'].includes(finding.kickTo)
+      && (finding.source === kickback.from
+        || (kickback.from === 'review' && finding.source === 'review2'))
+    ))
+  ))
+    && files.every((file) => findings.some((/** @type {any} */ finding) => finding.file === file));
+}
+
+/** @param {MutableRecordTask} task @param {string} at @param {unknown} [files] */
+function resetJudgmentsAfterFix(task, at, files) {
   const hasCurrentJudgment = judgmentSources(task).some(({ outcome }) => (
     outcome?.reviewer_agent_id != null
     || outcome?.verifier_agent_id != null
@@ -270,19 +309,29 @@ function resetJudgmentsAfterFix(task, at) {
     task.agents.verifier_agent_id,
     task.agents.audit_agent_id,
   ].some((agentId) => agentId != null);
-  if (!hasCurrentJudgment) return;
+  if (!hasCurrentJudgment) return false;
   const latestJudgmentKickback = task.kickbacks.findLast((/** @type {any} */ kickback) => (
     judgmentSources(task).some(({ source }) => source === kickback.from)
   ));
-  if (!latestJudgmentKickback) return;
+  if (!latestJudgmentKickback) return false;
   const latestHistory = task.judgmentHistory?.at(-1);
   if (latestHistory && !isIsoDateTime(latestHistory.at)) {
     throw new Error('[record-transition] judgmentHistory latest at is invalid');
   }
   const latestHistoryInstant = latestHistory ? Date.parse(latestHistory.at) : null;
-  if (latestHistoryInstant !== null && Date.parse(latestJudgmentKickback.at) <= latestHistoryInstant) return;
+  if (latestHistoryInstant !== null && Date.parse(latestJudgmentKickback.at) <= latestHistoryInstant) return false;
 
-  archiveAndResetJudgments(task, at);
+  const activeKickbacks = task.kickbacks.filter((/** @type {any} */ kickback) => (
+    kickback.at === latestJudgmentKickback.at
+    && ['review', 'audit'].includes(kickback.from)
+  ));
+  const scoped = isScopedCodeRepair(task, activeKickbacks, files);
+  archiveAndResetJudgments(
+    task,
+    at,
+    scoped ? new Set(activeKickbacks.map((/** @type {any} */ kickback) => kickback.from)) : undefined,
+  );
+  return scoped;
 }
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
@@ -434,6 +483,15 @@ function recordRefute(task, result, at) {
       to: destination,
       reason: survivors.map(({ finding: item }) => item.what).join('; '),
       at,
+      ...(isOperation(task) ? {} : {
+        findings: survivors.map(({ source, finding: item }) => ({
+          source,
+          file: item.file,
+          line: item.line,
+          what: item.what,
+          kickTo: item.kickTo,
+        })),
+      }),
     };
   });
   if (!kickbacks.length) {
@@ -846,15 +904,18 @@ export function transitionTask(task, stage, result) {
       next.stage = result.kickback.to;
     } else {
       const refactorOwed = isRefactorOwed(next, isScopedCouncilFix);
+      let scopedJudgmentRepair = false;
       if (isScopedCouncilFix) archiveAndResetJudgments(next, at);
-      else resetJudgmentsAfterFix(next, at);
-      next.stage = refactorOwed ? 'refactor' : 'review';
+      else scopedJudgmentRepair = resetJudgmentsAfterFix(next, at, result.files);
+      if (refactorOwed) next.stage = 'refactor';
+      else if (scopedJudgmentRepair) settleJudgments(next);
+      else next.stage = 'review';
     }
   } else if (stage === 'refactor') {
     next.refactor = { agent_id: result.agent_id, result: result.result, files: result.files, outsideDiff: result.outsideDiff, greenRun: result.greenRun, summary: result.summary };
-    resetJudgmentsAfterFix(next, at);
+    resetJudgmentsAfterFix(next, at, result.files);
     invalidateVerification(next);
-    next.stage = 'review';
+    settleJudgments(next);
   } else if (stage === 'review') recordReview(next, result);
   else if (stage === 'verify') recordVerify(next, result);
   else if (stage === 'audit') recordAudit(next, result);
