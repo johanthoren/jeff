@@ -4101,7 +4101,9 @@ test('Item 3 journal contract', async (t) => {
 
       const lines = (await readFile(journal, 'utf8')).trimEnd().split('\n');
       assert.equal(lines[1], '{ malformed journal line');
-      const appended = JSON.parse(lines.at(-1));
+      const appendedLine = lines.at(-1);
+      assert.ok(appendedLine);
+      const appended = JSON.parse(appendedLine);
       assert.deepEqual(
         { seq: appended.seq, event: appended.event, stage: appended.stage },
         { seq: 4, event: 'intent', stage: 'plan' },

@@ -10,10 +10,9 @@ const wait = (/** @type {number} */ milliseconds) => new Promise((resolveWait) =
 /**
  * Serialize task-store mutations through the existing `.record-lock`.
  *
- * @template T
  * @param {string} root
- * @param {() => Promise<T>} operation
- * @returns {Promise<T>}
+ * @param {() => Promise<any>} operation
+ * @returns {Promise<any>}
  */
 export async function withStoreLock(root, operation) {
   try {
