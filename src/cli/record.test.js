@@ -4232,6 +4232,9 @@ test('Item 3 journal contract', async (t) => {
     try {
       await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
       runGit(root, ['init', '-q']);
+      runGit(root, ['config', 'user.email', 'tests@example.com']);
+      runGit(root, ['config', 'user.name', 'Tests']);
+      runGit(root, ['config', 'commit.gpgsign', 'false']);
       runGit(root, ['add', '.']);
       runGit(root, ['commit', '-qm', 'journal gate fixture']);
       const hash = runGit(root, ['rev-parse', 'HEAD']);
