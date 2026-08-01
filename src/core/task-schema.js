@@ -666,8 +666,14 @@ function validateCodeJudgmentHistory(task, out) {
     validateAudit(entry.audit, `${field}.audit`, out, false, task);
     requireField(out, `${field}.audit.findings`, Array.isArray(entry.audit?.findings)
       || isArchivedUnauditedAudit(entry.audit));
-    requireField(out, `${field}.agents`, isType(entry.agents, 'object'));
-    if (!isType(entry.agents, 'object')) return;
+    const hasAgents = Object.hasOwn(entry, 'agents');
+    if (hasAgents) {
+      requireField(out, `${field}.agents`, isType(entry.agents, 'object')
+        && Object.keys(entry.agents).every((key) => (
+          ['reviewer_agent_id', 'reviewer2_agent_id', 'audit_agent_id'].includes(key)
+        )));
+      if (!isType(entry.agents, 'object')) return;
+    }
 
     const judgments = [
       ['review', 'reviewer_agent_id', 'reviewer_agent_id'],
@@ -675,11 +681,13 @@ function validateCodeJudgmentHistory(task, out) {
       ['audit', 'audit_agent_id', 'audit_agent_id'],
     ];
     for (const [source, outcomeIdentity, agentIdentity] of judgments) {
-      requireField(out, `${field}.agents.${agentIdentity}`,
-        isNullableString(entry.agents[agentIdentity]));
+      if (hasAgents) {
+        requireField(out, `${field}.agents.${agentIdentity}`,
+          isNullableString(entry.agents[agentIdentity]));
+      }
       const outcome = entry[source];
       const outcomeId = outcome?.[outcomeIdentity] ?? null;
-      const agentId = entry.agents[agentIdentity] ?? null;
+      const agentId = hasAgents ? entry.agents[agentIdentity] ?? null : null;
       const recorded = outcome != null
         && outcome.verdict !== null
         && outcome.verdict !== 'na';
