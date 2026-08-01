@@ -895,7 +895,15 @@ council|
 CONSUMERS
 }
 
-@test "Item 2: plan owns the facts-only context packet boundary" {
+context_packet_dispatch_rule() {
+  awk '
+    /^\*\*Context packets\.\*\*/ { in_rule = 1 }
+    in_rule && /^[[:space:]]*$/ { exit }
+    in_rule { print }
+  ' "$REPO/skills/cook/SKILL.md"
+}
+
+@test "Item 2: plan owns the initial facts-only packet and its task scope" {
   local file="$REPO/agents/cook-plan.md"
   local compact
   compact="$(tr '\n' ' ' <"$file")"
@@ -904,8 +912,16 @@ CONSUMERS
     echo "cook-plan.md does not name context.md"
     return 1
   }
-  grep -qiE '(write|author|refresh)[^.]{0,100}context\.md|context\.md[^.]{0,100}(write|author|refresh)' <<<"$compact" || {
-    echo "cook-plan.md does not make plan the context.md author"
+  grep -qiE '(create|write|author)[^.]{0,100}initial[^.]{0,100}context\.md|initial[^.]{0,100}context\.md[^.]{0,100}(create|write|author)' <<<"$compact" || {
+    echo "cook-plan.md does not make plan the initial context.md author"
+    return 1
+  }
+  grep -qiE 'plan[^.]{0,100}owns?[^.]{0,80}task scope|task scope[^.]{0,100}(owned|belongs)[^.]{0,80}plan' <<<"$compact" || {
+    echo "cook-plan.md does not make plan the context packet task-scope owner"
+    return 1
+  }
+  grep -qiE 'refresh[^.]{0,100}(whenever|every time)[^.]{0,80}plan[^.]{0,40}re[- ]?enters|plan[^.]{0,40}re[- ]?enters[^.]{0,100}refresh' <<<"$compact" || {
+    echo "cook-plan.md does not refresh context.md whenever plan re-enters"
     return 1
   }
   grep -qiE 'facts[- ]only' <<<"$compact" || {
@@ -938,19 +954,15 @@ CONSUMERS
   }
 }
 
-@test "Item 2: downstream dispatch carries the fixed caveat for all six consumers" {
-  local file="$REPO/skills/cook/SKILL.md"
-  local caveat='a map, not an authority: verify against the code; report stale entries.'
+@test "Item 2: downstream dispatch carries the bounded caveat without packet reconstruction" {
+  local caveat='a map, not an authority: use it to skip discovery; verify only entries you rely on; correct stale facts if writable, otherwise report them.'
   local rule stage
-  rule="$(awk -v needle="$caveat" '
-    BEGIN { RS = ""; ORS = "\n" }
-    index($0, needle) { print; found = 1 }
-    END { if (!found) exit 1 }
-  ' "$file")" || {
-    echo "cook SKILL.md does not carry the exact context packet caveat"
+  rule="$(context_packet_dispatch_rule)"
+
+  grep -qF "$caveat" <<<"$rule" || {
+    echo "cook SKILL.md does not carry the exact bounded-verification caveat"
     return 1
   }
-
   grep -qF 'context.md' <<<"$rule" || {
     echo "the context packet dispatch rule does not name context.md"
     return 1
@@ -959,8 +971,8 @@ CONSUMERS
     echo "the context packet dispatch rule does not preserve optional absence"
     return 1
   }
-  grep -qiE 'only plan[^.]{0,100}(write|refresh)|(write|refresh)[^.]{0,100}only plan|plan is the only writer' <<<"$rule" || {
-    echo "the context packet dispatch rule does not make plan the single writer"
+  grep -qiE '(never|do not|must not)[^.]{0,120}(independently[[:space:]]+)?(reconstruct|rebuild)[^.]{0,80}(packet|context\.md)|(packet|context\.md)[^.]{0,80}(never|do not|must not)[^.]{0,120}(reconstruct|rebuild)' <<<"$rule" || {
+    echo "the context packet dispatch rule does not forbid whole-packet reconstruction"
     return 1
   }
 
@@ -972,7 +984,64 @@ CONSUMERS
   done < <(list_context_packet_consumers)
 }
 
-@test "Item 2: each file-backed consumer declares the optional untrusted map input" {
+@test "Item 2: implement and refactor maintain only facts encountered in assigned work" {
+  local rule
+  rule="$(context_packet_dispatch_rule)"
+
+  grep -qiE 'implement[^.]{0,80}refactor|refactor[^.]{0,80}implement' <<<"$rule" || {
+    echo "the context packet rule does not group implement and refactor as writable consumers"
+    return 1
+  }
+  grep -qiE '(maintain|correct|update)[^.]{0,100}(entries|facts)|(entries|facts)[^.]{0,100}(maintain|correct|update)' <<<"$rule" || {
+    echo "writable consumers are not required to maintain context packet facts"
+    return 1
+  }
+  local required
+  for required in 'direct(ly)?' 'verif' 'invalidat' 'creat' 'mov'; do
+    grep -qiE "$required" <<<"$rule" || {
+      echo "writable context maintenance is missing binding token: $required"
+      return 1
+    }
+  done
+  grep -qiE '(assigned|task[- ]scoped)[^.]{0,80}(work|code changes?)|(work|code changes?)[^.]{0,80}(assigned|task[- ]scoped)' <<<"$rule" || {
+    echo "writable context maintenance is not limited to assigned code work"
+    return 1
+  }
+  grep -qiE '(may not|must not|do not|never)[^.]{0,80}(expand|widen)[^.]{0,40}(task )?scope' <<<"$rule" || {
+    echo "writable context maintenance does not forbid task-scope expansion"
+    return 1
+  }
+  grep -qiE '(may not|must not|do not|never)[^.]{0,80}(add|write)[^.]{0,40}conclusions?' <<<"$rule" || {
+    echo "writable context maintenance does not forbid conclusions"
+    return 1
+  }
+}
+
+@test "Item 2: review audit refute and council report stale facts read-only" {
+  local rule stage
+  rule="$(context_packet_dispatch_rule)"
+
+  for stage in review audit refute council; do
+    grep -qiE "(^|[^[:alnum:]_-])$stage([^[:alnum:]_-]|$)" <<<"$rule" || {
+      echo "the read-only context packet rule omits $stage"
+      return 1
+    }
+  done
+  grep -qiE 'read[- ]only' <<<"$rule" || {
+    echo "judgment consumers are not explicitly read-only for context.md"
+    return 1
+  }
+  grep -qiE 'report[^.]{0,80}stale[^.]{0,80}(entries|facts)|(stale[^.]{0,80}(entries|facts)[^.]{0,80}report)' <<<"$rule" || {
+    echo "read-only consumers are not required to report stale context facts"
+    return 1
+  }
+  grep -qiE 'existing[^.]{0,60}return[^.]{0,60}evidence|evidence[^.]{0,60}existing[^.]{0,60}return' <<<"$rule" || {
+    echo "stale context reporting is not routed through existing return evidence"
+    return 1
+  }
+}
+
+@test "Item 2: each file-backed consumer declares the bounded optional map input" {
   local stage relative file paragraph required
   while IFS='|' read -r stage relative; do
     [ -n "$relative" ] || continue
@@ -986,7 +1055,13 @@ CONSUMERS
       return 1
     }
 
-    for required in 'optional' 'facts[- ]only' 'plan' 'verify' 'trust'; do
+    for required in \
+      'optional' \
+      'facts[- ]only' \
+      'plan' \
+      'skip discovery' \
+      'verify only[^.]{0,80}(entries|facts)[^.]{0,80}rely' \
+      'encounter'; do
       grep -qiE "$required" <<<"$paragraph" || {
         echo "$relative context.md input is missing binding token: $required"
         return 1

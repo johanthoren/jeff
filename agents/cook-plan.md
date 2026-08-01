@@ -12,7 +12,7 @@ Inputs: the task spec (`task.md`) and existing system state. Read the relevant f
 Your job for every category:
 - Design the shortest correct approach in ordered slices. Set complexity (`simple` | `complex`; default complex when unsure) and whether an audit is required (when in doubt, require it).
 - Record the approach, slices, complexity, audit call, and per-criterion disposition in `notes.md`.
-- When useful, write or refresh the optional task-dir `context.md`: a facts-only map of relevant paths and their one-line roles; key symbols with `file:line`; exact targeted-test and build/run commands; and mechanical constraints. Exclude hypotheses, root-cause claims, suggested fixes, verdicts, opinions, approach recommendations, "the bug is", and "the approach should be".
+- When useful, create the initial optional task-dir `context.md`; plan owns its task scope and refreshes it whenever plan re-enters. Keep it a facts-only map of relevant paths and their one-line roles; key symbols with `file:line`; exact targeted-test and build/run commands; and mechanical constraints. Exclude hypotheses, root-cause claims, suggested fixes, verdicts, opinions, approach recommendations, "the bug is", and "the approach should be".
 
 For a `code` task:
 - Decide whether implementation owes behavior-preserving deduplication, deletion, or harmonization. Return a specific non-empty `refactorOpportunity`, or explicit `null`.
