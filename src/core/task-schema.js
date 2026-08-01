@@ -644,21 +644,43 @@ function validateCodeJudgmentHistory(task, out) {
     requireField(out, field, isType(entry, 'object'));
     if (!isType(entry, 'object')) return;
     requireField(out, `${field}.at`, isIsoDateTime(entry.at));
-    validateReview(entry.review, `${field}.review`, out);
-    requireField(out, `${field}.review2`, entry.review2 === null || isType(entry.review2, 'object'));
-    if (entry.review2 !== null) validateReview(entry.review2, `${field}.review2`, out);
-    validateAudit(entry.audit, `${field}.audit`, out, false, task);
+
+    const authoritative = entry.agents !== undefined;
+    if (authoritative || entry.review !== undefined) {
+      if (!isType(entry.review, 'object')) requireField(out, `${field}.review`, false);
+      else if (authoritative || Object.keys(entry.review).length > 0) {
+        validateReview(entry.review, `${field}.review`, out, HISTORICAL_REVIEW_VERDICTS);
+      }
+    }
+    if (authoritative || entry.review2 !== undefined) {
+      requireField(out, `${field}.review2`, entry.review2 === null || isType(entry.review2, 'object'));
+      if (isType(entry.review2, 'object')
+        && (authoritative || Object.keys(entry.review2).length > 0)) {
+        validateReview(entry.review2, `${field}.review2`, out, HISTORICAL_REVIEW_VERDICTS);
+      }
+    }
+    if (authoritative || entry.audit !== undefined) {
+      if (!isType(entry.audit, 'object')) requireField(out, `${field}.audit`, false);
+      else if (authoritative || Object.keys(entry.audit).length > 0) {
+        validateAudit(entry.audit, `${field}.audit`, out, false, task);
+      }
+    }
+    if (!authoritative) return;
+
     requireField(out, `${field}.agents`, isType(entry.agents, 'object'));
     if (!isType(entry.agents, 'object')) return;
     for (const identity of ['reviewer_agent_id', 'reviewer2_agent_id', 'audit_agent_id']) {
       requireField(out, `${field}.agents.${identity}`, isNullableString(entry.agents[identity]));
     }
     requireField(out, `${field}.review identity`,
-      entry.review?.reviewer_agent_id === entry.agents.reviewer_agent_id);
+      entry.review?.reviewer_agent_id == null
+      || entry.review.reviewer_agent_id === entry.agents.reviewer_agent_id);
     requireField(out, `${field}.review2 identity`,
-      (entry.review2?.reviewer_agent_id ?? null) === entry.agents.reviewer2_agent_id);
+      entry.review2?.reviewer_agent_id == null
+      || entry.review2.reviewer_agent_id === entry.agents.reviewer2_agent_id);
     requireField(out, `${field}.audit identity`,
-      entry.audit?.audit_agent_id === entry.agents.audit_agent_id);
+      entry.audit?.audit_agent_id == null
+      || entry.audit.audit_agent_id === entry.agents.audit_agent_id);
   });
 }
 

@@ -300,32 +300,32 @@ function isScopedCodeRepair(task, kickbacks, files) {
 /** @param {MutableRecordTask} task @param {any} history @param {'review' | 'audit'} source */
 function sourceJudgments(task, history, source) {
   if (source === 'audit') {
-    return [[task.audit, history?.audit, 'audit_agent_id']];
+    return [[task.audit, history?.audit, 'audit_agent_id', 'audit_agent_id']];
   }
   return [
-    [task.review, history?.review, 'reviewer_agent_id'],
-    [task.review2, history?.review2, 'reviewer_agent_id'],
+    [task.review, history?.review, 'reviewer_agent_id', 'reviewer_agent_id'],
+    [task.review2, history?.review2, 'reviewer_agent_id', 'reviewer2_agent_id'],
   ];
 }
 
 /** @param {MutableRecordTask} task @param {any} history @param {'review' | 'audit'} source */
 function hasUnarchivedFailure(task, history, source) {
-  return sourceJudgments(task, history, source).some(([live, archived, identity]) => (
-    isFailingJudgment(live)
-    && live?.[identity] != null
-    && live[identity] !== archived?.[identity]
-  ));
+  return sourceJudgments(task, history, source).some(([live, archived, identity, agentIdentity]) => {
+    const liveId = live?.[identity] ?? task.agents?.[agentIdentity];
+    const archivedId = archived?.[identity] ?? history?.agents?.[agentIdentity];
+    return isFailingJudgment(live) && liveId != null && liveId !== archivedId;
+  });
 }
 
 /** @param {MutableRecordTask} task @param {any} history */
 function hasRetainedJudgment(task, history) {
   return ['review', 'audit'].some((source) => (
     sourceJudgments(task, history, /** @type {'review' | 'audit'} */ (source))
-      .some(([live, archived, identity]) => (
-        isPassingJudgment(live)
-        && live?.[identity] != null
-        && live[identity] === archived?.[identity]
-      ))
+      .some(([live, archived, identity, agentIdentity]) => {
+        const liveId = live?.[identity] ?? task.agents?.[agentIdentity];
+        const archivedId = archived?.[identity] ?? history?.agents?.[agentIdentity];
+        return isPassingJudgment(live) && liveId != null && liveId === archivedId;
+      })
   ));
 }
 
