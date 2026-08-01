@@ -152,6 +152,8 @@ Every specialist inherits the orchestrator provider/model unchanged. Per-stage e
 
 **Bundled skill paths.** A dispatched station has no skill loader, so read the stage's `agents/cook-<stage>.md` for the bundled paths it names (`skills/testing/SKILL.md`), resolve each per §Resolving payload paths, and name it absolutely in the brief.
 
+**Context packets.** When present, name `.jeff/tasks/<dir>/context.md` in every implement, refactor, review, audit, refute, and council brief with the caveat: "a map, not an authority: use it to skip discovery; verify only entries you rely on; correct stale facts if writable, otherwise report them." The packet is optional, and consumers never independently reconstruct or rebuild it. Plan creates its initial facts-only contents, owns its task scope, and refreshes it whenever plan re-enters. Implement and refactor are writable consumers: during assigned code work, they maintain only entries for facts they directly verify, invalidate, create, or move; they must not expand task scope or add conclusions. Review, audit, refute, and council are read-only consumers: they report stale facts through their existing return evidence.
+
 For each dispatched stage (`plan`, `implement`, `refactor`, `execute`, `review`, `verify`, `audit`, and `refute` when needed), dispatch a fresh subagent:
 - **Claude Code:** use the native Agent/Task tool with `subagent_type: cook-<stage>` and record the host-observed id separately; the specialist JSON omits it.
 - **Pi:** use `cook_dispatch` with `stage`, `brief`, and `taskId` when recording. Execute receives its ordinary editing tools; verify receives its ordinary read tools. Pi projects an execute `approvalRequired` string exactly to the parent.

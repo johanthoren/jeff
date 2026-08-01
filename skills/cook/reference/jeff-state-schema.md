@@ -13,6 +13,7 @@ Jeff is a cooperative workflow protocol for a trusted operator and friendly agen
 - `.jeff/tasks/<NNNN>-<slug>/task.json`: per-task structured state (the canonical source; the dirs are the registry).
 - `.jeff/tasks/<NNNN>-<slug>/task.md`: spec (the `capture` output: goal, acceptance criteria, non-goals, scope).
 - `.jeff/tasks/<NNNN>-<slug>/notes.md`: running notes, kickback findings, decisions.
+- `.jeff/tasks/<dir>/context.md`: optional facts-only repository map whose task scope plan owns; plan creates and refreshes it, while implement and refactor maintain facts encountered during assigned code work.
 - `.jeff/memory/`: project memory.
 
 Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` + `role-runs/`) is dropped.

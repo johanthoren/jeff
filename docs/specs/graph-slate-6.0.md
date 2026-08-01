@@ -151,7 +151,7 @@ the graph-engineering literature is a scoped, facts-only context packet. The
 separation rule (`SKILL.md` §The loop, step 2: "never a conclusion") survives
 because the packet is restricted to facts.
 
-**Behavior.** The `plan` specialist writes `context.md` into the task dir. It
+**Behavior.** The `plan` specialist creates the initial optional `context.md` in the task dir, owns its task scope, and refreshes it whenever plan re-enters. It
 contains **facts only**:
 
 - relevant files, one line each: `path` plus a one-line role;
@@ -167,31 +167,38 @@ return, never in the packet.
 
 Downstream briefs (implement, refactor, review, audit, refute, council) name
 the packet path when the file exists, always with this fixed caveat: **"a map,
-not an authority: verify against the code; report stale entries."** Only plan
-writes or refreshes the packet (including on a kickback that re-enters plan).
-Absence of the packet is legal everywhere (advisory artifact, never a gate).
+not an authority: use it to skip discovery; verify only entries you rely on;
+correct stale facts if writable, otherwise report them."** Consumers never
+independently reconstruct the packet. Implement and refactor maintain only
+facts they directly verify, invalidate, create, or move during assigned code
+work; they do not expand task scope or add conclusions. Review, audit, refute,
+and council remain read-only and report stale facts through existing return
+evidence. Absence of the packet is legal everywhere (advisory artifact, never
+a gate).
 
 **Mechanics.**
-- `agents/cook-plan.md`: add the packet to "Your job" (write it, facts-only
-  contract, forbidden list) and to the hard rules (facts only; conclusions go
-  in `notes.md`). The strict JSON return is **unchanged**.
-- `skills/cook/SKILL.md` §Dispatch: one paragraph: name
-  `.jeff/tasks/<dir>/context.md` in every downstream brief when present, with
-  the fixed caveat sentence; plan is the only writer.
-- `agents/cook-implement.md`, `cook-refactor.md`, `cook-review.md`,
-  `cook-audit.md`, `cook-refute.md`: add one Inputs line: "optional
-  `context.md` (facts-only map from plan; verify, do not trust)".
+- `agents/cook-plan.md`: create the initial optional packet, own its task
+  scope, refresh it whenever plan re-enters, and retain the facts-only contract
+  and forbidden list. The strict JSON return is **unchanged**.
+- `skills/cook/SKILL.md` §Dispatch: own the canonical lifecycle, consumer
+  duties, exact caveat, optional absence, and no-reconstruction rule.
+- `agents/cook-implement.md` and `cook-refactor.md`: explicitly maintain facts
+  encountered during assigned code work without expanding task scope or adding
+  conclusions.
+- `agents/cook-review.md`, `cook-audit.md`, and `cook-refute.md`: explicitly
+  keep the packet read-only and report stale facts through existing return
+  evidence. Council receives the same duty through its generated brief.
 - `skills/cook/reference/jeff-state-schema.md` §On-disk layout: document the
-  file.
+  file and its ownership.
 - No `task.json` change. No validator change.
 
-**Test contract.** Bats prose checks: cook-plan.md names the packet and its
-facts-only rule; SKILL.md names the dispatch caveat; each consumer agent file
-lists the optional input.
+**Test contract.** Bats prose checks: plan packet creation, task-scope
+ownership, and re-entry refresh; canonical dispatch caveat and consumer duties;
+bounded inputs in each file-backed consumer; and the on-disk layout entry.
 
 **Acceptance criteria.**
 - Plan authors the packet; all six consumer briefs may carry it; the facts-only
-  boundary and single-writer rule are stated in the payload prose.
+  boundary, plan task-scope ownership, and implement/refactor factual-maintenance duties are stated in the payload prose.
 
 Audit: not required (prose-only).
 
