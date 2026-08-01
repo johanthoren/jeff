@@ -163,6 +163,16 @@ function hasRetainedSourceRefute(task, source, finding) {
     && task.refutes.some((/** @type {any} */ retained) => isSameRefute(retained, refute));
 }
 
+/**
+ * @param {any} outcome
+ * @param {any} agents
+ * @param {string} outcomeIdentity
+ * @param {string} agentIdentity
+ */
+function judgmentIdentity(outcome, agents, outcomeIdentity, agentIdentity) {
+  return outcome?.[outcomeIdentity] ?? agents?.[agentIdentity] ?? null;
+}
+
 /** @param {any} task */
 function hasTargetedRepairProof(task) {
   if (task.category === 'operation' || !Array.isArray(task.judgmentHistory)) return true;
@@ -183,17 +193,31 @@ function hasTargetedRepairProof(task) {
     ['audit', 'audit_agent_id'],
   ];
   const staleIdentity = judgments.some(([source, identity]) => {
-    const liveId = task[source]?.[identity];
+    const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+    const liveId = judgmentIdentity(task[source], task.agents, identity, agentIdentity);
+    const archivedId = judgmentIdentity(
+      history[source],
+      history.agents,
+      identity,
+      agentIdentity,
+    );
     return liveId != null
-      && history[source]?.[identity] !== liveId
+      && archivedId !== liveId
       && task.judgmentHistory.slice(0, -1).some((/** @type {any} */ entry) => (
-        entry?.[source]?.[identity] === liveId
+        judgmentIdentity(entry?.[source], entry?.agents, identity, agentIdentity) === liveId
       ));
   });
   if (staleIdentity) return false;
   const retainedSources = judgments.filter(([source, identity]) => {
-    const liveId = task[source]?.[identity];
-    return liveId != null && history[source]?.[identity] === liveId;
+    const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+    const liveId = judgmentIdentity(task[source], task.agents, identity, agentIdentity);
+    const archivedId = judgmentIdentity(
+      history[source],
+      history.agents,
+      identity,
+      agentIdentity,
+    );
+    return liveId != null && archivedId === liveId;
   });
   if (!Array.isArray(latestKickback.findings) || latestKickback.findings.length === 0) {
     return retainedSources.length === 0;
@@ -204,7 +228,7 @@ function hasTargetedRepairProof(task) {
       ? ['review'] : []),
     ...(history.audit?.verdict === 'needs-work' ? ['audit'] : []),
   ];
-  if (!raisingSources.includes(latestKickback.from)) return false;
+  if (!raisingSources.includes(latestKickback.from)) return retainedSources.length === 0;
   const kickbacks = raisingSources.map((source) => judgmentKickbacks.findLast((/** @type {any} */ kickback) => (
     kickback.from === source && kickback.at === latestKickback.at
   ))).filter((kickback) => kickback !== undefined);
@@ -237,20 +261,27 @@ function hasTargetedRepairProof(task) {
   const recordedRepairs = repairStages
     .map((stage) => [stage, task[stage]])
     .filter(([, repair]) => isType(repair, 'object'));
-  const hasConfinedRepair = recordedRepairs.length > 0
-    && recordedRepairs.every(([stage, repair]) => (
-      (stage === 'implement' ? repair.result === 'green' : repair.result === 'clean')
-      && Array.isArray(repair.files)
-      && repair.files.length > 0
-      && repair.files.every((/** @type {any} */ file) => findingFiles.has(file))
-    ));
+  const repairsAreConfined = recordedRepairs.every(([stage, repair]) => (
+    (stage === 'implement' ? repair.result === 'green' : repair.result === 'clean')
+    && Array.isArray(repair.files)
+    && repair.files.length > 0
+    && repair.files.every((/** @type {any} */ file) => findingFiles.has(file))
+  ));
+  const hasConfinedRepair = repairStages.length > 0
+    && recordedRepairs.length === repairStages.length
+    && repairsAreConfined;
+  if (!hasConfinedRepair
+    && repairStages.includes(task.stage)
+    && recordedRepairs.length > 0
+    && repairsAreConfined) return true;
   const raised = new Set(raisingSources);
   if (retainedSources.length === 0) {
-    const hasRetainableSibling = judgments.some(([source, identity]) => (
-      !raised.has(source === 'review2' ? 'review' : source)
-      && history[source]?.[identity] != null
-      && history[source]?.verdict === 'pass'
-    ));
+    const hasRetainableSibling = judgments.some(([source, identity]) => {
+      const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+      return !raised.has(source === 'review2' ? 'review' : source)
+        && judgmentIdentity(history[source], history.agents, identity, agentIdentity) != null
+        && history[source]?.verdict === 'pass';
+    });
     return !hasRetainableSibling || !hasConfinedRepair;
   }
   if (!hasConfinedRepair) return false;
@@ -262,14 +293,12 @@ function hasTargetedRepairProof(task) {
     .every(([source, identity]) => {
       const archived = history[source];
       const live = task[source];
-      const archivedId = archived?.[identity] ?? null;
-      const liveId = live?.[identity] ?? null;
-      if (archivedId === null && liveId === null) return true;
       const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+      const archivedId = judgmentIdentity(archived, history.agents, identity, agentIdentity);
+      const liveId = judgmentIdentity(live, task.agents, identity, agentIdentity);
+      if (archivedId === null && liveId === null) return true;
       return archivedId !== null
-        && archivedId === history.agents?.[agentIdentity]
         && archivedId === liveId
-        && liveId === task.agents?.[agentIdentity]
         && archived?.verdict === 'pass'
         && live?.verdict === 'pass'
         && isDeepStrictEqual(live, archived);

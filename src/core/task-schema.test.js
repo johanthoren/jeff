@@ -2964,9 +2964,25 @@ test('Item 4 optional kickback findings schema accepts valid values and rejects 
 
 test('Item 4 code judgmentHistory schema rejects malformed entries', async () => {
   const task = item4RetainedLedger('review');
-  task.judgmentHistory = [{ garbage: true }];
+  task.judgmentHistory = [{ at: '2026-07-12T00:40:00Z', garbage: true }];
+  delete task.kickbacks[0].findings;
   const result = await verdictFor(task);
   assertNamedFailure(result, 'judgmentHistory[0]');
+});
+
+test('Item 4 code judgmentHistory preserves archived unaudited audits without findings', async () => {
+  const task = item4RetainedLedger('review');
+  task.kickbacks = [];
+  task.judgmentHistory[0].audit = {
+    required: false,
+    verdict: 'na',
+    audit_agent_id: null,
+    evidence: [],
+  };
+  task.judgmentHistory[0].agents.audit_agent_id = null;
+
+  const result = await verdictFor(task);
+  assert.equal(result.ok, true, result.stderr.join('\n'));
 });
 
 test('Item 4 INV-12 accepts exact retention and historical ledgers without findings', async (t) => {
@@ -3040,6 +3056,36 @@ test('Item 4 INV-12 accepts exact retention and historical ledgers without findi
   });
 });
 
+test('Item 4 INV-12 enforces agents-only retained sibling identity, pass verdict, and deep equality', async (t) => {
+  /** @type {Array<[string, (task: Record<string, any>, source: 'review' | 'audit', agentIdentity: 'reviewer_agent_id' | 'audit_agent_id') => void]>} */
+  const mutations = [
+    ['identity', (task, source, agentIdentity) => {
+      task.agents[agentIdentity] = `${source}-mutated`;
+    }],
+    ['pass verdict', (task, source) => {
+      task[source].verdict = 'needs-work';
+    }],
+    ['deep equality', (task, source) => {
+      task[source].evidence = [`changed ${source} evidence`];
+    }],
+  ];
+
+  for (const raisingSource of /** @type {const} */ (['review', 'audit'])) {
+    const retainedSource = raisingSource === 'review' ? 'audit' : 'review';
+    const outcomeIdentity = retainedSource === 'audit' ? 'audit_agent_id' : 'reviewer_agent_id';
+    const agentIdentity = retainedSource === 'audit' ? 'audit_agent_id' : 'reviewer_agent_id';
+    for (const [name, mutate] of mutations) await t.test(`${retainedSource} ${name}`, async () => {
+      const task = item4RetainedLedger(raisingSource);
+      task[retainedSource][outcomeIdentity] = null;
+      task.judgmentHistory[0][retainedSource][outcomeIdentity] = null;
+      mutate(task, retainedSource, agentIdentity);
+
+      const result = await verdictFor(task);
+      assertNamedFailure(result, '[inv12]');
+    });
+  }
+});
+
 test('Item 4 INV-12 selects the actual latest judgment kickback', async (t) => {
   /**
    * @param {undefined | any[]} findings
@@ -3084,6 +3130,53 @@ test('Item 4 INV-12 selects the actual latest judgment kickback', async (t) => {
 
     await t.test(`${name} cannot authorize a retained judgment from an older typed round`, async () => {
       const result = await verdictFor(latestRoundTask(findings, true));
+      assertNamedFailure(result, '[inv12]');
+    });
+  }
+});
+
+test('Item 4 INV-12 rejects prior-round repair records as current-round proof', async (t) => {
+  for (const staleStage of /** @type {const} */ (['implement', 'refactor'])) {
+    await t.test(`stale ${staleStage}`, async () => {
+      const task = item4RetainedLedger('review');
+      const priorFinding = item4KickbackFinding('review', { kickTo: staleStage });
+      const currentRefactorFinding = item4KickbackFinding('review', {
+        file: 'src/core/invariants.js',
+        line: 12,
+        kickTo: 'refactor',
+      });
+      task.kickbacks.unshift({
+        from: 'review',
+        to: staleStage,
+        reason: `Prior round required ${staleStage}.`,
+        at: '2026-07-12T00:10:00Z',
+        findings: [priorFinding],
+      });
+      task.kickbacks.at(-1).findings.push(currentRefactorFinding);
+      const priorHistory = structuredClone(task.judgmentHistory[0]);
+      priorHistory.at = '2026-07-12T00:20:00Z';
+      task.judgmentHistory.unshift(priorHistory);
+      delete task.implement;
+      delete task.refactor;
+      if (staleStage === 'implement') {
+        task.implement = {
+          agent_id: 'prior-round-implementer',
+          result: 'green',
+          files: ['src/core/record.js'],
+          greenRun: { command: 'node --test', output: 'pass' },
+        };
+      } else {
+        task.refactor = {
+          agent_id: 'prior-round-refactorer',
+          result: 'clean',
+          files: ['src/core/record.js'],
+          outsideDiff: [],
+          greenRun: { command: 'node --test', output: 'pass' },
+          summary: ['Applied a prior-round refactor.'],
+        };
+      }
+
+      const result = await verdictFor(task);
       assertNamedFailure(result, '[inv12]');
     });
   }

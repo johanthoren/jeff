@@ -400,12 +400,10 @@ function resetJudgmentsAfterFix(task, at, files) {
     kickback.to === 'implement'
     || kickback.findings?.some((/** @type {any} */ finding) => finding.kickTo === 'implement')
   ));
-  const repairFiles = [
-    ...(includesImplement && Array.isArray(task.implement?.files) ? task.implement.files : []),
-    ...(Array.isArray(files) ? files : []),
-  ];
   const scoped = consumedKickbacks.length === raisingSources.length
-    && isScopedCodeRepair(task, consumedKickbacks, repairFiles);
+    && isScopedCodeRepair(task, consumedKickbacks, files)
+    && (!includesImplement
+      || isScopedCodeRepair(task, consumedKickbacks, task.implement?.files));
   if (!scoped) archiveAndResetJudgments(task, at);
   return scoped;
 }
@@ -577,6 +575,10 @@ function recordRefute(task, result, at) {
     }
     settleJudgments(task);
     return;
+  }
+  if (!isOperation(task)) {
+    delete task.implement;
+    delete task.refactor;
   }
   task.kickbacks = [...task.kickbacks, ...kickbacks];
   task.stage = kickbacks

@@ -633,6 +633,17 @@ function validateJudgmentHistory(task, out, authoritative) {
   });
 }
 
+/** @param {any} value */
+function isArchivedUnauditedAudit(value) {
+  return isType(value, 'object')
+    && value.required === false
+    && value.verdict === 'na'
+    && value.audit_agent_id === null
+    && Array.isArray(value.evidence)
+    && value.evidence.length === 0
+    && Object.keys(value).length === 4;
+}
+
 /** @param {any} task @param {string[]} out */
 function validateCodeJudgmentHistory(task, out) {
   if (task.judgmentHistory === undefined) return;
@@ -641,46 +652,42 @@ function validateCodeJudgmentHistory(task, out) {
   if (!Array.isArray(task.judgmentHistory)) return;
   task.judgmentHistory.forEach((/** @type {any} */ entry, /** @type {number} */ index) => {
     const field = `judgmentHistory[${index}]`;
-    requireField(out, field, isType(entry, 'object'));
+    requireField(out, field, isType(entry, 'object')
+      && Object.keys(entry).every((key) => ['at', 'review', 'review2', 'audit', 'agents'].includes(key)));
     if (!isType(entry, 'object')) return;
     requireField(out, `${field}.at`, isIsoDateTime(entry.at));
-
-    const authoritative = entry.agents !== undefined;
-    if (authoritative || entry.review !== undefined) {
-      if (!isType(entry.review, 'object')) requireField(out, `${field}.review`, false);
-      else if (authoritative || Object.keys(entry.review).length > 0) {
-        validateReview(entry.review, `${field}.review`, out, HISTORICAL_REVIEW_VERDICTS);
-      }
+    validateReview(entry.review, `${field}.review`, out, HISTORICAL_REVIEW_VERDICTS);
+    requireField(out, `${field}.review.findings`, Array.isArray(entry.review?.findings));
+    requireField(out, `${field}.review2`, entry.review2 === null || isType(entry.review2, 'object'));
+    if (isType(entry.review2, 'object')) {
+      validateReview(entry.review2, `${field}.review2`, out, HISTORICAL_REVIEW_VERDICTS);
+      requireField(out, `${field}.review2.findings`, Array.isArray(entry.review2.findings));
     }
-    if (authoritative || entry.review2 !== undefined) {
-      requireField(out, `${field}.review2`, entry.review2 === null || isType(entry.review2, 'object'));
-      if (isType(entry.review2, 'object')
-        && (authoritative || Object.keys(entry.review2).length > 0)) {
-        validateReview(entry.review2, `${field}.review2`, out, HISTORICAL_REVIEW_VERDICTS);
-      }
-    }
-    if (authoritative || entry.audit !== undefined) {
-      if (!isType(entry.audit, 'object')) requireField(out, `${field}.audit`, false);
-      else if (authoritative || Object.keys(entry.audit).length > 0) {
-        validateAudit(entry.audit, `${field}.audit`, out, false, task);
-      }
-    }
-    if (!authoritative) return;
-
+    validateAudit(entry.audit, `${field}.audit`, out, false, task);
+    requireField(out, `${field}.audit.findings`, Array.isArray(entry.audit?.findings)
+      || isArchivedUnauditedAudit(entry.audit));
     requireField(out, `${field}.agents`, isType(entry.agents, 'object'));
     if (!isType(entry.agents, 'object')) return;
-    for (const identity of ['reviewer_agent_id', 'reviewer2_agent_id', 'audit_agent_id']) {
-      requireField(out, `${field}.agents.${identity}`, isNullableString(entry.agents[identity]));
+
+    const judgments = [
+      ['review', 'reviewer_agent_id', 'reviewer_agent_id'],
+      ['review2', 'reviewer_agent_id', 'reviewer2_agent_id'],
+      ['audit', 'audit_agent_id', 'audit_agent_id'],
+    ];
+    for (const [source, outcomeIdentity, agentIdentity] of judgments) {
+      requireField(out, `${field}.agents.${agentIdentity}`,
+        isNullableString(entry.agents[agentIdentity]));
+      const outcome = entry[source];
+      const outcomeId = outcome?.[outcomeIdentity] ?? null;
+      const agentId = entry.agents[agentIdentity] ?? null;
+      const recorded = outcome != null
+        && outcome.verdict !== null
+        && outcome.verdict !== 'na';
+      requireField(out, `${field}.${source} identity`, recorded
+        ? (isNonemptyString(outcomeId) || isNonemptyString(agentId))
+          && (outcomeId === null || agentId === null || outcomeId === agentId)
+        : outcomeId === null && agentId === null);
     }
-    requireField(out, `${field}.review identity`,
-      entry.review?.reviewer_agent_id == null
-      || entry.review.reviewer_agent_id === entry.agents.reviewer_agent_id);
-    requireField(out, `${field}.review2 identity`,
-      entry.review2?.reviewer_agent_id == null
-      || entry.review2.reviewer_agent_id === entry.agents.reviewer2_agent_id);
-    requireField(out, `${field}.audit identity`,
-      entry.audit?.audit_agent_id == null
-      || entry.audit.audit_agent_id === entry.agents.audit_agent_id);
   });
 }
 

@@ -4373,6 +4373,43 @@ function item4RepairTask(overrides = {}) {
   });
 }
 
+function item4MixedRepairTask() {
+  const base = item4RepairTask();
+  const refactorFinding = blockingFinding({
+    file: 'src/core/invariants.js',
+    line: 12,
+    kickTo: 'refactor',
+    what: 'review requires a confined refactor.',
+  });
+  const refute = {
+    agent_id: 'review-refuter',
+    source: 'review',
+    finding: `${refactorFinding.file}:${refactorFinding.line} ${refactorFinding.what}`,
+    verdict: 'survives',
+    rationale: 'The confined refactor remains necessary.',
+    evidence: [{ command: 'node --test', output: 'failure reproduced' }],
+  };
+  refactorFinding.refute = refute;
+  return item4RepairTask({
+    review: {
+      ...base.review,
+      findings: [...base.review.findings, refactorFinding],
+    },
+    refutes: [refute],
+    kickbacks: [{
+      ...base.kickbacks[0],
+      findings: [
+        item4TypedFinding('review'),
+        item4TypedFinding('review', {
+          file: 'src/core/invariants.js',
+          line: 12,
+          kickTo: 'refactor',
+        }),
+      ],
+    }],
+  });
+}
+
 /** @param {string[]} files */
 function item4ImplementReturn(files) {
   return {
@@ -4423,6 +4460,12 @@ function item4AuditReturn(agentId, cycle) {
     findings: [],
     evidence: [{ command: 'review-security --json', output: 'no findings' }],
   };
+}
+
+/** @param {Record<string, any> & {agent_id: string}} value */
+function item4ObservedReturn(value) {
+  const { agent_id: agentId, ...result } = value;
+  return observedReturn(agentId, result);
 }
 
 test('Item 4 targeted repair retains only independently passing judgments', async (t) => {
@@ -4559,33 +4602,7 @@ test('Item 4 targeted repair retains only independently passing judgments', asyn
   });
 
   await t.test('mixed implement and refactor full-resets when the second stage exceeds the contract', () => {
-    const base = item4RepairTask();
-    const refactorFinding = {
-      ...blockingFinding({
-        file: 'src/core/invariants.js',
-        line: 12,
-        kickTo: 'refactor',
-        what: 'review requires a confined refactor.',
-      }),
-      refute: { source: 'review', verdict: 'survives' },
-    };
-    const task = item4RepairTask({
-      review: {
-        ...base.review,
-        findings: [...base.review.findings, refactorFinding],
-      },
-      kickbacks: [{
-        ...base.kickbacks[0],
-        findings: [
-          item4TypedFinding('review'),
-          item4TypedFinding('review', {
-            file: 'src/core/invariants.js',
-            line: 12,
-            kickTo: 'refactor',
-          }),
-        ],
-      }],
-    });
+    const task = item4MixedRepairTask();
 
     const implemented = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
       task,
@@ -4608,6 +4625,99 @@ test('Item 4 targeted repair retains only independently passing judgments', asyn
     assert.equal(refactored.audit.verdict, 'na');
     assert.equal(refactored.audit.audit_agent_id, null);
     assert.equal(refactored.agents.audit_agent_id, null);
+  });
+});
+
+test('Item 4 authoritative full reset archives outcome-only code judgment identities', async () => {
+  const base = item4RepairTask();
+  const task = item4RepairTask({
+    agents: {
+      ...base.agents,
+      reviewer_agent_id: null,
+      audit_agent_id: null,
+    },
+    kickbacks: /** @type {any[]} */ (base.kickbacks).map(({ findings: _findings, ...kickback }) => kickback),
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+    );
+    const recorded = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+    const history = /** @type {any[]} */ (recorded.judgmentHistory);
+
+    assert.equal(Object.hasOwn(recorded.kickbacks[0], 'findings'), false);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].review.reviewer_agent_id, 'reviewer-old');
+    assert.equal(history[0].agents.reviewer_agent_id, null);
+    assert.equal(history[0].audit.audit_agent_id, 'auditor-old');
+    assert.equal(history[0].agents.audit_agent_id, null);
+    assert.equal(recorded.review.reviewer_agent_id, null);
+    assert.equal(recorded.audit.audit_agent_id, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Item 4 authoritative mixed repair full-resets an unscoped owed refactor and completes fresh judgments', async (t) => {
+  for (const [name, files] of /** @type {Array<[string, string[]]>} */ ([
+    ['out-of-contract files', ['src/core/task-schema.js']],
+    ['empty files', []],
+  ])) await t.test(name, async () => {
+    const { root, taskDir } = await makeRoot(item4MixedRepairTask());
+    try {
+      await recordSpecialistReturn(
+        root,
+        'implement',
+        '18',
+        item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+      );
+      const implemented = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+      assert.equal(implemented.stage, 'refactor');
+      assert.equal(implemented.agents.audit_agent_id, 'auditor-old');
+
+      await recordSpecialistReturn(
+        root,
+        'refactor',
+        '18',
+        item4ObservedReturn(item4RefactorReturn(files)),
+      );
+      const reset = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+      assert.equal(reset.stage, 'review');
+      assert.equal(reset.judgmentHistory?.length, 2);
+      assert.equal(reset.review.reviewer_agent_id, null);
+      assert.equal(reset.audit.audit_agent_id, null);
+      assert.equal(reset.agents.audit_agent_id, null);
+
+      await recordCurrentGate(root, taskDir);
+      await recordSpecialistReturn(
+        root,
+        'review',
+        '18',
+        item4ObservedReturn(item4ReviewReturn('reviewer-fresh', 2)),
+      );
+      await recordSpecialistReturn(
+        root,
+        'review',
+        '18',
+        item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 2)),
+      );
+      await recordSpecialistReturn(
+        root,
+        'audit',
+        '18',
+        item4ObservedReturn(item4AuditReturn('auditor-fresh', 2)),
+      );
+      const completed = await readTask(taskDir);
+      assert.equal(completed.status, 'done');
+      assert.equal(completed.stage, 'done');
+      assert.equal(completed.judgmentHistory.length, 2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
