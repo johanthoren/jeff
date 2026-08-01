@@ -7,7 +7,7 @@ Read this when a full-mode project needs task files laid down, when a task reach
 There is **no** `cook new`/`create`/`add` verb, and none is planned (a deliberate call; see `[[jeff-no-cook-new-verb]]`); tasks are **hand-authored**. When a captured task needs its files laid down, do it by hand:
 
 - **Next id** = one greater than the maximum id in the union of live task ids and `prunedTaskIds` (or `1` when that union is empty). Cross-check BACKLOG's "Next free id" line for stale orientation; the live task directories and terminal provenance are authoritative.
-- **Create `.jeff/tasks/00NN-<slug>/`** with three files: `task.json` (canonical shape in `skills/cook/reference/jeff-state-schema.md` §`task.json`), `task.md` (goal / acceptance criteria / non-goals / audit), and `notes.md`.
+- **Create `.jeff/tasks/00NN-<slug>/`** with three files: `task.json` (canonical shape in `skills/cook/reference/jeff-state-schema.md` §`task.json`, including `pipelineVersion` copied from the live repository `package.json` version), `task.md` (goal / acceptance criteria / non-goals / audit), and `notes.md`. `journal.jsonl` is created by the first journal append.
 - **Orient the backlog:** add the live task to `BACKLOG.md` and bump BACKLOG's "Next free id" line. Do not add a live id to `prunedTaskIds`; the task directory is its registry entry.
 - **Validate, then preserve:** run `cook validate` before integration and preserve the capture/config/backlog changes durably through the repository/context-selected checkpoint. Do not require a separate trunk commit: completed work lands as one green task commit.
 
@@ -25,6 +25,24 @@ This covers only the **mechanical scaffolding**. The interrogation → acceptanc
 When stale, refresh before picking up the task: correct NOW/NEXT, reconcile any missing open tasks, and drop dangling ids.
 
 Keep BACKLOG current so each fresh context starts with honest orientation rather than stale state.
+
+## Resume from the journal
+
+At the start of every task loop, read `journal.jsonl` when present. Malformed
+lines warn and are skipped; they do not make the historical task unusable. Find
+the latest unmatched intent by reading valid events in sequence order:
+
+- A specialist `intent` with no later `record` for the same stage means the
+  dispatch may have died. Append a new intent, dispatch a fresh specialist, and
+  do not consume a convergence cycle for the orphan.
+- An `intent` with `stage:"external"` and no later `external` completion means
+  the side effect may already exist. Query the external system first, append the
+  completion if it exists, and retry the side effect only when it is genuinely
+  absent.
+
+Historical task directories without `journal.jsonl` or `pipelineVersion` resume
+unchanged. The journal is removed with the task directory during terminal
+pruning.
 
 ## Terminal-with-removal (prune)
 

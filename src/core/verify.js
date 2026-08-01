@@ -188,7 +188,7 @@ export async function runVerify(root, taskId) {
             gate: { hash, clean, green: rc === 0, command: cmd, at: utcSecond() },
           },
         };
-      });
+      }, { journal: { event: 'gate', hash, green: rc === 0, clean } });
     } catch (error) {
       return { code: 1, stdout: [], stderr: [`cook: ${/** @type {Error} */ (error).message}`] };
     }

@@ -14,6 +14,7 @@ Jeff is a cooperative workflow protocol for a trusted operator and friendly agen
 - `.jeff/tasks/<NNNN>-<slug>/task.md`: spec (the `capture` output: goal, acceptance criteria, non-goals, scope).
 - `.jeff/tasks/<NNNN>-<slug>/notes.md`: running notes, kickback findings, decisions.
 - `.jeff/tasks/<dir>/context.md`: optional facts-only repository map whose task scope plan owns; plan creates and refreshes it, while implement and refactor maintain facts encountered during assigned code work.
+- `.jeff/tasks/<dir>/journal.jsonl`: optional per-task append-only operational provenance, created on first journal append and pruned with the task directory.
 - `.jeff/memory/`: project memory.
 
 Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` + `role-runs/`) is dropped.
@@ -23,6 +24,7 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 ```json
 {
   "schemaVersion": 1,
+  "pipelineVersion": "<package.json version>",
   "id": 1,
   "slug": "kebab-case-slug",
   "title": "Human-readable title",
@@ -61,6 +63,7 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - `status` ∈ `pending | in_progress | blocked | done | abandoned`.
 - `category` is `code | operation`. Capture locks it by primary outcome. Omission is historical compatibility and behaves exactly as `code`.
 - `operationStateVersion`: canonical operation writers persist `1`. An unmarked schema-v1 operation ledger uses the mechanically checked legacy branch; any other marker value is invalid. Code ledgers, including historical category omission, never enter this branch.
+- `pipelineVersion` is optional for historical compatibility. When present it is a nonempty string containing the jeff `package.json` version used to create the ledger. Canonical ledger writers set it; it is provenance only and no 6.0 gate reads it.
 - Code stages are `capture | plan | implement | refactor | review | audit | done`; operation stages are `capture | plan | execute | verify | audit | done`. Historical code ledgers may persist `test` as a compatibility-resume state. Category graphs and kickbacks are closed. Marked operation stages retain their exact predecessor state, and `status:"done"` is equivalent to `stage:"done"`.
 - `priority` ∈ `p0 | p1 | p2 | p3 | p4`.
 - `createdAt` / `updatedAt`: calendar-valid ISO-8601 datetimes. The same strict timestamp contract applies to `tests.gate.at`, every `kickbacks[*].at`, approval request and grant times, execution `recordedAt`, and judgment-history times.
@@ -93,6 +96,32 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - `status = blocked` ⇒ `blockedReason` non-null.
 - `status = abandoned` ⇒ `abandonReason` non-null.
 - `status = done` ⇒ the done-gate holds (validator invariant 4).
+
+## `journal.jsonl`
+
+The optional per-task journal is append-only JSONL with one complete object per
+line and a monotonically increasing `seq` from 0. Writers allocate the next
+sequence as one greater than the greatest valid prior sequence while holding the
+shared `.record-lock`.
+
+The 6.0 event vocabulary is closed:
+
+```jsonc
+{"seq":0,"at":"<ISO>","event":"intent","stage":"<stage|refute|council|external>","note":"<optional text>"}
+{"seq":1,"at":"<ISO>","event":"record","stage":"<stage>","agent":"<observedAgentId>"}
+{"seq":2,"at":"<ISO>","event":"gate","hash":"<sha>","green":true,"clean":true}
+{"seq":3,"at":"<ISO>","event":"external","note":"<optional completion text>"}
+```
+
+`cook journal <id> intent --stage <s> [--note <text>]` and `cook journal
+<id> external [--note <text>]` are the operator-authored surfaces. Successful
+`cook record`, `cook approve`, and tracked `cook verify --task <id>` append
+their `record` or `gate` events automatically after the task transition writes.
+Malformed JSON or invalid event shapes warn and are skipped when reading; their
+bytes stay unchanged. Appends fail closed and surface containment, lock, read,
+or write errors. The journal is operational provenance, not validated state:
+`cook validate` ignores it in 6.0, and historical task directories without one
+remain valid.
 
 ## `convergence` (optional bounded judgment-loop termination)
 

@@ -1,9 +1,10 @@
 // @ts-check
 
-import { readFile, lstat, mkdir, realpath, rmdir } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import { assertStoreContained, collectTasks, readConfig, readTask, writeTask } from './store.js';
+import { collectTasks, readConfig, readTask, writeTask } from './store.js';
+import { locateTask, withStoreLock } from './store-lock.js';
+import { appendJournalEvent } from './journal.js';
 import { git, treeDirty } from './git.js';
 import { configSchemaViolations, isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
@@ -27,8 +28,6 @@ import {
 /** @typedef {Record<string, any>} MutableRecordTask */
 
 const now = () => `${new Date().toISOString().slice(0, 19)}Z`;
-const wait = (/** @type {number} */ milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds));
-const RECORD_LOCK_ATTEMPTS = 100;
 const KICKBACK_STAGE_ORDER = ['capture', 'plan', 'execute', 'implement', 'refactor'];
 const FALSE_VERIFICATION_REASON = 'Verifier postconditions remain false after finding demotion.';
 const DEFAULT_CONVERGENCE = {
@@ -864,59 +863,15 @@ export function transitionTask(task, stage, result) {
   return /** @type {TaskJson} */ (next);
 }
 
-/** @param {string} parent @param {string} child */
-function escapes(parent, child) {
-  const path = relative(parent, child);
-  return path === '..' || path.startsWith(`..${sep}`);
-}
-
-
-/** @param {string} root @param {() => Promise<any>} operation */
-async function withStoreLock(root, operation) {
-  try {
-    await assertStoreContained(root);
-  } catch (error) {
-    throw new Error(`[record-task] ${/** @type {Error} */ (error).message}`);
-  }
-  const lock = join(root, '.jeff', '.record-lock');
-  let acquired = false;
-  for (let attempt = 0; attempt < RECORD_LOCK_ATTEMPTS; attempt += 1) {
-    try {
-      await mkdir(lock);
-      acquired = true;
-      break;
-    } catch (error) {
-      if (/** @type {any} */ (error).code !== 'EEXIST') throw error;
-      if (attempt + 1 < RECORD_LOCK_ATTEMPTS) await wait(5);
-    }
-  }
-  if (!acquired) throw new Error('[record-lock] store lock is busy or unavailable');
-  try {
-    return await operation();
-  } finally {
-    await rmdir(lock);
-  }
-}
-
-/** @param {string} root @param {string} id @param {any[]} tasks */
-async function locateTask(root, id, tasks) {
-  const matches = tasks.filter((task) => String(task.id) === id);
-  if (matches.length !== 1) throw new Error(`[record-task] task ${id} ${matches.length ? 'is ambiguous' : 'was not found'}`);
-  const taskFile = resolve(root, matches[0]._dir);
-  const taskDir = dirname(taskFile);
-  const base = await realpath(join(root, '.jeff', 'tasks'));
-  const actualDir = await realpath(taskDir);
-  if (escapes(base, actualDir) || (await lstat(taskFile)).isSymbolicLink()) {
-    throw new Error(`[record-task] task ${id} escapes .jeff/tasks`);
-  }
-  return { taskDir, taskPath: matches[0]._dir };
-}
 
 /**
  * @param {string} root
  * @param {string} id
  * @param {(task: TaskJson) => TaskJson} update
- * @param {{allowTransientTerminal?: boolean}} [options]
+ * @param {{
+ *   allowTransientTerminal?: boolean,
+ *   journal?: import('./journal.js').JournalAppend,
+ * }} [options]
  */
 export async function updateTask(root, id, update, options = {}) {
   return withStoreLock(root, async () => {
@@ -970,6 +925,9 @@ export async function updateTask(root, id, update, options = {}) {
       ));
     if (violations.length) throw new Error(violations[0]);
     await writeTask(taskDir, candidate);
+    if (options.journal !== undefined) {
+      await appendJournalEvent(root, taskDir, options.journal);
+    }
     return candidate;
   });
 }
@@ -1022,7 +980,7 @@ export async function recordApproval(root, id, grantedBy) {
     next.approvals = [...(next.approvals ?? []), grant];
     next.updatedAt = grantedAt;
     return /** @type {TaskJson} */ (next);
-  });
+  }, { journal: { event: 'record', stage: 'execute', agent: grantedBy } });
 }
 
 /** @param {string} root @param {string} stage @param {string} id @param {string} file @param {string} [observedAgentId] */
@@ -1042,5 +1000,16 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
   const transitionReturn = stage === 'council'
     ? specialistReturn
     : { ...specialistReturn, agent_id: observedAgentId };
-  return updateTask(root, id, (task) => transitionTask(task, stage, transitionReturn), { allowTransientTerminal: true });
+  const journalAgent = stage === 'council'
+    ? specialistReturn.members.map((/** @type {{agent_id: string}} */ member) => member.agent_id).join(',')
+    : /** @type {string} */ (observedAgentId);
+  return updateTask(
+    root,
+    id,
+    (task) => transitionTask(task, stage, transitionReturn),
+    {
+      allowTransientTerminal: true,
+      journal: { event: 'record', stage, agent: journalAgent },
+    },
+  );
 }
