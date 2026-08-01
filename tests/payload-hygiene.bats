@@ -879,3 +879,132 @@ CASES
     return 1
   }
 }
+
+# ---------------------------------------------------------------------------
+# Graph slate Item 2: optional facts-only context packets
+# ---------------------------------------------------------------------------
+
+list_context_packet_consumers() {
+  cat <<'CONSUMERS'
+implement|agents/cook-implement.md
+refactor|agents/cook-refactor.md
+review|agents/cook-review.md
+audit|agents/cook-audit.md
+refute|agents/cook-refute.md
+council|
+CONSUMERS
+}
+
+@test "Item 2: plan owns the facts-only context packet boundary" {
+  local file="$REPO/agents/cook-plan.md"
+  local compact
+  compact="$(tr '\n' ' ' <"$file")"
+
+  grep -qF 'context.md' <<<"$compact" || {
+    echo "cook-plan.md does not name context.md"
+    return 1
+  }
+  grep -qiE '(write|author|refresh)[^.]{0,100}context\.md|context\.md[^.]{0,100}(write|author|refresh)' <<<"$compact" || {
+    echo "cook-plan.md does not make plan the context.md author"
+    return 1
+  }
+  grep -qiE 'facts[- ]only' <<<"$compact" || {
+    echo "cook-plan.md does not require facts-only content"
+    return 1
+  }
+
+  local required
+  for required in \
+    'relevant (files|paths)' \
+    'path[^.]{0,60}role|role[^.]{0,60}path' \
+    'file:line' \
+    'exact[^.]{0,80}targeted[- ]test|targeted[- ]test[^.]{0,80}exact' \
+    'build/run' \
+    'mechanical constraints?' \
+    'hypotheses?' \
+    'root[- ]cause' \
+    'suggested fixes' \
+    'verdicts?' \
+    'opinions?'; do
+    grep -qiE "$required" <<<"$compact" || {
+      echo "cook-plan.md context packet contract is missing binding token: $required"
+      return 1
+    }
+  done
+
+  grep -qiE 'conclusions?[^.]{0,100}notes\.md|notes\.md[^.]{0,100}conclusions?' <<<"$compact" || {
+    echo "cook-plan.md does not keep conclusions in notes.md"
+    return 1
+  }
+}
+
+@test "Item 2: downstream dispatch carries the fixed caveat for all six consumers" {
+  local file="$REPO/skills/cook/SKILL.md"
+  local caveat='a map, not an authority: verify against the code; report stale entries.'
+  local rule stage
+  rule="$(awk -v needle="$caveat" '
+    BEGIN { RS = ""; ORS = "\n" }
+    index($0, needle) { print; found = 1 }
+    END { if (!found) exit 1 }
+  ' "$file")" || {
+    echo "cook SKILL.md does not carry the exact context packet caveat"
+    return 1
+  }
+
+  grep -qF 'context.md' <<<"$rule" || {
+    echo "the context packet dispatch rule does not name context.md"
+    return 1
+  }
+  grep -qiE 'when present|if (the )?file exists' <<<"$rule" || {
+    echo "the context packet dispatch rule does not preserve optional absence"
+    return 1
+  }
+  grep -qiE 'only plan[^.]{0,100}(write|refresh)|(write|refresh)[^.]{0,100}only plan|plan is the only writer' <<<"$rule" || {
+    echo "the context packet dispatch rule does not make plan the single writer"
+    return 1
+  }
+
+  while IFS='|' read -r stage _; do
+    grep -qiE "(^|[^[:alnum:]_-])$stage([^[:alnum:]_-]|$)" <<<"$rule" || {
+      echo "the context packet dispatch rule omits the $stage consumer"
+      return 1
+    }
+  done < <(list_context_packet_consumers)
+}
+
+@test "Item 2: each file-backed consumer declares the optional untrusted map input" {
+  local stage relative file paragraph required
+  while IFS='|' read -r stage relative; do
+    [ -n "$relative" ] || continue
+    file="$REPO/$relative"
+    paragraph="$(awk '
+      BEGIN { RS = ""; ORS = "\n" }
+      index($0, "context.md") { print; found = 1 }
+      END { if (!found) exit 1 }
+    ' "$file")" || {
+      echo "$relative does not declare context.md as an input"
+      return 1
+    }
+
+    for required in 'optional' 'facts[- ]only' 'plan' 'verify' 'trust'; do
+      grep -qiE "$required" <<<"$paragraph" || {
+        echo "$relative context.md input is missing binding token: $required"
+        return 1
+      }
+    done
+  done < <(list_context_packet_consumers)
+}
+
+@test "Item 2: on-disk layout documents the context packet" {
+  local section
+  section="$(awk '
+    /^## On-disk layout$/ { in_section = 1; next }
+    in_section && /^## / { exit }
+    in_section { print }
+  ' "$REPO/skills/cook/reference/jeff-state-schema.md")"
+
+  grep -qE '\.jeff/tasks/<[^>]+>/context\.md' <<<"$section" || {
+    echo "jeff-state-schema.md on-disk layout does not name task context.md"
+    return 1
+  }
+}

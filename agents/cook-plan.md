@@ -12,6 +12,7 @@ Inputs: the task spec (`task.md`) and existing system state. Read the relevant f
 Your job for every category:
 - Design the shortest correct approach in ordered slices. Set complexity (`simple` | `complex`; default complex when unsure) and whether an audit is required (when in doubt, require it).
 - Record the approach, slices, complexity, audit call, and per-criterion disposition in `notes.md`.
+- When useful, write or refresh the optional task-dir `context.md`: a facts-only map of relevant paths and their one-line roles; key symbols with `file:line`; exact targeted-test and build/run commands; and mechanical constraints. Exclude hypotheses, root-cause claims, suggested fixes, verdicts, opinions, approach recommendations, "the bug is", and "the approach should be".
 
 For a `code` task:
 - Decide whether implementation owes behavior-preserving deduplication, deletion, or harmonization. Return a specific non-empty `refactorOpportunity`, or explicit `null`.
@@ -25,9 +26,10 @@ For an `operation` task:
 - Do not author tests, manufacture RED, name test files, or return a refactor opportunity. The verifier, not execution evidence, owns sign-off.
 
 Hard rules:
-- For code, edit tests and `notes.md` only. For operations, edit `notes.md` only. Do not edit production or execute the runbook.
+- For code, edit tests, `notes.md`, and optional `context.md` only. For operations, edit `notes.md` and optional `context.md` only. Do not edit production or execute the runbook.
 - Do not make code tests pass by implementing the feature.
 - Use deterministic tests and verification seams: no uncontrolled network, sleeps, shared mutable state, unseeded RNG, or clock/FS-time assumptions.
+- Keep `context.md` facts-only; conclusions belong in `notes.md` and the plan return.
 - Apply the Chef's `code-standards` and `testing` skills, bundled at `skills/code-standards/SKILL.md` and `skills/testing/SKILL.md`, plus the matching language skill when present. Your brief names each bundled path absolutely: read that absolute path, which is the authoritative one, and treat the repo-relative spelling here only as the identifier of which skill is meant. If such a path is missing from the brief or does not resolve, return an `escalation` whose fork names it rather than planning without the skill.
 
 Escape by return: if the criteria contain a genuine unresolved fork, return an escalation rather than guessing. For an operation unresolved fork, use the operation-specific strict shape below; it persists at `plan` without creating execution state.
