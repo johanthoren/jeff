@@ -1001,7 +1001,7 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
     ? specialistReturn
     : { ...specialistReturn, agent_id: observedAgentId };
   const journalAgent = stage === 'council'
-    ? specialistReturn.members.map((/** @type {{agent_id: string}} */ member) => member.agent_id).join(',')
+    ? specialistReturn.council.members.map((/** @type {{agent_id: string}} */ member) => member.agent_id).join(',')
     : /** @type {string} */ (observedAgentId);
   return updateTask(
     root,
