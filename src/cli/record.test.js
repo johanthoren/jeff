@@ -4171,13 +4171,14 @@ test('Item 3 journal contract', async (t) => {
 
   await t.test('successful council record appends one ordered real-agent event per member', async () => {
     const councilResult = councilReturn();
+    const councilMembers = /** @type {{agent_id: string}[]} */ (councilResult.council.members);
     const { root, taskDir } = await makeRoot(councilTask());
     try {
       await recordSpecialistReturn(root, 'council', '18', councilResult);
       const events = await readJournal(taskDir);
       assert.deepEqual(
         events.map(({ seq, event, stage, agent }) => ({ seq, event, stage, agent })),
-        councilResult.council.members.map(({ agent_id: agent }, seq) => ({
+        councilMembers.map(({ agent_id: agent }, seq) => ({
           seq,
           event: 'record',
           stage: 'council',

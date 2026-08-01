@@ -114,7 +114,7 @@ const PLAN_VERBS = { section: planSection, check: planCheck, append: planAppend 
 
 /**
  * @param {string[]} args
- * @returns {{ id: string, value: any } | { error: string }}
+ * @returns {{ id: string, value: import('../core/journal.js').JournalAppend } | { error: string }}
  */
 function parseJournalArgs(args) {
   if (args.length < 2 || args[0] === '' || args[1] === '') {

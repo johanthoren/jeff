@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { collectTasks, readConfig, readTask, writeTask } from './store.js';
 import { locateTask, withStoreLock } from './store-lock.js';
-import { appendJournalEvent } from './journal.js';
+import { appendJournalEvents } from './journal.js';
 import { git, treeDirty } from './git.js';
 import { configSchemaViolations, isIsoDateTime, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
@@ -870,7 +870,7 @@ export function transitionTask(task, stage, result) {
  * @param {(task: TaskJson) => TaskJson} update
  * @param {{
  *   allowTransientTerminal?: boolean,
- *   journal?: import('./journal.js').JournalAppend,
+ *   journal?: import('./journal.js').JournalAppend | import('./journal.js').JournalAppend[],
  * }} [options]
  */
 export async function updateTask(root, id, update, options = {}) {
@@ -924,10 +924,11 @@ export async function updateTask(root, id, update, options = {}) {
         && violation.includes('[prune]')
       ));
     if (violations.length) throw new Error(violations[0]);
-    await writeTask(taskDir, candidate);
     if (options.journal !== undefined) {
-      await appendJournalEvent(root, taskDir, options.journal);
+      const journal = Array.isArray(options.journal) ? options.journal : [options.journal];
+      await appendJournalEvents(root, taskDir, journal);
     }
+    await writeTask(taskDir, candidate);
     return candidate;
   });
 }
@@ -1000,16 +1001,21 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
   const transitionReturn = stage === 'council'
     ? specialistReturn
     : { ...specialistReturn, agent_id: observedAgentId };
-  const journalAgent = stage === 'council'
-    ? specialistReturn.council.members.map((/** @type {{agent_id: string}} */ member) => member.agent_id).join(',')
-    : /** @type {string} */ (observedAgentId);
+  /** @type {import('./journal.js').JournalAppend | import('./journal.js').JournalAppend[]} */
+  const journal = stage === 'council'
+    ? specialistReturn.council.members.map((/** @type {{agent_id: string}} */ member) => ({
+      event: 'record',
+      stage: 'council',
+      agent: member.agent_id,
+    }))
+    : { event: 'record', stage, agent: /** @type {string} */ (observedAgentId) };
   return updateTask(
     root,
     id,
     (task) => transitionTask(task, stage, transitionReturn),
     {
       allowTransientTerminal: true,
-      journal: { event: 'record', stage, agent: journalAgent },
+      journal,
     },
   );
 }

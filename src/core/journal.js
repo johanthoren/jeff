@@ -1,6 +1,6 @@
 // @ts-check
 
-import { appendFile, readFile } from 'node:fs/promises';
+import { appendFile, lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { collectTasks, assertStoreContained } from './store.js';
 import { locateTask, withStoreLock } from './store-lock.js';
@@ -46,7 +46,7 @@ function hasExactFields(value, fields) {
 export function isJournalEvent(value) {
   if (!isType(value, 'object')) return false;
   const event = /** @type {Record<string, any>} */ (value);
-  if (!Number.isInteger(event.seq) || event.seq < 0 || !isIsoDateTime(event.at)) return false;
+  if (!Number.isSafeInteger(event.seq) || event.seq < 0 || !isIsoDateTime(event.at)) return false;
 
   const optionalNote = !Object.hasOwn(event, 'note') || typeof event.note === 'string';
   if (event.event === 'intent') {
@@ -77,6 +77,33 @@ export function isJournalEvent(value) {
   return false;
 }
 
+/** @param {string} action @param {unknown} error */
+function journalFailure(action, error) {
+  const cause = error instanceof Error ? error.message : String(error);
+  return new Error(`[journal] ${action}: ${cause}`);
+}
+
+/** @param {string} root @param {string} path */
+async function journalExists(root, path) {
+  try {
+    await assertStoreContained(root, [path]);
+  } catch (error) {
+    throw journalFailure('boundary check failed', error);
+  }
+
+  let stats;
+  try {
+    stats = await lstat(path);
+  } catch (error) {
+    if (/** @type {any} */ (error).code === 'ENOENT') return false;
+    throw journalFailure('boundary check failed', error);
+  }
+  if (!stats.isFile() || stats.nlink !== 1) {
+    throw new Error('[journal] target must be a regular file with exactly one hard link');
+  }
+  return true;
+}
+
 /**
  * Read valid journal events while retaining malformed bytes on disk.
  *
@@ -86,18 +113,19 @@ export function isJournalEvent(value) {
  */
 export async function readJournal(root, taskDir, warn = console.warn) {
   const path = join(taskDir, 'journal.jsonl');
-  await assertStoreContained(root, [path]);
+  if (!(await journalExists(root, path))) return { raw: '', events: [] };
+
   let raw;
   try {
     raw = await readFile(path, 'utf8');
   } catch (error) {
-    if (/** @type {any} */ (error).code === 'ENOENT') return { raw: '', events: [] };
-    throw error;
+    throw journalFailure('read failed', error);
   }
 
   const events = [];
-  for (const [index, line] of raw.split('\n').entries()) {
-    if (line === '') continue;
+  const lines = raw.split('\n');
+  for (const [index, line] of lines.entries()) {
+    if (line === '' && (raw === '' || index === lines.length - 1)) continue;
     try {
       const event = JSON.parse(line);
       if (!isJournalEvent(event)) throw new Error('invalid journal event');
@@ -110,6 +138,37 @@ export async function readJournal(root, taskDir, warn = console.warn) {
 }
 
 /**
+ * Append events after one read while the caller holds the shared store lock.
+ *
+ * @param {string} root
+ * @param {string} taskDir
+ * @param {JournalAppend[]} values
+ * @param {(message: string) => void} [warn]
+ */
+export async function appendJournalEvents(root, taskDir, values, warn = console.warn) {
+  const { raw, events } = await readJournal(root, taskDir, warn);
+  let seq = events.reduce((greatest, event) => Math.max(greatest, event.seq), -1) + 1;
+  const appended = values.map((value) => {
+    const event = { seq, at: new Date().toISOString(), ...value };
+    if (!isJournalEvent(event)) throw new Error('[journal] invalid event');
+    seq += 1;
+    return event;
+  });
+  if (appended.length === 0) return appended;
+
+  const path = join(taskDir, 'journal.jsonl');
+  await journalExists(root, path);
+  const separator = raw.length > 0 && !raw.endsWith('\n') ? '\n' : '';
+  const payload = `${separator}${appended.map((event) => JSON.stringify(event)).join('\n')}\n`;
+  try {
+    await appendFile(path, payload, { encoding: 'utf8', mode: 0o600 });
+  } catch (error) {
+    throw journalFailure('append failed', error);
+  }
+  return appended;
+}
+
+/**
  * Append one event while the caller holds the shared store lock.
  *
  * @param {string} root
@@ -118,15 +177,7 @@ export async function readJournal(root, taskDir, warn = console.warn) {
  * @param {(message: string) => void} [warn]
  */
 export async function appendJournalEvent(root, taskDir, value, warn = console.warn) {
-  const { raw, events } = await readJournal(root, taskDir, warn);
-  const seq = events.reduce((greatest, event) => Math.max(greatest, event.seq), -1) + 1;
-  const event = { seq, at: new Date().toISOString(), ...value };
-  if (!isJournalEvent(event)) throw new Error('[journal] invalid event');
-
-  const path = join(taskDir, 'journal.jsonl');
-  const separator = raw.length > 0 && !raw.endsWith('\n') ? '\n' : '';
-  await appendFile(path, `${separator}${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
-  return event;
+  return (await appendJournalEvents(root, taskDir, [value], warn))[0];
 }
 
 /**
