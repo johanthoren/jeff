@@ -22,18 +22,18 @@ export async function withStoreLock(root, operation) {
     throw new Error(`[record-task] ${/** @type {Error} */ (error).message}`);
   }
   const lock = join(root, '.jeff', '.record-lock');
-  let acquired = false;
   for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
     try {
       await mkdir(lock);
-      acquired = true;
       break;
     } catch (error) {
       if (/** @type {any} */ (error).code !== 'EEXIST') throw error;
-      if (attempt + 1 < LOCK_ATTEMPTS) await wait(5);
+      if (attempt + 1 === LOCK_ATTEMPTS) {
+        throw new Error('[record-lock] store lock is busy or unavailable');
+      }
+      await wait(5);
     }
   }
-  if (!acquired) throw new Error('[record-lock] store lock is busy or unavailable');
   try {
     return await operation();
   } finally {
