@@ -4557,6 +4557,117 @@ test('Item 4 targeted repair retains only independently passing judgments', asyn
     assert.equal(repaired.audit.audit_agent_id, null);
     assert.deepEqual(repaired.convergence.stages, counters);
   });
+
+  await t.test('mixed implement and refactor full-resets when the second stage exceeds the contract', () => {
+    const base = item4RepairTask();
+    const refactorFinding = {
+      ...blockingFinding({
+        file: 'src/core/invariants.js',
+        line: 12,
+        kickTo: 'refactor',
+        what: 'review requires a confined refactor.',
+      }),
+      refute: { source: 'review', verdict: 'survives' },
+    };
+    const task = item4RepairTask({
+      review: {
+        ...base.review,
+        findings: [...base.review.findings, refactorFinding],
+      },
+      kickbacks: [{
+        ...base.kickbacks[0],
+        findings: [
+          item4TypedFinding('review'),
+          item4TypedFinding('review', {
+            file: 'src/core/invariants.js',
+            line: 12,
+            kickTo: 'refactor',
+          }),
+        ],
+      }],
+    });
+
+    const implemented = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      task,
+      'implement',
+      item4ImplementReturn(['src/core/record.js']),
+    ));
+    assert.equal(implemented.stage, 'refactor');
+    assert.equal(implemented.agents.audit_agent_id, 'auditor-old');
+
+    const refactored = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      implemented,
+      'refactor',
+      item4RefactorReturn(['src/core/task-schema.js']),
+    ));
+    assert.equal(refactored.stage, 'review');
+    assert.equal(refactored.review.verdict, null);
+    assert.equal(refactored.review2, null);
+    assert.equal(refactored.agents.reviewer_agent_id, null);
+    assert.equal(refactored.agents.reviewer2_agent_id, null);
+    assert.equal(refactored.audit.verdict, 'na');
+    assert.equal(refactored.audit.audit_agent_id, null);
+    assert.equal(refactored.agents.audit_agent_id, null);
+  });
+});
+
+test('Item 4 active kickback round survives a generated equal-second collision', (t) => {
+  t.mock.timers.enable({
+    apis: ['Date'],
+    now: new Date('2026-07-12T00:40:00Z'),
+  });
+  const firstRepair = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+    item4RepairTask(),
+    'implement',
+    item4ImplementReturn(['src/core/record.js']),
+  ));
+  const finding = blockingFinding({
+    line: 61,
+    what: 'The second review found another confined blocker.',
+  });
+  const firstReview = recordCore.transitionTask(firstRepair, 'review', {
+    ...item4ReviewReturn('reviewer-fresh', 1),
+    verdict: 'needs-work',
+    findings: [finding],
+  });
+  const secondReview = recordCore.transitionTask(
+    firstReview,
+    'review',
+    item4ReviewReturn('reviewer-two-fresh', 1),
+  );
+  const refuted = recordCore.transitionTask(
+    secondReview,
+    'refute',
+    {
+      agent_id: 'review-refuter-fresh',
+      stage: 'refute',
+      cycle: 1,
+      source: 'review',
+      finding: `${finding.file}:${finding.line} ${finding.what}`,
+      verdict: 'survives',
+      rationale: 'The confined blocker remains observable.',
+      evidence: [{ command: 'node --test', output: 'failure reproduced' }],
+    },
+  );
+
+  const generatedKickback = refuted.kickbacks.at(-1);
+  const generatedHistory = firstRepair.judgmentHistory?.at(-1);
+  assert.ok(generatedKickback);
+  assert.ok(generatedHistory);
+  assert.equal(generatedKickback.at, generatedHistory.at);
+  const secondRepair = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+    refuted,
+    'implement',
+    item4ImplementReturn(['src/core/record.js']),
+  ));
+  assert.ok(secondRepair.judgmentHistory);
+  assert.equal(secondRepair.judgmentHistory.length, 2);
+  assert.equal(secondRepair.stage, 'review');
+  assert.equal(secondRepair.review.verdict, null);
+  assert.equal(secondRepair.review2, null);
+  assert.equal(secondRepair.agents.reviewer_agent_id, null);
+  assert.equal(secondRepair.agents.reviewer2_agent_id, null);
+  assert.equal(secondRepair.agents.audit_agent_id, 'auditor-old');
 });
 
 test('Item 4 non-scoped repairs preserve full reset and unconditional gate invalidation', async (t) => {
@@ -4765,6 +4876,63 @@ test('Item 4 refute records exact typed blocker contracts and leaves council kic
     );
     assert.equal(recorded.convergence.stages.review.blockingKickbacks, 1);
     assert.equal(recorded.convergence.stages.audit.blockingKickbacks, 1);
+  });
+
+  await t.test('source-bound review2 plan blocker persists a typed kickback and routes to plan', async () => {
+    const finding = blockingFinding({
+      line: 51,
+      kickTo: 'plan',
+      what: 'The Item 4 test contract excludes a code destination.',
+    });
+    const { root, taskDir } = await makeRoot(canonicalTask({
+      stage: 'review',
+      agents: {
+        implementer_agent_id: 'implementer',
+        reviewer_agent_id: 'reviewer',
+        reviewer2_agent_id: 'reviewer-two',
+        audit_agent_id: null,
+      },
+      tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+      review: {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer',
+        findings: [],
+        evidence: ['review passed'],
+      },
+      review2: {
+        verdict: 'needs-work',
+        reviewer_agent_id: 'reviewer-two',
+        findings: [finding],
+        evidence: ['review two blocker'],
+      },
+    }));
+    try {
+      await recordSpecialistReturn(
+        root,
+        'refute',
+        '18',
+        refuteReturn('review-two-refuter', finding, { source: 'review2' }),
+      );
+      const recorded = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+
+      assert.equal(recorded.stage, 'plan');
+      assert.deepEqual(
+        recorded.kickbacks.map(({ from, to, findings }) => ({ from, to, findings })),
+        [{
+          from: 'review',
+          to: 'plan',
+          findings: [{
+            source: 'review2',
+            file: finding.file,
+            line: finding.line,
+            what: finding.what,
+            kickTo: finding.kickTo,
+          }],
+        }],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   await t.test('council block kickback has the unchanged untyped shape', () => {

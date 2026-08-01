@@ -144,7 +144,7 @@
  * @property {string} file
  * @property {number} line
  * @property {string} what
- * @property {'implement' | 'refactor'} kickTo
+ * @property {'capture' | 'plan' | 'implement' | 'refactor'} kickTo
  */
 
 /**

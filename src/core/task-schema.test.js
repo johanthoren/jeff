@@ -2934,9 +2934,10 @@ test('Item 4 optional kickback findings schema accepts valid values and rejects 
     ['absence', undefined],
     ['empty array', []],
     ['all code judgment sources and destinations', [
-      item4KickbackFinding('review'),
-      item4KickbackFinding('review2', { kickTo: 'refactor' }),
+      item4KickbackFinding('review', { kickTo: 'capture' }),
+      item4KickbackFinding('review2', { kickTo: 'plan' }),
       item4KickbackFinding('audit'),
+      item4KickbackFinding('audit', { kickTo: 'refactor' }),
     ]],
   ]) await t.test(`accepts ${name}`, async () => {
     const value = findings === undefined ? kickback : { ...kickback, findings };
@@ -2951,7 +2952,7 @@ test('Item 4 optional kickback findings schema accepts valid values and rejects 
     ['line zero', [item4KickbackFinding('review', { line: 0 })]],
     ['line fractional', [item4KickbackFinding('review', { line: 1.5 })]],
     ['what', [item4KickbackFinding('review', { what: '' })]],
-    ['kickTo', [item4KickbackFinding('review', { kickTo: 'plan' })]],
+    ['kickTo', [item4KickbackFinding('review', { kickTo: 'execute' })]],
   ];
   for (const [name, findings] of invalid) await t.test(`rejects ${name}`, async () => {
     const result = await verdictFor(canonicalTask({
@@ -2961,9 +2962,53 @@ test('Item 4 optional kickback findings schema accepts valid values and rejects 
   });
 });
 
+test('Item 4 code judgmentHistory schema rejects malformed entries', async () => {
+  const task = item4RetainedLedger('review');
+  task.judgmentHistory = [{ garbage: true }];
+  const result = await verdictFor(task);
+  assertNamedFailure(result, 'judgmentHistory[0]');
+});
+
 test('Item 4 INV-12 accepts exact retention and historical ledgers without findings', async (t) => {
   for (const source of ['review', 'audit']) await t.test(`${source} raised exact retention`, async () => {
     const result = await verdictFor(item4RetainedLedger(/** @type {'review' | 'audit'} */ (source)));
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  await t.test('refactor repair can produce an exact retained INV-12 proof', async () => {
+    const task = item4RetainedLedger('audit');
+    task.kickbacks[0].to = 'refactor';
+    task.kickbacks[0].findings[0].kickTo = 'refactor';
+    delete task.implement;
+    task.refactor = {
+      agent_id: 'refactorer-fresh',
+      result: 'clean',
+      files: ['src/core/record.js'],
+      outsideDiff: [],
+      greenRun: { command: 'node --test', output: 'pass' },
+      summary: ['Applied the confined repair.'],
+    };
+    const result = await verdictFor(task);
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  await t.test('historical category omission is treated as code by INV-12', async () => {
+    const task = item4RetainedLedger('review');
+    assert.equal(Object.hasOwn(task, 'category'), false);
+    task.audit.evidence = ['mismatched retained audit'];
+    const result = await verdictFor(task);
+    assertNamedFailure(result, '[inv12]');
+  });
+
+  await t.test('fresh full-reset judge may reproduce archived output under a new identity', async () => {
+    const task = item4RetainedLedger('review');
+    task.implement.files = ['src/core/task-schema.js'];
+    task.audit = {
+      ...structuredClone(task.judgmentHistory[0].audit),
+      audit_agent_id: 'auditor-fresh',
+    };
+    task.agents.audit_agent_id = 'auditor-fresh';
+    const result = await verdictFor(task);
     assert.equal(result.ok, true, result.stderr.join('\n'));
   });
 
@@ -2993,6 +3038,55 @@ test('Item 4 INV-12 accepts exact retention and historical ledgers without findi
     const result = await verdictFor(task);
     assert.equal(result.ok, true, result.stderr.join('\n'));
   });
+});
+
+test('Item 4 INV-12 selects the actual latest judgment kickback', async (t) => {
+  /**
+   * @param {undefined | any[]} findings
+   * @param {boolean} retained
+   */
+  const latestRoundTask = (findings, retained) => {
+    const task = item4RetainedLedger('review');
+    const latestHistory = structuredClone(task.judgmentHistory[0]);
+    latestHistory.at = '2026-07-12T01:00:00Z';
+    latestHistory.audit.audit_agent_id = 'auditor-latest';
+    latestHistory.agents.audit_agent_id = 'auditor-latest';
+    task.judgmentHistory.push(latestHistory);
+    const latestKickback = /** @type {Record<string, any>} */ ({
+      from: 'review',
+      to: 'implement',
+      reason: 'A later review round requires a full reset.',
+      at: '2026-07-12T00:50:00Z',
+    });
+    if (findings !== undefined) latestKickback.findings = findings;
+    task.kickbacks.push(latestKickback);
+    task.implement = {
+      ...task.implement,
+      agent_id: 'implementer-latest',
+      files: [retained ? 'src/core/record.js' : 'src/core/task-schema.js'],
+    };
+    task.audit = {
+      ...structuredClone(latestHistory.audit),
+      audit_agent_id: retained ? 'auditor-latest' : 'auditor-fresh',
+    };
+    task.agents.audit_agent_id = task.audit.audit_agent_id;
+    return task;
+  };
+
+  for (const [name, findings] of /** @type {Array<[string, undefined | any[]]>} */ ([
+    ['absent findings', undefined],
+    ['empty findings', []],
+  ])) {
+    await t.test(`${name} skips INV-12 after a full reset with no retained identity`, async () => {
+      const result = await verdictFor(latestRoundTask(findings, false));
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+    });
+
+    await t.test(`${name} cannot authorize a retained judgment from an older typed round`, async () => {
+      const result = await verdictFor(latestRoundTask(findings, true));
+      assertNamedFailure(result, '[inv12]');
+    });
+  }
 });
 
 test('Item 4 INV-12 rejects every incomplete or mismatched retention proof', async (t) => {

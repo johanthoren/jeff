@@ -27,6 +27,7 @@ const KEBAB_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OPERATION_FINDING_DESTINATIONS = ['capture', 'plan', 'execute'];
 const CODE_JUDGMENT_SOURCES = ['review', 'review2', 'audit'];
 const CODE_REPAIR_DESTINATIONS = ['implement', 'refactor'];
+const CODE_JUDGMENT_DESTINATIONS = ['capture', 'plan', 'implement', 'refactor'];
 const AUDIT_CATEGORIES = [
   'secrets',
   'injection_sql',
@@ -186,7 +187,7 @@ function validateKickbacks(value, out) {
       requireField(out, `${findingField}.file`, isNonemptyString(finding.file));
       requireField(out, `${findingField}.line`, Number.isInteger(finding.line) && finding.line >= 1);
       requireField(out, `${findingField}.what`, isNonemptyString(finding.what));
-      requireField(out, `${findingField}.kickTo`, isOneOf(finding.kickTo, CODE_REPAIR_DESTINATIONS));
+      requireField(out, `${findingField}.kickTo`, isOneOf(finding.kickTo, CODE_JUDGMENT_DESTINATIONS));
     });
   });
 }
@@ -633,6 +634,36 @@ function validateJudgmentHistory(task, out, authoritative) {
 }
 
 /** @param {any} task @param {string[]} out */
+function validateCodeJudgmentHistory(task, out) {
+  if (task.judgmentHistory === undefined) return;
+  requireField(out, 'judgmentHistory', Array.isArray(task.judgmentHistory)
+    && task.judgmentHistory.length > 0);
+  if (!Array.isArray(task.judgmentHistory)) return;
+  task.judgmentHistory.forEach((/** @type {any} */ entry, /** @type {number} */ index) => {
+    const field = `judgmentHistory[${index}]`;
+    requireField(out, field, isType(entry, 'object'));
+    if (!isType(entry, 'object')) return;
+    requireField(out, `${field}.at`, isIsoDateTime(entry.at));
+    validateReview(entry.review, `${field}.review`, out);
+    requireField(out, `${field}.review2`, entry.review2 === null || isType(entry.review2, 'object'));
+    if (entry.review2 !== null) validateReview(entry.review2, `${field}.review2`, out);
+    validateAudit(entry.audit, `${field}.audit`, out, false, task);
+    requireField(out, `${field}.agents`, isType(entry.agents, 'object'));
+    if (!isType(entry.agents, 'object')) return;
+    for (const identity of ['reviewer_agent_id', 'reviewer2_agent_id', 'audit_agent_id']) {
+      requireField(out, `${field}.agents.${identity}`, isNullableString(entry.agents[identity]));
+    }
+    requireField(out, `${field}.review identity`,
+      entry.review?.reviewer_agent_id === entry.agents.reviewer_agent_id);
+    requireField(out, `${field}.review2 identity`,
+      (entry.review2?.reviewer_agent_id ?? null) === entry.agents.reviewer2_agent_id);
+    requireField(out, `${field}.audit identity`,
+      entry.audit?.audit_agent_id === entry.agents.audit_agent_id);
+  });
+}
+
+
+/** @param {any} task @param {string[]} out */
 function validateOperationVersion(task, out) {
   if (task.category === 'operation') {
     if (task.operationStateVersion !== undefined
@@ -802,6 +833,7 @@ export function taskSchemaViolations(task, { lite }) {
   if (authoritativeOperation) validateApprovalRequests(task, out);
   if (operation) validateOperationApproval(task, out, authoritativeOperation);
   if (operation) validateJudgmentHistory(task, out, authoritativeOperation);
+  else validateCodeJudgmentHistory(task, out);
   if (operation) {
     const codeIdentity = [
       task.agents?.implementer_agent_id,

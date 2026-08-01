@@ -297,6 +297,50 @@ function isScopedCodeRepair(task, kickbacks, files) {
     && files.every((file) => findings.some((/** @type {any} */ finding) => finding.file === file));
 }
 
+/** @param {MutableRecordTask} task @param {any} history @param {'review' | 'audit'} source */
+function sourceJudgments(task, history, source) {
+  if (source === 'audit') {
+    return [[task.audit, history?.audit, 'audit_agent_id']];
+  }
+  return [
+    [task.review, history?.review, 'reviewer_agent_id'],
+    [task.review2, history?.review2, 'reviewer_agent_id'],
+  ];
+}
+
+/** @param {MutableRecordTask} task @param {any} history @param {'review' | 'audit'} source */
+function hasUnarchivedFailure(task, history, source) {
+  return sourceJudgments(task, history, source).some(([live, archived, identity]) => (
+    isFailingJudgment(live)
+    && live?.[identity] != null
+    && live[identity] !== archived?.[identity]
+  ));
+}
+
+/** @param {MutableRecordTask} task @param {any} history */
+function hasRetainedJudgment(task, history) {
+  return ['review', 'audit'].some((source) => (
+    sourceJudgments(task, history, /** @type {'review' | 'audit'} */ (source))
+      .some(([live, archived, identity]) => (
+        isPassingJudgment(live)
+        && live?.[identity] != null
+        && live[identity] === archived?.[identity]
+      ))
+  ));
+}
+
+/**
+ * @param {MutableRecordTask} task
+ * @param {Record<string, any>} latest
+ * @param {('review' | 'audit')[]} sources
+ */
+function judgmentRoundKickbacks(task, latest, sources) {
+  return sources.map((source) => task.kickbacks.findLast((/** @type {any} */ kickback) => (
+    kickback.from === source && kickback.at === latest.at
+  ))).filter((kickback) => kickback !== undefined);
+}
+
+
 /** @param {MutableRecordTask} task @param {string} at @param {unknown} [files] */
 function resetJudgmentsAfterFix(task, at, files) {
   const hasCurrentJudgment = judgmentSources(task).some(({ outcome }) => (
@@ -310,27 +354,59 @@ function resetJudgmentsAfterFix(task, at, files) {
     task.agents.audit_agent_id,
   ].some((agentId) => agentId != null);
   if (!hasCurrentJudgment) return false;
-  const latestJudgmentKickback = task.kickbacks.findLast((/** @type {any} */ kickback) => (
-    judgmentSources(task).some(({ source }) => source === kickback.from)
+  if (isOperation(task)) {
+    const latestKickback = task.kickbacks.findLast((/** @type {any} */ kickback) => (
+      judgmentSources(task).some(({ source }) => source === kickback.from)
+    ));
+    if (!latestKickback) return false;
+    const latestHistory = task.judgmentHistory?.at(-1);
+    if (latestHistory && !isIsoDateTime(latestHistory.at)) {
+      throw new Error('[record-transition] judgmentHistory latest at is invalid');
+    }
+    if (latestHistory && Date.parse(latestKickback.at) <= Date.parse(latestHistory.at)) return false;
+    archiveAndResetJudgments(task, at);
+    return false;
+  }
+  const judgmentKickbacks = task.kickbacks.filter((/** @type {any} */ kickback) => (
+    ['review', 'audit'].includes(kickback.from)
   ));
+  const latestJudgmentKickback = judgmentKickbacks.at(-1);
   if (!latestJudgmentKickback) return false;
   const latestHistory = task.judgmentHistory?.at(-1);
   if (latestHistory && !isIsoDateTime(latestHistory.at)) {
     throw new Error('[record-transition] judgmentHistory latest at is invalid');
   }
-  const latestHistoryInstant = latestHistory ? Date.parse(latestHistory.at) : null;
-  if (latestHistoryInstant !== null && Date.parse(latestJudgmentKickback.at) <= latestHistoryInstant) return false;
 
-  const activeKickbacks = task.kickbacks.filter((/** @type {any} */ kickback) => (
-    kickback.at === latestJudgmentKickback.at
-    && ['review', 'audit'].includes(kickback.from)
+  const sources = /** @type {('review' | 'audit')[]} */ (['review', 'audit']);
+  const activeSources = sources.filter((source) => hasUnarchivedFailure(task, latestHistory, source));
+  if (activeSources.includes(latestJudgmentKickback.from)) {
+    const activeKickbacks = judgmentRoundKickbacks(task, latestJudgmentKickback, activeSources);
+    const scoped = activeKickbacks.length === activeSources.length
+      && isScopedCodeRepair(task, activeKickbacks, files);
+    archiveAndResetJudgments(
+      task,
+      at,
+      scoped ? new Set(activeSources) : undefined,
+    );
+    return scoped;
+  }
+
+  if (!latestHistory || !hasRetainedJudgment(task, latestHistory)) return false;
+  const raisingSources = sources.filter((source) => (
+    sourceJudgments(task, latestHistory, source).some(([outcome]) => isFailingJudgment(outcome))
   ));
-  const scoped = isScopedCodeRepair(task, activeKickbacks, files);
-  archiveAndResetJudgments(
-    task,
-    at,
-    scoped ? new Set(activeKickbacks.map((/** @type {any} */ kickback) => kickback.from)) : undefined,
-  );
+  const consumedKickbacks = judgmentRoundKickbacks(task, latestJudgmentKickback, raisingSources);
+  const includesImplement = consumedKickbacks.some((kickback) => (
+    kickback.to === 'implement'
+    || kickback.findings?.some((/** @type {any} */ finding) => finding.kickTo === 'implement')
+  ));
+  const repairFiles = [
+    ...(includesImplement && Array.isArray(task.implement?.files) ? task.implement.files : []),
+    ...(Array.isArray(files) ? files : []),
+  ];
+  const scoped = consumedKickbacks.length === raisingSources.length
+    && isScopedCodeRepair(task, consumedKickbacks, repairFiles);
+  if (!scoped) archiveAndResetJudgments(task, at);
   return scoped;
 }
 
