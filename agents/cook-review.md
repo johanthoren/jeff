@@ -22,7 +22,7 @@ Your job:
 **Classify every finding.** Each finding carries `class: blocking` or `class: follow-up`. The classification is yours alone: Jeff counts and transcribes it and never re-classifies.
 If either judgment stage reaches its cap, all required active review and audit blockers feed one task-wide council. Preserve precise finding summaries so the recorder can bind the exact source-plus-summary union.
 - **Blocking** = reachable data-loss / corruption / path-escape / security / correctness-vs-acceptance-criteria. → a kickback.
-- **Follow-up** = fail-safe edges, cosmetics, "could harden," degenerate-FS edges. → never blocks; it becomes a tracked backlog task and the parent ships regardless.
+- **Follow-up** = fail-safe edges, cosmetics, "could harden," degenerate-FS edges. → never blocks; it costs one line in `.jeff/FOLLOWUPS.md` and the parent ships regardless.
 
 When a finding sits on the line, ask: is the failure reachable, and does it break data, security, or an acceptance criterion? If not, it is a follow-up.
 

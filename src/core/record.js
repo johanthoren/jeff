@@ -29,6 +29,8 @@ import {
 
 const now = () => `${new Date().toISOString().slice(0, 19)}Z`;
 const KICKBACK_STAGE_ORDER = ['capture', 'plan', 'execute', 'implement', 'refactor'];
+// The repair destinations a kickback stays confined to.
+const CONFINED_KICK_STAGES = ['implement', 'refactor'];
 const FALSE_VERIFICATION_REASON = 'Verifier postconditions remain false after finding demotion.';
 const DEFAULT_CONVERGENCE = {
   cap: 2,
@@ -289,7 +291,7 @@ function isScopedCodeRepair(task, kickbacks, files) {
       && finding.line >= 1
       && typeof finding.what === 'string'
       && finding.what.length > 0
-      && ['implement', 'refactor'].includes(finding.kickTo)
+      && CONFINED_KICK_STAGES.includes(finding.kickTo)
       && (finding.source === kickback.from
         || (kickback.from === 'review' && finding.source === 'review2'))
     ))
@@ -341,10 +343,15 @@ function judgmentRoundKickbacks(task, latest, sources) {
 }
 
 /** @param {MutableRecordTask} task */
-function currentCodeRepairRound(task) {
+function codeJudgmentKickbacks(task) {
   return task.kickbacks.filter((/** @type {any} */ kickback) => (
     ['review', 'audit'].includes(kickback.from)
-  )).length;
+  ));
+}
+
+/** @param {MutableRecordTask} task */
+function currentCodeRepairRound(task) {
+  return codeJudgmentKickbacks(task).length;
 }
 
 
@@ -374,9 +381,7 @@ function resetJudgmentsAfterFix(task, at, files) {
     archiveAndResetJudgments(task, at);
     return false;
   }
-  const judgmentKickbacks = task.kickbacks.filter((/** @type {any} */ kickback) => (
-    ['review', 'audit'].includes(kickback.from)
-  ));
+  const judgmentKickbacks = codeJudgmentKickbacks(task);
   const latestJudgmentKickback = judgmentKickbacks.at(-1);
   if (!latestJudgmentKickback) return false;
   const latestHistory = task.judgmentHistory?.at(-1);
@@ -502,6 +507,26 @@ function recordAudit(task, result) {
   settleJudgments(task);
 }
 
+/**
+ * A source that has reached the cap buys one bonus cycle before the council
+ * arms, and only on recorded evidence: it has not spent the bonus already,
+ * every survivor in this round is confined to a repair stage, and the round is
+ * strictly smaller than the last kickback that source raised. A historical
+ * kickback carrying no findings contract is never evidence.
+ *
+ * @param {MutableRecordTask} task
+ * @param {{convergenceStage: string, counter: Record<string, any>, survivors: Record<string, any>[]}} group
+ * @returns {boolean}
+ */
+function isBonusEligible(task, { convergenceStage, counter, survivors }) {
+  if (counter.bonusGranted === true) return false;
+  if (!survivors.every(({ finding }) => CONFINED_KICK_STAGES.includes(finding.kickTo))) return false;
+  const last = codeJudgmentKickbacks(task).findLast((/** @type {any} */ kickback) => (
+    kickback.from === convergenceStage
+  ));
+  return Array.isArray(last?.findings) && survivors.length < last.findings.length;
+}
+
 /** @param {MutableRecordTask} task @param {Record<string, any>} result @param {string} at */
 function recordRefute(task, result, at) {
   const activeFindings = judgmentSources(task).flatMap(({ source, outcome }) => (
@@ -552,19 +577,22 @@ function recordRefute(task, result, at) {
       && item.refute?.verdict === 'survives'
     )),
   })).filter(({ survivors }) => survivors.length > 0);
-  const capped = survivorGroups.find(({ counter }) => (
+  const cappedGroups = survivorGroups.filter(({ counter }) => (
     counter.blockingKickbacks >= task.convergence.cap
   ));
-  if (capped) {
+  const bonusGroups = cappedGroups.filter((group) => isBonusEligible(task, group));
+  if (cappedGroups.length > bonusGroups.length) {
     if (task.convergence.council.convened !== true && task.convergence.council.stage === null) {
-      task.convergence.council.stage = capped.convergenceStage;
+      task.convergence.council.stage = cappedGroups[0].convergenceStage;
     }
     settleJudgments(task);
     return;
   }
+  for (const { counter } of bonusGroups) counter.bonusGranted = true;
 
-  const kickbacks = survivorGroups.map(({ convergenceStage, counter, survivors }) => {
-    counter.blockingKickbacks += 1;
+  const kickbacks = survivorGroups.map((group) => {
+    const { convergenceStage, counter, survivors } = group;
+    if (!bonusGroups.includes(group)) counter.blockingKickbacks += 1;
     const destination = survivors
       .map(({ finding: item }) => item.kickTo)
       .sort((left, right) => KICKBACK_STAGE_ORDER.indexOf(left) - KICKBACK_STAGE_ORDER.indexOf(right))[0];

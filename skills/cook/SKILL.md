@@ -182,6 +182,7 @@ When any code `review`/`audit` or operation `verify`/`audit` source reaches its 
 - Dispatch K=3 fresh, decorrelated lenses: integrity, security, pragmatist. Lens returns omit `agent_id`; assemble each council member record from the native host-observed child id. Members are mutually distinct and separated from the active builder and judges.
 - A finding survives iff at least 2 lenses mark it blocking. Verdict is block iff any finding survives.
 - The strict council record uses a trigger stage of `review|audit` for code or `verify|audit` for operation, and finding sources `review|review2|audit` or `verify|audit`, respectively.
+- A finding that does not survive is demoted: record its `followupTaskId` as an existing task id, or as the literal `"ledger"` when it costs one line in `.jeff/FOLLOWUPS.md` instead. A surviving finding keeps `followupTaskId: null`.
 - A block buys one scoped `implement` cycle for code or one scoped `execute` cycle for operation. A scoped operation approval stop remains resumable, but a scoped execute kickback to `capture` or `plan` terminates as `blocked-to-operator`. Re-run only the corresponding fresh judgments, plus the code full-suite gate where applicable. A second surviving blocker also terminates as `blocked-to-operator`.
 During the scoped implementation transition, the council's per-finding decision is authoritative. A refactor finding remains owed only when the matching `source` plus summary finding survived council; stale source-level refute evidence cannot revive a council-demoted finding.
 
@@ -189,9 +190,14 @@ During the scoped implementation transition, the council's per-finding decision 
 
 Kickbacks stay within the locked category. Code uses its existing earlier stages. Ordinary operation findings and execution can return only to `capture`, `plan`, or `execute`; a council-scoped execute kickback cannot reopen capture or plan.
 
-Every active judgment finding self-classifies as blocking or follow-up. A blocking finding gets one fresh, source-bound refute before it increments that source's counter or kicks back. Follow-ups never block and are tracked separately.
+Every active judgment finding self-classifies as blocking or follow-up. A blocking finding gets one fresh, source-bound refute before it increments that source's counter or kicks back.
 
-The independent counters are `review`/`audit` for code and `verify`/`audit` for operation. The 3rd would-be kickback from either source triggers the one council before any other source counter increments or ordinary kickback is appended.
+Follow-ups never block and never cost a task: each costs one line in the follow-up ledger `.jeff/FOLLOWUPS.md`, which shares `.jeff/`'s Git treatment for the mode. A follow-up graduates to a real task only when the operator asks for it or picks it up. Append one line per follow-up, exactly:
+- [ ] task <id> · <file>:<line> · <what> (<source>, <YYYY-MM-DD>)
+
+The independent counters are `review`/`audit` for code and `verify`/`audit` for operation. The 3rd would-be kickback from either source triggers the one council before any other source counter increments or ordinary kickback is appended, unless that source is still owed its bonus cycle.
+
+A capped code source buys one bonus cycle, exactly once, and only on recorded convergence: `convergence.stages.<source>.bonusGranted` is not already true, every surviving blocker this round is confined to `implement` or `refactor`, and this round carries strictly fewer survivors than the last kickback that source raised (a historical kickback with no typed findings is never evidence). Taking it sets `bonusGranted: true`, appends the ordinary kickback, holds the counter at the cap, and leaves the council unarmed, so the bound per source is cap + 1 cycles. The next surviving round from that source convenes the council unconditionally, as does any divergent or unconfined cap hit.
 
 Ordinary code judgment kickbacks carry the exact surviving blockers in optional `findings`: `[{source,file,line,what,kickTo}]`, where `source` is `review | review2 | audit` and `kickTo` is `capture | plan | implement | refactor`. Council-block kickbacks keep their existing untyped shape.
 
