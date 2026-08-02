@@ -3010,6 +3010,7 @@ test('Item 4 public recorder resets judgments despite a later builder kickback',
 
 test('implementation full-resets an equal-instant active untyped judgment round', async (t) => {
   const sources = ['review', 'audit'];
+  /** @type {Array<[string, Record<string, any>]>} */
   const encodings = [
     ['omitted findings', {}],
     ['empty findings', { findings: [] }],
@@ -3163,6 +3164,7 @@ test('implementation preserves judgments when history consumed the latest judgme
     ['older with offset', '2026-07-12T00:30:00-01:00', '2026-07-12T01:00:00Z'],
     ['equal instant', '2026-07-12T01:00:00+01:00', '2026-07-12T00:00:00Z'],
   ];
+  /** @type {Array<[string, Record<string, any>]>} */
   const encodings = [
     ['omitted findings', {}],
     ['empty findings', { findings: [] }],
