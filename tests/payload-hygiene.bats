@@ -1083,3 +1083,135 @@ context_packet_dispatch_rule() {
     return 1
   }
 }
+
+# ---------------------------------------------------------------------------
+# Graph slate Item 5: evidence-scaled escalation
+#
+# The bonus cycle and the follow-up ledger are routed by SKILL.md sections
+# Kickbacks and Council; the judgment briefs name the ledger as the follow-up
+# destination.  Legality itself lives in src/core/ and is covered there.
+# ---------------------------------------------------------------------------
+
+skill_section() {
+  awk -v heading="$1" '
+    $0 ~ heading { in_section = 1; next }
+    in_section && /^#{2,3} / { exit }
+    in_section { print }
+  ' "$REPO/skills/cook/SKILL.md"
+}
+
+section_paragraphs() {
+  awk -v token="$1" 'BEGIN { RS = ""; ORS = "\n\n" } tolower($0) ~ tolower(token) { print }'
+}
+
+@test "Item 5: SKILL.md Kickbacks carries the evidence-scaled bonus cycle" {
+  local section rule required
+  section="$(skill_section '^## Kickbacks$')"
+  [ -n "$section" ] || {
+    echo "cook SKILL.md has no Kickbacks section"
+    return 1
+  }
+  rule="$(section_paragraphs 'bonus' <<<"$section")"
+  [ -n "$rule" ] || {
+    echo "SKILL.md Kickbacks carries no bonus-cycle rule"
+    return 1
+  }
+
+  for required in \
+    'cap \+ 1|cap plus one|one extra cycle|one bonus cycle|one additional cycle' \
+    'exactly once|only once|once per source' \
+    'implement' \
+    'refactor' \
+    'smaller|fewer|shrink' \
+    'confined' \
+    'council' \
+    'unconditional'; do
+    grep -qiE "$required" <<<"$rule" || {
+      echo "SKILL.md Kickbacks bonus rule is missing binding token: $required"
+      return 1
+    }
+  done
+}
+
+@test "Item 5: SKILL.md Kickbacks routes ordinary follow-ups to the ledger" {
+  local section rule
+  section="$(skill_section '^## Kickbacks$')"
+  rule="$(section_paragraphs 'FOLLOWUPS.md' <<<"$section")"
+  [ -n "$rule" ] || {
+    echo "SKILL.md Kickbacks does not name .jeff/FOLLOWUPS.md"
+    return 1
+  }
+
+  grep -qF '.jeff/FOLLOWUPS.md' <<<"$rule" || {
+    echo "SKILL.md Kickbacks names the ledger without its .jeff/ path"
+    return 1
+  }
+  grep -qiE 'one line|a single line' <<<"$rule" || {
+    echo "SKILL.md Kickbacks does not cost a follow-up one ledger line"
+    return 1
+  }
+  grep -qiE 'graduat|promot' <<<"$rule" || {
+    echo "SKILL.md Kickbacks does not describe follow-up graduation"
+    return 1
+  }
+  grep -qiE 'operator' <<<"$rule" || {
+    echo "SKILL.md Kickbacks does not gate graduation on the operator"
+    return 1
+  }
+  grep -qiE 'tracked backlog task' <<<"$section" && {
+    echo "SKILL.md Kickbacks still charges a follow-up a tracked backlog task"
+    return 1
+  }
+  return 0
+}
+
+@test "Item 5: SKILL.md owns the exact follow-up ledger line format" {
+  grep -qF -- '- [ ] task <id> · <file>:<line> · <what> (<source>, <YYYY-MM-DD>)' "$REPO/skills/cook/SKILL.md" || {
+    echo "cook SKILL.md does not carry the exact .jeff/FOLLOWUPS.md line format"
+    return 1
+  }
+}
+
+@test "Item 5: SKILL.md Council permits demoting a finding to the ledger" {
+  local section
+  section="$(skill_section '^### Council')"
+  [ -n "$section" ] || {
+    echo "cook SKILL.md has no Council section"
+    return 1
+  }
+
+  grep -qF 'followupTaskId' <<<"$section" || {
+    echo "SKILL.md Council does not name followupTaskId"
+    return 1
+  }
+  grep -qE '["`'"'"']ledger["`'"'"']' <<<"$section" || {
+    echo "SKILL.md Council does not permit the literal ledger demotion target"
+    return 1
+  }
+  grep -qiE 'task id' <<<"$section" || {
+    echo "SKILL.md Council drops the existing task-id demotion target"
+    return 1
+  }
+}
+
+@test "Item 5: review and audit briefs send follow-ups to the ledger" {
+  local relative line
+  for relative in agents/cook-review.md agents/cook-audit.md; do
+    line="$(grep -F '**Follow-up**' "$REPO/$relative")" || {
+      echo "$relative has no follow-up classification line"
+      return 1
+    }
+    grep -qF '.jeff/FOLLOWUPS.md' <<<"$line" || {
+      echo "$relative follow-up line does not name .jeff/FOLLOWUPS.md"
+      return 1
+    }
+    grep -qiE 'tracked backlog task' <<<"$line" && {
+      echo "$relative follow-up line still promises a tracked backlog task"
+      return 1
+    }
+    grep -qiE 'never blocks' <<<"$line" || {
+      echo "$relative follow-up line no longer keeps follow-ups non-blocking"
+      return 1
+    }
+  done
+}

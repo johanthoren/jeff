@@ -428,3 +428,21 @@ const historicalTestKickback = {
   at: '2026-07-12T02:00:00.000Z',
 };
 void historicalTestKickback;
+
+/** @type {import('./types.js').CodeConvergence} */
+const convergenceWithSpentBonus = {
+  cap: 2,
+  stages: {
+    review: { blockingKickbacks: 2, bonusGranted: true },
+    audit: { blockingKickbacks: 0 },
+  },
+  council: {
+    convened: false,
+    stage: null,
+    members: [],
+    findings: [],
+    verdict: null,
+    outcome: null,
+  },
+};
+void convergenceWithSpentBonus;

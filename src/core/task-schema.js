@@ -208,6 +208,9 @@ function validateConvergence(value, out, operation) {
       requireField(out, `convergence.stages.${stage}`, isType(record, 'object'));
       if (isType(record, 'object')) {
         requireField(out, `convergence.stages.${stage}.blockingKickbacks`, Number.isInteger(record.blockingKickbacks));
+        if (record.bonusGranted !== undefined) {
+          requireField(out, `convergence.stages.${stage}.bonusGranted`, typeof record.bonusGranted === 'boolean');
+        }
       }
     }
   }

@@ -191,16 +191,23 @@
  */
 
 /**
+ * Per-source convergence counter. `bonusGranted` records that the source has
+ * spent its single evidence-scaled bonus cycle; absent means false.
+ *
+ * @typedef {{blockingKickbacks: number, bonusGranted?: boolean}} ConvergenceCounter
+ */
+
+/**
  * @typedef {Object} CodeConvergence
  * @property {number} cap
- * @property {{review: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
+ * @property {{review: ConvergenceCounter, audit: ConvergenceCounter}} stages
  * @property {{convened: boolean, stage: 'review' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  */
 
 /**
  * @typedef {Object} OperationConvergence
  * @property {number} cap
- * @property {{verify: {blockingKickbacks: number}, audit: {blockingKickbacks: number}}} stages
+ * @property {{verify: ConvergenceCounter, audit: ConvergenceCounter}} stages
  * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, members: CouncilMember[], findings: OperationCouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  */
 

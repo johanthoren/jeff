@@ -139,7 +139,7 @@ never touched.
 "convergence": {
   "cap": 2,                                  // int ≥ 1: per-stage blocking-kickback cap
   "stages": {
-    "review": { "blockingKickbacks": 0 },    // int 0..cap
+    "review": { "blockingKickbacks": 0 },    // int 0..cap; optional "bonusGranted": bool
     "audit":  { "blockingKickbacks": 0 }     // int 0..cap (independent counter)
   },
   "council": {
@@ -150,7 +150,7 @@ never touched.
     "findings": [],                          // when convened: exact active source+summary blocker union
     //   finding = { "id": str, "summary": str, "source": "review"|"review2"|"audit",
     //               "blockingVotes": int 0..3,
-    //               "survived": bool, "followupTaskId": int|null }
+    //               "survived": bool, "followupTaskId": task id|"ledger"|null }
     "verdict": null,                         // null | "ship" | "block"
     "outcome": null                          // null | "shipped" | "scoped-fix-shipped" | "blocked-to-operator"
   }
@@ -168,7 +168,8 @@ never touched.
   The orchestrator assembles member identities from three host-observed dispatch
   IDs; council lens returns do not author `agent_id`.
 - `council.findings` is exactly the active blocking union for the category, matched by source plus summary. New returns require the source. Every blocker requires a source-bound surviving refute.
-- `blockingVotes` is 0..3 and `survived == (blockingVotes >= 2)`. Demoted findings record a valid follow-up task id; survivors record `null`.
+- `blockingVotes` is 0..3 and `survived == (blockingVotes >= 2)`. Demoted findings record a valid follow-up task id or the literal `"ledger"` for a line in `.jeff/FOLLOWUPS.md`; survivors record `null`.
+- `stages.<source>.bonusGranted` is an optional boolean; absent means `false`. It records that the source has spent its one evidence-scaled bonus cycle, so the bound for that source is `cap + 1` kickback cycles at most once.
 - `council.verdict` is `block` iff any finding survived, otherwise `ship`.
 - A block permits one scoped `implement` cycle for code or `execute` cycle for operation. Operation completion proves exactly one adjacent execution cycle by an executor distinct from the council baseline, followed by fresh category-specific judgments whose identities do not reuse archived judges or council members. Code additionally requires its fresh clean full-suite gate. An operation approval stop remains resumable, but a scoped execute kickback or failed reassessment ends as `blocked-to-operator`.
 
@@ -177,15 +178,22 @@ never touched.
 All are pure functions of the recorded state: deterministic, fail-closed,
 consistent with the existing invariants. **Absent `convergence` ⇒ all skipped.**
 
-- **INV-7:** category-specific counters are integers in `0..cap`.
+- **INV-7:** category-specific counters are integers in `0..cap`. Each source's
+  kickbacks that carry a typed `findings` contract are bounded at `cap`, or at
+  `cap + 1` when that source records `bonusGranted: true`; untyped judgment
+  kickbacks (a council block, a false-verification kick) stay outside the bound.
+  A recorded `bonusGranted: true` additionally requires its enabling evidence:
+  that source's last typed kickback is confined to `implement | refactor` and
+  carries strictly fewer findings than its predecessor.
 - **INV-8:** a convened council has exactly three distinct lenses, a category-valid exact-cap trigger stage, and required builder/judge separation. Operation councils also retain cycle and baseline-executor provenance and exclude archived judges/refuters.
 - **INV-9 (per-finding determinism):** for each finding,
   `survived == (blockingVotes ≥ 2)`; and `verdict == ("block" if any finding
   survived else "ship")`. The ship/block decision is reproducible from the
   recorded tallies.
 - **INV-10 (follow-up tracking):** every demoted finding (`survived == false`)
-  records a `followupTaskId` that exists in the task set; every surviving finding
-  has `followupTaskId == null`.
+  records a `followupTaskId` that exists in the task set, or the literal
+  `"ledger"`, which the validator accepts without reading any file; every
+  surviving finding has `followupTaskId == null`.
 - **INV-11 (block resolution / done-gate):**
   `verdict == "block" && outcome == "blocked-to-operator"` implies `status == "blocked"`.
   A done task with a convened blocking council requires `outcome == "scoped-fix-shipped"`.

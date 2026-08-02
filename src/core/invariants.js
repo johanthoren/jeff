@@ -85,6 +85,10 @@ const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
 // `test` is accepted only as a legacy persisted-ledger resume state.
 const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'done'];
 const PRIOS = ['p0', 'p1', 'p2', 'p3', 'p4'];
+// The repair destinations a kickback stays confined to.
+const CONFINED_KICK_STAGES = ['implement', 'refactor'];
+// A demoted council finding parked on `.jeff/FOLLOWUPS.md` instead of a task.
+const LEDGER_FOLLOWUP = 'ledger';
 
 /**
  * `[gate]` done-gate pre-flight (cook.sh:338-346). Over `done` tasks only, and
@@ -241,7 +245,7 @@ function hasTargetedRepairProof(task) {
       ? ['review'] : []),
     ...(task.audit?.verdict === 'needs-work' ? ['audit'] : []),
   ];
-  const isAwaitingFreshRepair = ['implement', 'refactor'].includes(task.stage)
+  const isAwaitingFreshRepair = CONFINED_KICK_STAGES.includes(task.stage)
     && task.convergence?.council?.stage == null
     && task.convergence?.council?.convened !== true
     && liveRaisingSources.includes(latestKickback.from)
@@ -273,11 +277,11 @@ function hasTargetedRepairProof(task) {
   const findings = kickbacks.flatMap((/** @type {any} */ kickback) => kickback.findings ?? []);
   const typedContract = kickbacks.length === raisingSources.length
     && kickbacks.every((/** @type {any} */ kickback) => (
-      ['implement', 'refactor'].includes(kickback.to)
+      CONFINED_KICK_STAGES.includes(kickback.to)
       && Array.isArray(kickback.findings)
       && kickback.findings.length > 0
       && kickback.findings.every((/** @type {any} */ finding) => (
-        ['implement', 'refactor'].includes(finding?.kickTo)
+        CONFINED_KICK_STAGES.includes(finding?.kickTo)
         && (finding?.source === kickback.from
           || (kickback.from === 'review' && finding?.source === 'review2'))
         && typeof finding?.file === 'string'
@@ -778,6 +782,38 @@ export function runInvariants(
 }
 
 /**
+ * Kickbacks raised by `stage` that carry a typed findings contract. The inv7
+ * bound counts only these: judgment history also holds untyped kickbacks (a
+ * convened council's block, a false-verification kick) that no counter ever
+ * tracked, and those stay outside the bound.
+ *
+ * @param {any} t - the task object
+ * @param {string} stage - the judgment source
+ * @returns {any[]}
+ */
+function typedSourceKickbacks(t, stage) {
+  return jqOr(t.kickbacks, []).filter((/** @type {any} */ k) => (
+    k?.from === stage && Array.isArray(k.findings)
+  ));
+}
+
+/**
+ * The evidence a granted bonus cycle requires: the source's last typed
+ * kickback is fully confined to implement/refactor and strictly smaller than
+ * its predecessor. Fail-closed, so a missing predecessor is no evidence.
+ *
+ * @param {any[]} typed - that source's typed kickbacks, in recorded order
+ * @returns {boolean}
+ */
+function hasBonusEvidence(typed) {
+  const last = typed.at(-1);
+  const previous = typed.at(-2);
+  if (last === undefined || previous === undefined) return false;
+  return last.findings.every((/** @type {any} */ f) => CONFINED_KICK_STAGES.includes(f?.kickTo))
+    && last.findings.length < previous.findings.length;
+}
+
+/**
  * Convergence invariants inv7-11 (cook.sh:464-584). Absent `convergence` ⇒ no
  * checks. Present ⇒ asserted over the recorded state, fail-closed on bad shape.
  *
@@ -800,9 +836,19 @@ function convergenceChecks(t, id, ids, out) {
     out.push(`task ${id}: convergence.cap must be an integer ≥ 1 [inv7]`);
   } else {
     for (const st of judgmentStages) {
-      const bk = (c.stages && c.stages[st]) ? c.stages[st].blockingKickbacks : undefined;
+      const counter = c.stages?.[st];
+      const bk = counter?.blockingKickbacks;
       if (typeof bk !== 'number' || bk < 0 || bk > cap || Math.floor(bk) !== bk) {
         out.push(`task ${id}: convergence.stages.${st}.blockingKickbacks must be an integer in 0..${cap} [inv7]`);
+      }
+      const bonus = counter?.bonusGranted === true;
+      const typed = typedSourceKickbacks(t, st);
+      if (bonus && !hasBonusEvidence(typed)) {
+        out.push(`task ${id}: convergence.stages.${st}.bonusGranted requires a strictly smaller, fully confined last typed kickback [inv7]`);
+      }
+      const allowed = cap + (bonus ? 1 : 0);
+      if (typed.length > allowed) {
+        out.push(`task ${id}: convergence.stages.${st} allows at most ${allowed} typed kickbacks, found ${typed.length} [inv7]`);
       }
     }
   }
@@ -892,8 +938,8 @@ function convergenceChecks(t, id, ids, out) {
         if (fut !== null) out.push(`task ${id}: surviving finding ${fid} must have followupTaskId == null [inv10]`);
       } else if (fut === null) {
         out.push(`task ${id}: follow-up finding ${fid} must record a followupTaskId [inv10]`);
-      } else if (!ids.includes(fut)) {
-        out.push(`task ${id}: finding ${fid} followupTaskId ${jqStr(fut)} does not reference an existing task [inv10]`);
+      } else if (fut !== LEDGER_FOLLOWUP && !ids.includes(fut)) {
+        out.push(`task ${id}: finding ${fid} followupTaskId ${jqStr(fut)} must be ${jqStr(LEDGER_FOLLOWUP)} or an existing task [inv10]`);
       }
     }
   }

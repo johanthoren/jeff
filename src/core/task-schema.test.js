@@ -3306,3 +3306,340 @@ test('Item 4 council recovery accepts positive single-owner scoped retention led
     });
   }
 });
+
+/**
+ * Item 5: one judgment kickback from `source`. `count` null records a
+ * historical kickback that carries no typed findings contract.
+ *
+ * @param {{source?: 'review' | 'audit', count?: number | null, kickTo?: string, reason?: string}} [spec]
+ * @returns {Record<string, any>}
+ */
+function item5JudgmentKickback({ source = 'review', count = null, kickTo = 'implement', reason } = {}) {
+  const kickback = {
+    from: source,
+    to: 'implement',
+    reason: reason ?? `Confined ${source} blockers survived.`,
+    at: '2026-07-12T00:30:00Z',
+  };
+  if (count === null) return kickback;
+  return {
+    ...kickback,
+    findings: Array.from({ length: count }, (_, index) => item4KickbackFinding(source, {
+      line: 300 + index,
+      what: `${source} blocker ${index}.`,
+      kickTo,
+    })),
+  };
+}
+
+/**
+ * @param {{
+ *   kickbacks: Record<string, any>[],
+ *   review?: Record<string, any>,
+ *   audit?: Record<string, any>,
+ *   cap?: number,
+ *   council?: Record<string, any>,
+ * }} spec
+ * @returns {Record<string, any>}
+ */
+function item5CodeLedger({
+  kickbacks,
+  review = { blockingKickbacks: 2 },
+  audit = { blockingKickbacks: 0 },
+  cap = 2,
+  council,
+}) {
+  return canonicalTask({
+    kickbacks,
+    convergence: convergence({
+      cap,
+      stages: { review, audit },
+      ...(council === undefined ? {} : { council }),
+    }),
+  });
+}
+
+/**
+ * @param {Record<string, any>[]} findings
+ * @param {Record<string, any>} [overrides]
+ * @returns {Record<string, any>}
+ */
+function item5ConvenedCouncil(findings, overrides = {}) {
+  return {
+    convened: true,
+    stage: 'review',
+    members: [
+      { agent_id: 'council-integrity', lens: 'integrity', temperature: 0.3 },
+      { agent_id: 'council-security', lens: 'security', temperature: 0.7 },
+      { agent_id: 'council-pragmatist', lens: 'pragmatist', temperature: 1 },
+    ],
+    findings,
+    verdict: findings.some((finding) => finding.survived === true) ? 'block' : 'ship',
+    outcome: null,
+    ...overrides,
+  };
+}
+
+test('Item 5 INV-7 keeps every historical bound and accepts one evidenced bonus cycle', async (t) => {
+  /** @type {Array<[string, Record<string, any>]>} */
+  const accepted = [
+    [
+      'legacy untyped judgment kickbacks are outside the bound',
+      item5CodeLedger({
+        kickbacks: Array.from({ length: 4 }, () => item5JudgmentKickback()),
+      }),
+    ],
+    [
+      'a convened council block kickback is outside the bound',
+      item5CodeLedger({
+        kickbacks: [
+          item5JudgmentKickback({ count: 3 }),
+          item5JudgmentKickback({ count: 2 }),
+          item5JudgmentKickback({ reason: 'Council block: the recorded outcome is unproven.' }),
+        ],
+        council: item5ConvenedCouncil([{
+          id: 'F1',
+          summary: 'The recorded outcome is unproven.',
+          source: 'review',
+          blockingVotes: 2,
+          survived: true,
+          followupTaskId: null,
+        }]),
+      }),
+    ],
+    [
+      'typed kickbacks at exactly the cap need no bonus',
+      item5CodeLedger({
+        kickbacks: [item5JudgmentKickback({ count: 3 }), item5JudgmentKickback({ count: 2 })],
+      }),
+    ],
+    [
+      'one evidenced bonus cycle is bounded at cap plus one',
+      item5CodeLedger({
+        kickbacks: [
+          item5JudgmentKickback({ count: 3 }),
+          item5JudgmentKickback({ count: 2 }),
+          item5JudgmentKickback({ count: 1 }),
+        ],
+        review: { blockingKickbacks: 2, bonusGranted: true },
+      }),
+    ],
+    [
+      'each source carries its own independent bonus',
+      item5CodeLedger({
+        kickbacks: [
+          item5JudgmentKickback({ count: 3 }),
+          item5JudgmentKickback({ count: 2 }),
+          item5JudgmentKickback({ count: 1 }),
+          item5JudgmentKickback({ source: 'audit', count: 2 }),
+          item5JudgmentKickback({ source: 'audit', count: 1 }),
+        ],
+        review: { blockingKickbacks: 2, bonusGranted: true },
+        audit: { blockingKickbacks: 2 },
+      }),
+    ],
+  ];
+
+  for (const [name, task] of accepted) await t.test(`accepts ${name}`, async () => {
+    const result = await verdictFor(task);
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  await t.test('accepts an unbounded typed history when convergence is absent', async () => {
+    const task = item5CodeLedger({
+      kickbacks: Array.from({ length: 5 }, () => item5JudgmentKickback({ count: 1 })),
+    });
+    delete task.convergence;
+    const result = await verdictFor(task);
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  /** @type {Array<[string, Record<string, any>]>} */
+  const rejected = [
+    [
+      'an unspent bonus cannot exceed the cap',
+      item5CodeLedger({
+        kickbacks: [
+          item5JudgmentKickback({ count: 3 }),
+          item5JudgmentKickback({ count: 2 }),
+          item5JudgmentKickback({ count: 1 }),
+        ],
+      }),
+    ],
+    [
+      'a granted bonus without shrinking evidence',
+      item5CodeLedger({
+        kickbacks: [
+          item5JudgmentKickback({ count: 3 }),
+          item5JudgmentKickback({ count: 2 }),
+          item5JudgmentKickback({ count: 2 }),
+        ],
+        review: { blockingKickbacks: 2, bonusGranted: true },
+      }),
+    ],
+    [
+      'a granted bonus whose last findings are unconfined',
+      item5CodeLedger({
+        kickbacks: [
+          item5JudgmentKickback({ count: 3 }),
+          item5JudgmentKickback({ count: 2 }),
+          item5JudgmentKickback({ count: 1, kickTo: 'plan' }),
+        ],
+        review: { blockingKickbacks: 2, bonusGranted: true },
+      }),
+    ],
+    [
+      'a granted bonus with no prior kickback to shrink from',
+      item5CodeLedger({
+        kickbacks: [item5JudgmentKickback({ count: 1 })],
+        review: { blockingKickbacks: 1, bonusGranted: true },
+      }),
+    ],
+    [
+      'a granted bonus with no recorded findings contract at all',
+      item5CodeLedger({
+        kickbacks: [item5JudgmentKickback(), item5JudgmentKickback()],
+        review: { blockingKickbacks: 2, bonusGranted: true },
+      }),
+    ],
+    [
+      'a granted bonus cannot buy a second extra cycle',
+      item5CodeLedger({
+        kickbacks: [
+          item5JudgmentKickback({ count: 4 }),
+          item5JudgmentKickback({ count: 3 }),
+          item5JudgmentKickback({ count: 2 }),
+          item5JudgmentKickback({ count: 1 }),
+        ],
+        review: { blockingKickbacks: 2, bonusGranted: true },
+      }),
+    ],
+    [
+      'a bonus on one source does not license another source',
+      item5CodeLedger({
+        kickbacks: [
+          item5JudgmentKickback({ count: 2 }),
+          item5JudgmentKickback({ count: 1 }),
+          item5JudgmentKickback({ source: 'audit', count: 3 }),
+          item5JudgmentKickback({ source: 'audit', count: 2 }),
+          item5JudgmentKickback({ source: 'audit', count: 1 }),
+        ],
+        review: { blockingKickbacks: 2, bonusGranted: true },
+        audit: { blockingKickbacks: 2 },
+      }),
+    ],
+  ];
+
+  for (const [name, task] of rejected) await t.test(`rejects ${name}`, async () => {
+    const result = await verdictFor(task);
+    assertNamedFailure(result, '[inv7]');
+  });
+});
+
+test('Item 5 INV-7 leaves operation kickback history unbounded', async () => {
+  const task = canonicalOperationTask({
+    kickbacks: [
+      { from: 'verify', to: 'execute', reason: 'A verified postcondition survived.', at: '2026-07-12T00:30:00Z' },
+      { from: 'verify', to: 'execute', reason: 'Verification reported a false postcondition.', at: '2026-07-12T00:40:00Z' },
+      { from: 'verify', to: 'execute', reason: 'Verification reported a false postcondition.', at: '2026-07-12T00:50:00Z' },
+    ],
+    convergence: {
+      cap: 2,
+      stages: { verify: { blockingKickbacks: 1 }, audit: { blockingKickbacks: 0 } },
+      council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+    },
+  });
+
+  const result = await verdictFor(task);
+  assert.equal(result.ok, true, result.stderr.join('\n'));
+});
+
+test('Item 5 INV-10 accepts a ledger demotion beside the existing task-id path', async (t) => {
+  /** @param {Record<string, any>} overrides */
+  const demoted = (overrides) => ({
+    id: 'F1',
+    summary: 'The follow-up finding was demoted.',
+    source: 'review',
+    blockingVotes: 1,
+    survived: false,
+    ...overrides,
+  });
+
+  /** @type {Array<[string, Record<string, any>[]]>} */
+  const accepted = [
+    ['an existing task id', [demoted({ followupTaskId: '#27' })]],
+    ['the literal ledger reference', [demoted({ followupTaskId: 'ledger' })]],
+    ['both demotion targets together', [
+      demoted({ followupTaskId: '#27' }),
+      demoted({ id: 'F2', followupTaskId: 'ledger' }),
+    ]],
+  ];
+
+  for (const [name, findings] of accepted) await t.test(`accepts ${name}`, async () => {
+    const result = await verdictFor(item5CodeLedger({
+      kickbacks: [],
+      council: item5ConvenedCouncil(findings),
+    }));
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  /** @type {Array<[string, Record<string, any>[]]>} */
+  const rejected = [
+    ['an unknown non-ledger string', [demoted({ followupTaskId: 'followups' })]],
+    ['a surviving finding pointed at the ledger', [demoted({
+      blockingVotes: 2,
+      survived: true,
+      followupTaskId: 'ledger',
+    })]],
+  ];
+
+  for (const [name, findings] of rejected) await t.test(`rejects ${name}`, async () => {
+    const result = await verdictFor(item5CodeLedger({
+      kickbacks: [],
+      council: item5ConvenedCouncil(findings),
+    }));
+    assertNamedFailure(result, '[inv10]');
+  });
+});
+
+test('Item 5 bonusGranted is an optional boolean on each convergence counter', async (t) => {
+  /** @type {Array<[string, Record<string, any>]>} */
+  const accepted = [
+    ['absence', { review: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } }],
+    ['explicit false', { review: { blockingKickbacks: 0, bonusGranted: false }, audit: { blockingKickbacks: 0 } }],
+    ['audit stage true', {
+      review: { blockingKickbacks: 0 },
+      audit: { blockingKickbacks: 2, bonusGranted: true },
+    }],
+  ];
+
+  for (const [name, stages] of accepted) await t.test(`accepts ${name}`, async () => {
+    const result = await verdictFor(canonicalTask({
+      kickbacks: [
+        item5JudgmentKickback({ source: 'audit', count: 2 }),
+        item5JudgmentKickback({ source: 'audit', count: 1 }),
+      ],
+      convergence: convergence({ stages }),
+    }));
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  /** @type {Array<[string, string, unknown]>} */
+  const rejected = [
+    ['review', 'a string', 'true'],
+    ['review', 'a number', 1],
+    ['review', 'null', null],
+    ['audit', 'a string', 'false'],
+  ];
+
+  for (const [stage, name, value] of rejected) await t.test(`rejects ${name} on ${stage}`, async () => {
+    /** @type {Record<string, any>} */
+    const stages = {
+      review: { blockingKickbacks: 0 },
+      audit: { blockingKickbacks: 0 },
+    };
+    stages[stage] = { blockingKickbacks: 0, bonusGranted: value };
+    const result = await verdictFor(canonicalTask({ convergence: convergence({ stages }) }));
+    assertNamedFailure(result, `convergence.stages.${stage}.bonusGranted`);
+  });
+});
