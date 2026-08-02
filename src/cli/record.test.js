@@ -2875,66 +2875,153 @@ test('issue 72 agents-only review re-entry archives once and requires two fresh 
   }
 });
 
-test('implementation resets a current-cycle judgment despite a later implement kickback', async (t) => {
-  const cases = [
-    ['review', 'reviewer_agent_id'],
-    ['audit', 'audit_agent_id'],
+test('implementation full-resets an equal-instant active untyped judgment round', async (t) => {
+  const sources = ['review', 'audit'];
+  const encodings = [
+    ['omitted findings', {}],
+    ['empty findings', { findings: [] }],
   ];
 
-  for (const [source, agentField] of cases) {
-    await t.test(`${source} judgment`, async () => {
-      const priorCycle = {
-        at: '2026-07-12T01:00:00+01:00',
-        review: { verdict: 'na', reviewer_agent_id: null, findings: [], evidence: [] },
-        review2: null,
-        audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
-      };
-      const currentReview = {
-        verdict: source === 'review' ? 'needs-work' : 'pass',
-        reviewer_agent_id: 'reviewer-current',
-        findings: source === 'review' ? [blockingFinding()] : [],
-        evidence: [{ command: 'node --test', output: 'review evidence' }],
-      };
-      const currentAudit = {
-        required: true,
-        verdict: source === 'audit' ? 'needs-work' : 'na',
-        audit_agent_id: source === 'audit' ? 'auditor-current' : null,
-        findings: source === 'audit' ? [{ ...blockingFinding(), cwe: 'CWE-20' }] : [],
-        evidence: [{ command: 'review-security --json', output: 'audit evidence' }],
-      };
-      const task = canonicalTask({
-        stage: 'implement',
-        agents: {
-          implementer_agent_id: 'implementer-old',
+  for (const source of sources) {
+    for (const [encoding, contract] of encodings) {
+      await t.test(`${source}, ${encoding}`, async (t) => {
+        t.mock.timers.enable({
+          apis: ['Date'],
+          now: new Date('2026-07-12T02:00:00Z'),
+        });
+        const currentReview = {
+          verdict: source === 'review' ? 'needs-work' : 'pass',
           reviewer_agent_id: 'reviewer-current',
-          reviewer2_agent_id: null,
-          audit_agent_id: currentAudit.audit_agent_id,
-        },
-        review: currentReview,
-        audit: currentAudit,
-        judgmentHistory: [priorCycle],
-        kickbacks: [
-          { from: source, to: 'implement', reason: `Current ${source} blocker.`, at: '2026-07-12T00:30:00Z' },
-          { from: 'implement', to: 'plan', reason: 'Plan revision.', at: '2026-07-12T00:45:00Z' },
-        ],
-      });
-      const { root, taskDir } = await makeRoot(task);
-      try {
-        await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-fresh'));
-        const recorded = await readTask(taskDir);
+          findings: source === 'review' ? [blockingFinding()] : [],
+          evidence: [{ command: 'node --test', output: 'review evidence' }],
+        };
+        const currentReview2 = {
+          verdict: 'pass',
+          reviewer_agent_id: 'reviewer-two-current',
+          findings: [],
+          evidence: [{ command: 'node --test', output: 'review two evidence' }],
+        };
+        const currentAudit = {
+          required: true,
+          verdict: source === 'audit' ? 'needs-work' : 'pass',
+          audit_agent_id: 'auditor-current',
+          findings: source === 'audit' ? [{ ...blockingFinding(), cwe: 'CWE-20' }] : [],
+          evidence: [{ command: 'review-security --json', output: 'audit evidence' }],
+        };
+        const priorCycle = {
+          at: '2026-07-12T01:00:00+01:00',
+          review: source === 'review'
+            ? { ...currentReview, verdict: 'pass', reviewer_agent_id: 'reviewer-archived', findings: [] }
+            : currentReview,
+          review2: currentReview2,
+          audit: source === 'audit'
+            ? { ...currentAudit, verdict: 'pass', audit_agent_id: 'auditor-archived', findings: [] }
+            : currentAudit,
+        };
+        const task = canonicalTask({
+          stage: 'implement',
+          complexity: 'complex',
+          plan: { refactorOpportunity: null },
+          agents: {
+            implementer_agent_id: 'implementer-old',
+            reviewer_agent_id: 'reviewer-current',
+            reviewer2_agent_id: 'reviewer-two-current',
+            audit_agent_id: 'auditor-current',
+          },
+          tests: {
+            authored_by_agent_id: 'plan-agent',
+            green: true,
+            evidence: [{ command: 'make test', output: 'prior gate pass' }],
+          },
+          review: currentReview,
+          review2: currentReview2,
+          audit: currentAudit,
+          judgmentHistory: [priorCycle],
+          kickbacks: [{
+            from: source,
+            to: 'implement',
+            reason: `Fresh equal-instant ${source} blocker.`,
+            at: '2026-07-12T00:00:00Z',
+            ...contract,
+          }],
+        });
+        const returned = implementReturn('implementer-fresh');
+        const expectedImplement = {
+          agent_id: 'implementer-fresh',
+          result: returned.result,
+          files: returned.files,
+          greenRun: returned.greenRun,
+        };
+        const { root, taskDir } = await makeRoot(task);
+        try {
+          const before = await readTask(taskDir);
+          await recordSpecialistReturn(root, 'implement', '18', returned);
+          const repaired = await readTask(taskDir);
+          const expectedTests = { ...before.tests, green: false };
+          delete expectedTests.gate;
 
-        assert.equal(recorded.judgmentHistory.length, 2);
-        assert.deepEqual(recorded.judgmentHistory[1].review, currentReview);
-        assert.deepEqual(recorded.judgmentHistory[1].audit, currentAudit);
-        assert.equal(recorded.agents[agentField], null);
-        assert.equal(recorded.review.reviewer_agent_id, null);
-        assert.equal(recorded.review.verdict, null);
-        assert.equal(recorded.audit.audit_agent_id, null);
-        assert.equal(recorded.audit.verdict, 'na');
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    });
+          assert.deepEqual(repaired.judgmentHistory, [
+            priorCycle,
+            {
+              at: '2026-07-12T02:00:00Z',
+              review: currentReview,
+              review2: currentReview2,
+              audit: currentAudit,
+              agents: {
+                reviewer_agent_id: 'reviewer-current',
+                reviewer2_agent_id: 'reviewer-two-current',
+                audit_agent_id: 'auditor-current',
+              },
+            },
+          ]);
+          assert.deepEqual(repaired.review, {
+            verdict: null,
+            reviewer_agent_id: null,
+            findings: [],
+            evidence: [],
+          });
+          assert.equal(repaired.review2, null);
+          assert.deepEqual(repaired.audit, {
+            required: true,
+            verdict: 'na',
+            audit_agent_id: null,
+            findings: [],
+            evidence: [],
+          });
+          assert.deepEqual(repaired.agents, {
+            implementer_agent_id: 'implementer-fresh',
+            reviewer_agent_id: null,
+            reviewer2_agent_id: null,
+            audit_agent_id: null,
+          });
+          assert.deepEqual(repaired.tests, expectedTests);
+          assert.equal(JSON.stringify(repaired.implement), JSON.stringify(expectedImplement));
+          assert.equal(repaired.stage, 'review');
+
+          const freshAgent = source === 'review' ? 'reviewer-rerun' : 'auditor-rerun';
+          const freshReturn = source === 'review'
+            ? reviewReturn(freshAgent, { cycle: 2 })
+            : auditReturn(freshAgent, { cycle: 2 });
+          await recordSpecialistReturn(root, source, '18', freshReturn);
+          const rerecorded = await readTask(taskDir);
+
+          assert.deepEqual(rerecorded.judgmentHistory, repaired.judgmentHistory);
+          assert.deepEqual(rerecorded.agents, {
+            implementer_agent_id: 'implementer-fresh',
+            reviewer_agent_id: source === 'review' ? freshAgent : null,
+            reviewer2_agent_id: null,
+            audit_agent_id: source === 'audit' ? freshAgent : null,
+          });
+          assert.equal(rerecorded.review.reviewer_agent_id, source === 'review' ? freshAgent : null);
+          assert.equal(rerecorded.review2, null);
+          assert.equal(rerecorded.audit.audit_agent_id, source === 'audit' ? freshAgent : null);
+          assert.deepEqual(rerecorded.tests, expectedTests);
+          assert.equal(JSON.stringify(rerecorded.implement), JSON.stringify(expectedImplement));
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
   }
 });
 

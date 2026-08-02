@@ -383,16 +383,18 @@ function resetJudgmentsAfterFix(task, at, files) {
   if (latestHistory && !isIsoDateTime(latestHistory.at)) {
     throw new Error('[record-transition] judgmentHistory latest at is invalid');
   }
+  const sources = /** @type {('review' | 'audit')[]} */ (['review', 'audit']);
+  const activeSources = sources.filter((source) => hasUnarchivedFailure(task, latestHistory, source));
   if (latestHistory
     && (latestJudgmentKickback.findings === undefined
       || (Array.isArray(latestJudgmentKickback.findings)
         && latestJudgmentKickback.findings.length === 0))
-    && Date.parse(latestJudgmentKickback.at) <= Date.parse(latestHistory.at)) {
+    && Date.parse(latestJudgmentKickback.at) <= Date.parse(latestHistory.at)
+    && (Date.parse(latestJudgmentKickback.at) < Date.parse(latestHistory.at)
+      || activeSources.length === 0)) {
     return false;
   }
 
-  const sources = /** @type {('review' | 'audit')[]} */ (['review', 'audit']);
-  const activeSources = sources.filter((source) => hasUnarchivedFailure(task, latestHistory, source));
   if (activeSources.includes(latestJudgmentKickback.from)) {
     const activeKickbacks = judgmentRoundKickbacks(task, latestJudgmentKickback, activeSources);
     const scoped = activeKickbacks.length === activeSources.length
