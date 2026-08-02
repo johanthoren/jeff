@@ -2875,6 +2875,139 @@ test('issue 72 agents-only review re-entry archives once and requires two fresh 
   }
 });
 
+test('Item 4 public recorder resets judgments despite a later builder kickback', async (t) => {
+  for (const source of /** @type {const} */ (['review', 'audit'])) {
+    await t.test(source, async (t) => {
+      const now = '2026-07-12T02:00:00Z';
+      t.mock.timers.enable({ apis: ['Date'], now: new Date(now) });
+      const finding = source === 'review'
+        ? blockingFinding({ what: 'Review requires implementation repair.' })
+        : { ...blockingFinding({ what: 'Audit requires implementation repair.' }), cwe: 'CWE-20' };
+      const { root, taskDir } = await makeRoot(canonicalTask({
+        stage: 'review',
+        complexity: 'complex',
+        plan: { refactorOpportunity: null },
+        agents: {
+          implementer_agent_id: 'implementer-old',
+          reviewer_agent_id: null,
+          reviewer2_agent_id: null,
+          audit_agent_id: null,
+        },
+        tests: {
+          authored_by_agent_id: 'plan-agent-old',
+          green: true,
+          evidence: [{ command: 'make test', output: 'prior gate pass' }],
+        },
+        audit: {
+          required: true,
+          verdict: 'na',
+          audit_agent_id: null,
+          findings: [],
+          evidence: [],
+        },
+      }));
+      try {
+        await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-current', {
+          verdict: source === 'review' ? 'needs-work' : 'pass',
+          findings: source === 'review' ? [finding] : [],
+        }));
+        await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-two-current'));
+        await recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor-current', {
+          verdict: source === 'audit' ? 'needs-work' : 'pass',
+          findings: source === 'audit' ? [finding] : [],
+        }));
+        await recordSpecialistReturn(root, 'refute', '18', refuteReturn(`${source}-refuter`, finding, {
+          source,
+        }));
+
+        await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-kickback', {
+          result: 'kickback',
+          greenRun: { command: null, output: 'The plan contract needs revision.' },
+          kickback: { to: 'plan', reason: 'Revise the plan contract.' },
+        }));
+        await recordSpecialistReturn(root, 'plan', '18', planReturn({
+          complexity: 'complex',
+          auditRequired: true,
+        }, 'plan-agent-fresh'));
+
+        const beforeRepair = await readTask(taskDir);
+        assert.deepEqual(
+          beforeRepair.kickbacks.map((/** @type {any} */ kickback) => [kickback.from, kickback.to]),
+          [[source, 'implement'], ['implement', 'plan']],
+        );
+        const returned = implementReturn('implementer-fresh', { files: ['src/core/task-schema.js'] });
+        const expectedImplement = {
+          agent_id: 'implementer-fresh',
+          result: returned.result,
+          files: returned.files,
+          greenRun: returned.greenRun,
+        };
+        const expectedTests = { ...beforeRepair.tests, green: false };
+        delete expectedTests.gate;
+
+        await recordSpecialistReturn(root, 'implement', '18', returned);
+        const repaired = await readTask(taskDir);
+        const archived = {
+          at: now,
+          review: beforeRepair.review,
+          review2: beforeRepair.review2,
+          audit: beforeRepair.audit,
+          agents: {
+            reviewer_agent_id: 'reviewer-current',
+            reviewer2_agent_id: 'reviewer-two-current',
+            audit_agent_id: 'auditor-current',
+          },
+        };
+
+        assert.deepEqual(repaired.judgmentHistory, [archived]);
+        assert.deepEqual(repaired.review, {
+          verdict: null,
+          reviewer_agent_id: null,
+          findings: [],
+          evidence: [],
+        });
+        assert.equal(repaired.review2, null);
+        assert.deepEqual(repaired.audit, {
+          required: true,
+          verdict: 'na',
+          audit_agent_id: null,
+          findings: [],
+          evidence: [],
+        });
+        assert.deepEqual(repaired.agents, {
+          implementer_agent_id: 'implementer-fresh',
+          reviewer_agent_id: null,
+          reviewer2_agent_id: null,
+          audit_agent_id: null,
+        });
+        assert.deepEqual(repaired.tests, expectedTests);
+        assert.equal(JSON.stringify(repaired.implement), JSON.stringify(expectedImplement));
+        assert.equal(repaired.stage, 'review');
+
+        const freshAgent = `${source}-fresh`;
+        await recordSpecialistReturn(
+          root,
+          source,
+          '18',
+          source === 'review'
+            ? reviewReturn(freshAgent, { cycle: 1 })
+            : auditReturn(freshAgent, { cycle: 1 }),
+        );
+        const rerecorded = await readTask(taskDir);
+        assert.deepEqual(rerecorded.judgmentHistory, [archived]);
+        assert.equal(
+          source === 'review'
+            ? rerecorded.review.reviewer_agent_id
+            : rerecorded.audit.audit_agent_id,
+          freshAgent,
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test('implementation full-resets an equal-instant active untyped judgment round', async (t) => {
   const sources = ['review', 'audit'];
   const encodings = [
