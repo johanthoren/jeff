@@ -1,9 +1,9 @@
 {
   "name": "jeff",
-  "version": "6.0.0-alpha.5",
+  "version": "6.0.0-alpha.8",
   "description": "Meet your new sous chef, Jeff: a model-native quality control plane and cooperative workflow protocol for trusted operators and friendly agents, not a security sandbox.",
   "author": {
-    "name": "Johan Thor\u00e9n"
+    "name": "Johan Thorén"
   },
   "license": "Apache-2.0",
   "repository": "https://github.com/johanthoren/jeff",

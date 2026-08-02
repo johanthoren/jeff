@@ -231,6 +231,7 @@ A code task must start from a **known-green baseline**, so the one post-change g
 ## Validation
 
 Run `cook validate` before each commit. Code completion requires its existing non-implementer test gate, review set, and conditional audit. Operation completion requires executed actions/evidence, an independent passing verifier with all postconditions true and evidence present, and audit pass or not-required; it ignores code test, implementation, refactor, review, dual-review, and clean full-suite Git gates.
+`cook snapshot --json` exists for external observers of the store and is not part of the method loop.
 
 Registry validation is mode-specific. Before full-mode terminal bookkeeping,
 read `skills/cook/reference/full-mode.md` (§Terminal-with-removal): it owns the

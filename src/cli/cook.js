@@ -9,6 +9,7 @@
 
 import { validateStore } from '../core/validate-store.js';
 import { lsReport, statusReport, showReport } from '../core/reporters.js';
+import { snapshotReport } from '../core/snapshot.js';
 import { runVerify } from '../core/verify.js';
 import {
   deinitProject,
@@ -77,6 +78,7 @@ function usageReport() {
       '  ls           List tasks.',
       '  status       Report in-flight tasks and backlog health.',
       '  show <id>    Print one task ledger.',
+      '  snapshot --json  Print a read-only JSON projection of the store.',
       '  init         Activate Jeff and scaffold .jeff/.',
       '  lite         Activate lite mode and locally Git-exclude .jeff/.',
       '  plan <sub>   Read or update a markdown plan or GitHub issue.',
@@ -253,6 +255,19 @@ async function main() {
       return process.exit(1);
     }
     return emit(await showReport(root, id ?? ''));
+  }
+
+  if (sub === 'snapshot') {
+    if (rest[0] === '--json' && rest.length === 1) {
+      return emit(await snapshotReport(root));
+    }
+    if (rest.length === 0) {
+      process.stderr.write('cook: usage: cook snapshot --json\n');
+      return process.exit(1);
+    }
+    if (rejectUnknownArgs('snapshot', rest)) return process.exit(1);
+    process.stderr.write('cook: usage: cook snapshot --json\n');
+    return process.exit(1);
   }
 
   if (sub === 'baseline') {
