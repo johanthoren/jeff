@@ -119,7 +119,7 @@ Parked non-goals for this vision:
 | First artifact | This vision doc only |
 | Client (2026-08-02 follow-up) | TUI-first (Rust, ratatui); web dashboard is a later project, a second client on the same protocol |
 | Backend (2026-08-02 follow-up) | Rust `jeffd`; unix-socket API; never parses ledgers, invokes each project's own `cook` for reads and legal writes |
-| Layout (2026-08-02 follow-up) | Three cards: task graph roughly the right third (ratio adapts to terminal width); chat full-width on the left; inbox and detail sharing the row below |
+| Client shape (2026-08-02 follow-up) | Standalone full-screen TUIs first for short time to value: `jeff graph`, then `jeff backlog`, then further verbs as earned; bare `jeff` combined view last. Kitty multi-pane composition is valid from day one; Ratatui multi-pane composition is late and optional. Design shared widgets and projection for later reuse; do not build the combined shell up front. |
 | Input (2026-08-02 follow-up) | Mouse and keyboard both first-class: click selection, tab cycling, fuzzy-find jump to any task/project/card |
 | Code home (2026-08-02 follow-up) | Rust workspace folder `control/` in this repo, outside the npm `files` allowlist; CLI-only boundary enforced by the language wall and the item 8 contract |
 
@@ -184,15 +184,42 @@ host Jeff sessions remain authoritative.
 ### 6.3 Control TUI (v1 client)
 
 Rust ratatui client over the backend socket. Where this doc says "dashboard",
-read "control client": TUI now, web later. Surfaces:
+read "control client": TUI now, web later.
 
-- home: all registered projects, attention counts
-- project: live graph, claims, drain state, inbox
-- task detail from graph nodes
+**Standalone full-screen TUIs first.** Ship focused verbs before any combined
+shell. Order:
+
+1. **`jeff graph`**: live task DAG for a project (or the selected registered
+   project). Zoomable canvas, claims, drain state when known, selected-node
+   detail. This is P1a and the first operator win.
+2. **`jeff backlog`**: attention and work queue across watched projects (and
+   useful on a single unwatched checkout). Operator language is **backlog**,
+   not a separate "inbox" product name. Disk `.jeff/inbox/` may remain
+   attention plumbing later; do not brand this TUI as inbox.
+3. Further standalone verbs as earned (drain controls, project registry UX).
+4. Bare **`jeff`** combined multi-pane shell last, only if composition earns
+   its keep after the standalone verbs ship.
+
+Kitty composition (separate OS windows or Kitty tabs/panes running the
+standalone verbs side by side) is valid from day one and is the early way to
+run graph and backlog together. Design shared widgets and the projection
+model so Ratatui multi-pane composition can happen later; defer that
+composition. Short time to value wins over building a combined shell up front.
+
+Surfaces the standalone clients cover over time:
+
+- home / multi-project: attention counts, registry (backlog and later home)
+- project graph: live DAG, claims, drain state, node detail (`jeff graph`)
+- backlog: structured decisions, steer targets, joint attention (`jeff backlog`)
 - levers for orchestrator model/effort on managed drivers
 - completed-task toggle on the graph
 
-Project view layout, three cards by default:
+#### Optional late combined sketch
+
+A three-card multi-pane layout remains an **optional late** combined-shell
+sketch only. It is not the P1 default and is not required before standalone
+`jeff graph` and `jeff backlog` ship. If bare `jeff` composition happens, one
+candidate arrangement is:
 
 ```text
 ┌──────────────────────────────┬───────────────┐
@@ -200,17 +227,17 @@ Project view layout, three cards by default:
 │ (full left width)            │  task graph   │
 │                              │  (~right      │
 ├──────────────┬───────────────┤   third)      │
-│ inbox cards  │ selected-node │               │
-│              │ detail        │               │
+│ backlog      │ selected-node │               │
+│ cards        │ detail        │               │
 └──────────────┴───────────────┴───────────────┘
 ```
 
-Chat spans the full width of the left side; open inbox cards and
-selected-node detail share the row below it. The graph takes roughly the right third;
-splits are ratio-based and adapt to terminal width, and on narrow terminals
-panes collapse or tab rather than shrink below legibility. The graph pane is
-a zoomable canvas (feasibility survey below); a dense tree projection remains
-as a fallback view for narrow terminals.
+In that late sketch, chat would span the left side; open backlog cards and
+selected-node detail would share the row below; the graph would take roughly
+the right third. Splits would be ratio-based. None of this is first-ship
+layout. The graph surface itself (standalone or composed later) is a zoomable
+canvas (feasibility survey below); a dense tree projection remains as a
+fallback for narrow terminals.
 
 #### Graph pane feasibility survey (2026-08-02)
 
@@ -231,7 +258,7 @@ Leaning: layered 2D canvas with an owned zoom/pan viewport as baseline, pixel
 upgrade on Kitty through the same layout pipeline. True 3D is confirmed
 possible; whether it earns the Bevy-scale dependency is open question 17.1.
 Because the viewport and layout composition is owned code, the design spec
-must define the viewport math and layout pipeline exactly.
+for `jeff graph` must define the viewport math and layout pipeline exactly.
 
 #### Interaction model
 
@@ -241,7 +268,7 @@ Mouse and keyboard are both first-class:
   viewport. Graph clicks hit-test back through the viewport transform, which
   is a second reason that transform is specced exactly. Standard crossterm
   mouse capture.
-- **Keyboard:** tab/shift-tab cycle panes and selectable elements; a fuzzy
+- **Keyboard:** tab/shift-tab cycle focus and selectable elements; a fuzzy
   finder (nucleo-class matcher) jumps directly to any task, project, or open
   decision card. The fuzzy index is client-side, built over the same
   snapshot data the protocol already carries.
@@ -257,14 +284,20 @@ marketing page.
 Shape (names may change; verbs matter):
 
 ```text
-jeffd start | stop | status | open
+jeffd start | stop | status
+jeff graph [project]                 # standalone full-screen graph TUI (P1a)
+jeff backlog [project]               # standalone full-screen backlog TUI
+jeff                             # optional late combined shell; not first ship
 jeff project add <path> | list | rm <id>
 jeff drain on | off [project]
 jeff claim-status [project]          # thin sugar over cook claims, optional
 ```
 
-`jeffd start` brings up the backend; `open` attaches the TUI client. Project
-add/list/rm edits the registry only. Drain toggles are per project.
+`jeffd start` brings up the backend. `jeff graph` and `jeff backlog` attach
+standalone TUI clients (Kitty composition of those processes is fine early).
+Bare `jeff` is reserved for a later combined client if Ratatui composition
+earns it. Project add/list/rm edits the registry only. Drain toggles are per
+project.
 
 ### 6.5 Web dashboard (later project)
 
@@ -612,20 +645,26 @@ drain dogfood the gate demands is the act of building P1+.
 | Phase | Deliverable | Depends on |
 |---|---|---|
 | P0 | This vision (done) | none |
-| P1 | Read-only projector + project registry + task DAG TUI | stable ledgers; claims optional/degraded |
-| P2 | Project inbox + decision cards + joint attention view | P1 |
+| P1a | Read-only projector + project registry + standalone `jeff graph` TUI | stable ledgers; claims optional/degraded |
+| P1b | Standalone `jeff backlog` TUI (attention / decision projections) | P1a |
+| P2 | Richer backlog cards + joint attention; shared widgets ready for later composition | P1b |
 | P3 | Claim-aware UI + open-in-host (claim + launch) | item 7 claims |
 | P4 | Autodrain supervisor + hybrid standby brain | item 7 drain dogfood + journals |
-| P5 | Polish: presets, richer agent detail, host adapter pack | P4 |
+| P5 | Polish: presets, richer agent detail, host adapter pack; optional late Ratatui multi-pane / bare `jeff` combined shell if earned | P4 |
 | P6 | Web client on the socket protocol (auth per 18.1.2) | P2 |
 
-P1 may prototype against pre-item-7 stores as read-only. P3+ must not ship a
-side claim mechanism.
+P1a ships the standalone graph before any combined client. A three-card or
+other multi-pane shell is not a first-ship phase. P1a may prototype against
+pre-item-7 stores as read-only. P3+ must not ship a side claim mechanism.
 
 ## 17. Open questions (deliberately unresolved)
 
 These are not blocked on product intent; they are implementation or taste
-calls for later:
+calls for later. Client shape is already locked: standalone TUIs first
+(`jeff graph`, then `jeff backlog`), Kitty composition early, Ratatui
+multi-pane / bare `jeff` combined shell optional and late (P1a before any
+combined client). A three-card layout is only an optional late sketch, not
+an open default.
 
 1. Graph pane rendering tier (survey in 6.3): layered 2D canvas everywhere,
    pixel upgrade on Kitty, or true 3D via Bevy. Zoom exists in all tiers;
@@ -638,6 +677,9 @@ calls for later:
    points at a live process (leaning: detect+focus if cheap; else fresh).
 6. Name of the backend binary and whether `cook` grows subcommands vs a
    separate `jeffd` front door.
+7. Whether bare `jeff` multi-pane composition is ever worth building after
+   standalone verbs ship, or Kitty composition remains enough (optional,
+   late; not a P1a concern).
 
 ## 18. Architecture review findings (2026-08-02)
 

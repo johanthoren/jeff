@@ -39,21 +39,27 @@ Johan rather than guessing.
   the npm `files` allowlist in `package.json`. The CLI-only boundary is
   enforced by the language wall: Rust cannot import the ESM internals, so
   exec'ing `cook` is the only coupling channel that exists.
-- **Layout:** three cards. Chat spans the full left width; inbox cards and
-  selected-node detail share the row below; the task graph takes roughly the
-  right third, ratio-based and adapting to terminal width.
-- **Graph:** zoomable canvas. Leaning layered 2D (`petgraph` model,
-  `layout-rs` Sugiyama coordinates, ratatui `Canvas` with `Octant`/`Braille`
-  markers, zoom and pan by rescaling `x_bounds`/`y_bounds`), with a pixel
-  upgrade on Kitty via `ratatui-image` through the same layout pipeline. True
-  3D via `bevy_ratatui_camera` is confirmed feasible and remains open
-  question 17.1. Survey table with maintenance status is in vision 6.3.
+- **Client shape:** standalone full-screen TUIs first for short time to
+  value. Ship `jeff graph`, then `jeff backlog`, then further verbs as
+  earned; bare `jeff` combined view last. Kitty composition of standalone
+  processes is valid from day one. Ratatui multi-pane composition is late
+  and optional. Design shared widgets and projection for later reuse; do
+  not build the combined shell up front. Operator language for the second
+  TUI is **backlog** (not an "inbox" product name); disk `.jeff/inbox/` may
+  remain attention plumbing later.
+- **Graph:** zoomable canvas in the standalone `jeff graph` TUI. Leaning
+  layered 2D (`petgraph` model, `layout-rs` Sugiyama coordinates, ratatui
+  `Canvas` with `Octant`/`Braille` markers, zoom and pan by rescaling
+  `x_bounds`/`y_bounds`), with a pixel upgrade on Kitty via `ratatui-image`
+  through the same layout pipeline. True 3D via `bevy_ratatui_camera` is
+  confirmed feasible and remains open question 17.1. Survey table with
+  maintenance status is in vision 6.3.
 - **Input:** mouse and keyboard both first-class. Click selects, wheel zooms,
   tab cycles, a nucleo-class fuzzy finder jumps to any task, project, or open
   card. Every mouse action has a keyboard path and vice versa.
 - **Decision cards are projections of ledger state**, not a second durable
   store (vision 18.1.1). This is the single most important correctness
-  decision in the inbox design.
+  decision in the backlog / attention design.
 
 ## 3. Dependency state, as of this handoff
 
@@ -63,19 +69,21 @@ Johan rather than guessing.
 | Item 8 (`cook snapshot --json`) | specified in the slate as `6.0.0-alpha.8`, **not implemented**; core has no hard item 7 dependency and may be pulled forward |
 | Journal (item 3) | implemented; append-only `journal.jsonl` per task dir, tailable |
 | `cook approve` | shipped; byte-matched boundary, requester is not granter |
-| `jeffd`, TUI, registry, inbox | **nothing exists**; no daemon, watcher, HTTP surface, or home-level state anywhere in the repo today |
+| `jeffd`, TUI, registry, backlog surface | **nothing exists**; no daemon, watcher, HTTP surface, or home-level state anywhere in the repo today |
 
-What is startable without item 7: the design spec, item 8, vision phase P1
-(projector, registry, graph TUI, claims degraded), and most of P2 (inbox,
-cards). Blocked on item 7: P3 (claim-aware UI, open in host) and P4
-(autodrain). Never ship a side claim mechanism to work around this.
+What is startable without item 7: the design spec biased to **P1a standalone
+`jeff graph` alone**, item 8, vision phase P1a (projector, registry, graph
+TUI, claims degraded), then P1b (`jeff backlog`). Broader backlog card work
+and joint attention follow. Blocked on item 7: P3 (claim-aware UI, open in
+host) and P4 (autodrain). Never ship a side claim mechanism to work around
+this.
 
 ## 4. Recommended first move: cook item 8 before designing against it
 
-Item 8 (`cook snapshot --json`) is the true unblocker for phase P1, and it is
-small, self-contained, and read-only. Cook it in this repo first, through the
-normal jeff pipeline, before or alongside drafting the design spec. Two
-reasons:
+Item 8 (`cook snapshot --json`) is the true unblocker for phase P1a
+(standalone `jeff graph`), and it is small, self-contained, and read-only.
+Cook it in this repo first, through the normal jeff pipeline, before or
+alongside drafting the design spec. Two reasons:
 
 1. The Rust work then builds against a **real** contract with real output,
    not a specified one. Every protocol decision downstream inherits the
@@ -95,26 +103,28 @@ in the design spec.
 
 ## 5. Immediate next deliverable
 
-**A self-contained design spec for the control plane**, written to the
-standard `docs/specs/graph-slate-6.0.md` sets: cold-context, contract-first,
-mechanically checkable. It must define at minimum:
+**A self-contained design spec for P1a standalone `jeff graph`**, written to
+the standard `docs/specs/graph-slate-6.0.md` sets: cold-context,
+contract-first, mechanically checkable. Bias this first design-spec
+deliverable to the graph TUI alone; do not scope the full three-card or
+combined shell up front (that composition is optional and late). It must
+define at minimum:
 
 1. Socket protocol: transport, framing, request and response schemas, event
-   frames, versioning rule.
+   frames, versioning rule (enough for graph projection).
 2. The `cook` invocation contract: exact commands, expected exit codes,
    parse failure and version skew handling, and what happens when a project's
    jeff is older than the snapshot schema the backend expects.
-3. Crate layout under `control/`.
+3. Crate layout under `control/` for backend plus the `jeff graph` client.
 4. Projection and cache model, including the debounce and coalesce rules in
    section 6 below.
-5. Viewport math for the graph pane: world coordinates, zoom levels, pan
-   bounds, and the hit-test transform that maps a mouse cell back to a node.
-   This is owned code; no crate provides it.
+5. Viewport math for the standalone graph TUI: world coordinates, zoom
+   levels, pan bounds, and the hit-test transform that maps a mouse cell
+   back to a node. This is owned code; no crate provides it.
 6. Layout pipeline: `petgraph` model to `layout-rs` coordinates to canvas
    space, and when layout is recomputed versus cached.
-7. Inbox file formats and the multi-writer append strategy (reuse the
-   existing mkdir-lock primitive family, or per-message files).
-8. Mechanical acceptance checks per phase.
+7. Mechanical acceptance checks for P1a (graph alone). Backlog file formats
+   and multi-writer append strategy wait for the P1b design pass.
 
 ## 6. Performance guidance (asked and answered 2026-08-02)
 
