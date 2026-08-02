@@ -25,6 +25,8 @@ const KICKBACK_DESTINATIONS = STAGES;
 const ISO_DATETIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 const KEBAB_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OPERATION_FINDING_DESTINATIONS = ['capture', 'plan', 'execute'];
+const CODE_JUDGMENT_SOURCES = ['review', 'review2', 'audit'];
+const CODE_JUDGMENT_DESTINATIONS = ['capture', 'plan', 'implement', 'refactor'];
 const AUDIT_CATEGORIES = [
   'secrets',
   'injection_sql',
@@ -173,6 +175,19 @@ function validateKickbacks(value, out) {
     requireField(out, `${field}.to`, isOneOf(kickback.to, KICKBACK_DESTINATIONS));
     requireField(out, `${field}.reason`, typeof kickback.reason === 'string');
     requireField(out, `${field}.at`, isIsoDateTime(kickback.at));
+    if (kickback.findings === undefined) return;
+    requireField(out, `${field}.findings`, Array.isArray(kickback.findings));
+    if (!Array.isArray(kickback.findings)) return;
+    kickback.findings.forEach((/** @type {any} */ finding, /** @type {number} */ findingIndex) => {
+      const findingField = `${field}.findings[${findingIndex}]`;
+      requireField(out, findingField, isType(finding, 'object'));
+      if (!isType(finding, 'object')) return;
+      requireField(out, `${findingField}.source`, isOneOf(finding.source, CODE_JUDGMENT_SOURCES));
+      requireField(out, `${findingField}.file`, isNonemptyString(finding.file));
+      requireField(out, `${findingField}.line`, Number.isInteger(finding.line) && finding.line >= 1);
+      requireField(out, `${findingField}.what`, isNonemptyString(finding.what));
+      requireField(out, `${findingField}.kickTo`, isOneOf(finding.kickTo, CODE_JUDGMENT_DESTINATIONS));
+    });
   });
 }
 
@@ -617,6 +632,72 @@ function validateJudgmentHistory(task, out, authoritative) {
   });
 }
 
+/** @param {any} value */
+function isArchivedUnauditedAudit(value) {
+  return isType(value, 'object')
+    && value.required === false
+    && value.verdict === 'na'
+    && value.audit_agent_id === null
+    && Array.isArray(value.evidence)
+    && value.evidence.length === 0
+    && Object.keys(value).length === 4;
+}
+
+/** @param {any} task @param {string[]} out */
+function validateCodeJudgmentHistory(task, out) {
+  if (task.judgmentHistory === undefined) return;
+  requireField(out, 'judgmentHistory', Array.isArray(task.judgmentHistory));
+  if (!Array.isArray(task.judgmentHistory)) return;
+  task.judgmentHistory.forEach((/** @type {any} */ entry, /** @type {number} */ index) => {
+    const field = `judgmentHistory[${index}]`;
+    requireField(out, field, isType(entry, 'object')
+      && Object.keys(entry).every((key) => ['at', 'review', 'review2', 'audit', 'agents'].includes(key)));
+    if (!isType(entry, 'object')) return;
+    requireField(out, `${field}.at`, isIsoDateTime(entry.at));
+    validateReview(entry.review, `${field}.review`, out, HISTORICAL_REVIEW_VERDICTS);
+    requireField(out, `${field}.review.findings`, Array.isArray(entry.review?.findings));
+    requireField(out, `${field}.review2`, entry.review2 === null || isType(entry.review2, 'object'));
+    if (isType(entry.review2, 'object')) {
+      validateReview(entry.review2, `${field}.review2`, out, HISTORICAL_REVIEW_VERDICTS);
+      requireField(out, `${field}.review2.findings`, Array.isArray(entry.review2.findings));
+    }
+    validateAudit(entry.audit, `${field}.audit`, out, false, task);
+    requireField(out, `${field}.audit.findings`, Array.isArray(entry.audit?.findings)
+      || isArchivedUnauditedAudit(entry.audit));
+    const hasAgents = Object.hasOwn(entry, 'agents');
+    if (hasAgents) {
+      requireField(out, `${field}.agents`, isType(entry.agents, 'object')
+        && Object.keys(entry.agents).every((key) => (
+          ['reviewer_agent_id', 'reviewer2_agent_id', 'audit_agent_id'].includes(key)
+        )));
+      if (!isType(entry.agents, 'object')) return;
+    }
+
+    const judgments = [
+      ['review', 'reviewer_agent_id', 'reviewer_agent_id'],
+      ['review2', 'reviewer_agent_id', 'reviewer2_agent_id'],
+      ['audit', 'audit_agent_id', 'audit_agent_id'],
+    ];
+    for (const [source, outcomeIdentity, agentIdentity] of judgments) {
+      if (hasAgents) {
+        requireField(out, `${field}.agents.${agentIdentity}`,
+          isNullableString(entry.agents[agentIdentity]));
+      }
+      const outcome = entry[source];
+      const outcomeId = outcome?.[outcomeIdentity] ?? null;
+      const agentId = hasAgents ? entry.agents[agentIdentity] ?? null : null;
+      const recorded = outcome != null
+        && outcome.verdict !== null
+        && outcome.verdict !== 'na';
+      requireField(out, `${field}.${source} identity`, recorded
+        ? (isNonemptyString(outcomeId) || isNonemptyString(agentId))
+          && (outcomeId === null || agentId === null || outcomeId === agentId)
+        : outcomeId === null && agentId === null);
+    }
+  });
+}
+
+
 /** @param {any} task @param {string[]} out */
 function validateOperationVersion(task, out) {
   if (task.category === 'operation') {
@@ -787,6 +868,7 @@ export function taskSchemaViolations(task, { lite }) {
   if (authoritativeOperation) validateApprovalRequests(task, out);
   if (operation) validateOperationApproval(task, out, authoritativeOperation);
   if (operation) validateJudgmentHistory(task, out, authoritativeOperation);
+  else validateCodeJudgmentHistory(task, out);
   if (operation) {
     const codeIdentity = [
       task.agents?.implementer_agent_id,

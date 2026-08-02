@@ -33,6 +33,28 @@ const canonicalTask = {
   audit: { required: true, verdict: 'na', audit_agent_id: null, evidence: [] },
   commits: [],
   kickbacks: [],
+  judgmentHistory: [{
+    at: '2026-07-12T00:30:00.000Z',
+    review: {
+      verdict: 'pass',
+      reviewer_agent_id: 'historical-reviewer',
+      findings: [],
+      evidence: [],
+    },
+    review2: {
+      verdict: 'pass',
+      reviewer_agent_id: 'historical-reviewer-two',
+      findings: [],
+      evidence: [],
+    },
+    audit: {
+      required: true,
+      verdict: 'pass',
+      audit_agent_id: 'historical-auditor',
+      findings: [],
+      evidence: [],
+    },
+  }],
   blockedReason: null,
   abandonReason: null,
   convergence: {
@@ -52,6 +74,64 @@ const canonicalTask = {
   },
 };
 void canonicalTask;
+
+/** @type {import('./types.js').CodeJudgmentHistory} */
+const historicalNaCodeJudgment = {
+  at: '2026-07-12T00:20:00.000Z',
+  review: {
+    verdict: 'na',
+    reviewer_agent_id: null,
+    findings: [],
+    evidence: [],
+  },
+  review2: null,
+  audit: {
+    required: false,
+    verdict: 'na',
+    audit_agent_id: null,
+    evidence: [],
+  },
+};
+void historicalNaCodeJudgment;
+
+/** @type {import('./types.js').CodeJudgmentHistory['review']} */
+// @ts-expect-error - recorded historical reviews require findings
+const historicalReviewWithoutFindings = {
+  verdict: 'pass',
+  reviewer_agent_id: 'historical-reviewer',
+  evidence: [],
+};
+void historicalReviewWithoutFindings;
+
+/** @type {NonNullable<import('./types.js').CodeJudgmentHistory['review2']>} */
+// @ts-expect-error - recorded historical second reviews require findings
+const historicalReview2WithoutFindings = {
+  verdict: 'pass',
+  reviewer_agent_id: 'historical-reviewer-two',
+  evidence: [],
+};
+void historicalReview2WithoutFindings;
+
+/** @type {import('./types.js').CodeJudgmentHistory['audit']} */
+// @ts-expect-error - recorded historical audits require findings
+const historicalAuditWithoutFindings = {
+  required: true,
+  verdict: 'pass',
+  audit_agent_id: 'historical-auditor',
+  evidence: [],
+};
+void historicalAuditWithoutFindings;
+
+/** @type {import('./types.js').CodeJudgmentHistory['audit']} */
+// @ts-expect-error - archived unaudited audits without findings have one exact compatibility shape
+const historicalUnauditedAuditWithExtraState = {
+  required: false,
+  verdict: 'na',
+  reportedVerdict: 'na',
+  audit_agent_id: null,
+  evidence: [],
+};
+void historicalUnauditedAuditWithExtraState;
 
 /** @type {import('./types.js').TaskJson} */
 const operationTask = {
@@ -255,6 +335,27 @@ const operationTask = {
   },
 };
 void operationTask;
+
+/** @type {import('./types.js').OperationJudgmentHistory} */
+// @ts-expect-error - operation history rows keep mandatory verifier and auditor ownership
+const operationHistoryWithoutAgents = {
+  at: '2026-07-12T00:45:00.000Z',
+  verification: {
+    verdict: 'pass',
+    verifier_agent_id: 'historical-verifier',
+    postconditions: [],
+    findings: [],
+    evidence: [],
+  },
+  audit: {
+    required: true,
+    verdict: 'pass',
+    audit_agent_id: 'historical-auditor',
+    findings: [],
+    evidence: [],
+  },
+};
+void operationHistoryWithoutAgents;
 
 /** @type {import('./types.js').TaskJson} */
 const historicalTaskWithoutRefactorOpportunity = {

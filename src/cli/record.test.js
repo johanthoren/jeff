@@ -1968,12 +1968,27 @@ test('issue 95 named plan opportunity runs refactor before review without judgme
     assert.equal((await readTask(taskDir)).plan.refactorOpportunity, opportunity);
 
     await recordSpecialistReturn(root, 'implement', '18', implementReturn());
-    assert.equal((await readTask(taskDir)).stage, 'refactor');
+    const implemented = await readTask(taskDir);
+    assert.equal(implemented.stage, 'refactor');
+    assert.deepEqual(implemented.implement, {
+      agent_id: 'implementer',
+      result: 'green',
+      files: ['src/core/record.js'],
+      greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
+    });
 
     await recordSpecialistReturn(root, 'refactor', '18', refactorReturn());
     const refactored = await readTask(taskDir);
     assert.equal(refactored.stage, 'review');
     assert.equal(refactored.judgmentHistory, undefined);
+    assert.deepEqual(refactored.refactor, {
+      agent_id: 'refactorer',
+      result: 'clean',
+      files: [],
+      outsideDiff: [],
+      greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
+      summary: ['No refactor needed.'],
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2860,57 +2875,132 @@ test('issue 72 agents-only review re-entry archives once and requires two fresh 
   }
 });
 
-test('implementation resets a current-cycle judgment despite a later implement kickback', async (t) => {
-  const cases = [
-    ['review', 'reviewer_agent_id'],
-    ['audit', 'audit_agent_id'],
-  ];
-
-  for (const [source, agentField] of cases) {
-    await t.test(`${source} judgment`, async () => {
-      const priorCycle = { at: '2026-07-12T01:00:00+01:00', review: {}, review2: null, audit: {} };
-      const currentReview = {
-        verdict: source === 'review' ? 'needs-work' : 'pass',
-        reviewer_agent_id: 'reviewer-current',
-        findings: source === 'review' ? [blockingFinding()] : [],
-        evidence: [{ command: 'node --test', output: 'review evidence' }],
-      };
-      const currentAudit = {
-        required: true,
-        verdict: source === 'audit' ? 'needs-work' : 'na',
-        audit_agent_id: source === 'audit' ? 'auditor-current' : null,
-        findings: source === 'audit' ? [{ ...blockingFinding(), cwe: 'CWE-20' }] : [],
-        evidence: [{ command: 'review-security --json', output: 'audit evidence' }],
-      };
-      const task = canonicalTask({
-        stage: 'implement',
+test('Item 4 public recorder resets judgments despite a later builder kickback', async (t) => {
+  for (const source of /** @type {const} */ (['review', 'audit'])) {
+    await t.test(source, async (t) => {
+      const now = '2026-07-12T02:00:00Z';
+      t.mock.timers.enable({ apis: ['Date'], now: new Date(now) });
+      const finding = source === 'review'
+        ? blockingFinding({ what: 'Review requires implementation repair.' })
+        : { ...blockingFinding({ what: 'Audit requires implementation repair.' }), cwe: 'CWE-20' };
+      const { root, taskDir } = await makeRoot(canonicalTask({
+        stage: 'review',
+        complexity: 'complex',
+        plan: { refactorOpportunity: null },
         agents: {
           implementer_agent_id: 'implementer-old',
-          reviewer_agent_id: 'reviewer-current',
+          reviewer_agent_id: null,
           reviewer2_agent_id: null,
-          audit_agent_id: currentAudit.audit_agent_id,
+          audit_agent_id: null,
         },
-        review: currentReview,
-        audit: currentAudit,
-        judgmentHistory: [priorCycle],
-        kickbacks: [
-          { from: source, to: 'implement', reason: `Current ${source} blocker.`, at: '2026-07-12T00:30:00Z' },
-          { from: 'implement', to: 'plan', reason: 'Plan revision.', at: '2026-07-12T00:45:00Z' },
-        ],
-      });
-      const { root, taskDir } = await makeRoot(task);
+        tests: {
+          authored_by_agent_id: 'plan-agent-old',
+          green: true,
+          evidence: [{ command: 'make test', output: 'prior gate pass' }],
+        },
+        audit: {
+          required: true,
+          verdict: 'na',
+          audit_agent_id: null,
+          findings: [],
+          evidence: [],
+        },
+      }));
       try {
-        await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-fresh'));
-        const recorded = await readTask(taskDir);
+        await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-current', {
+          verdict: source === 'review' ? 'needs-work' : 'pass',
+          findings: source === 'review' ? [finding] : [],
+        }));
+        await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-two-current'));
+        await recordSpecialistReturn(root, 'audit', '18', auditReturn('auditor-current', {
+          verdict: source === 'audit' ? 'needs-work' : 'pass',
+          findings: source === 'audit' ? [finding] : [],
+        }));
+        await recordSpecialistReturn(root, 'refute', '18', refuteReturn(`${source}-refuter`, finding, {
+          source,
+        }));
 
-        assert.equal(recorded.judgmentHistory.length, 2);
-        assert.deepEqual(recorded.judgmentHistory[1].review, currentReview);
-        assert.deepEqual(recorded.judgmentHistory[1].audit, currentAudit);
-        assert.equal(recorded.agents[agentField], null);
-        assert.equal(recorded.review.reviewer_agent_id, null);
-        assert.equal(recorded.review.verdict, null);
-        assert.equal(recorded.audit.audit_agent_id, null);
-        assert.equal(recorded.audit.verdict, 'na');
+        await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-kickback', {
+          result: 'kickback',
+          greenRun: { command: null, output: 'The plan contract needs revision.' },
+          kickback: { to: 'plan', reason: 'Revise the plan contract.' },
+        }));
+        await recordSpecialistReturn(root, 'plan', '18', planReturn({
+          complexity: 'complex',
+          auditRequired: true,
+        }, 'plan-agent-fresh'));
+
+        const beforeRepair = await readTask(taskDir);
+        assert.deepEqual(
+          beforeRepair.kickbacks.map((/** @type {any} */ kickback) => [kickback.from, kickback.to]),
+          [[source, 'implement'], ['implement', 'plan']],
+        );
+        const returned = implementReturn('implementer-fresh', { files: ['src/core/task-schema.js'] });
+        const expectedImplement = {
+          agent_id: 'implementer-fresh',
+          result: returned.result,
+          files: returned.files,
+          greenRun: returned.greenRun,
+        };
+        const expectedTests = { ...beforeRepair.tests, green: false };
+        delete expectedTests.gate;
+
+        await recordSpecialistReturn(root, 'implement', '18', returned);
+        const repaired = await readTask(taskDir);
+        const archived = {
+          at: now,
+          review: beforeRepair.review,
+          review2: beforeRepair.review2,
+          audit: beforeRepair.audit,
+          agents: {
+            reviewer_agent_id: 'reviewer-current',
+            reviewer2_agent_id: 'reviewer-two-current',
+            audit_agent_id: 'auditor-current',
+          },
+        };
+
+        assert.deepEqual(repaired.judgmentHistory, [archived]);
+        assert.deepEqual(repaired.review, {
+          verdict: null,
+          reviewer_agent_id: null,
+          findings: [],
+          evidence: [],
+        });
+        assert.equal(repaired.review2, null);
+        assert.deepEqual(repaired.audit, {
+          required: true,
+          verdict: 'na',
+          audit_agent_id: null,
+          findings: [],
+          evidence: [],
+        });
+        assert.deepEqual(repaired.agents, {
+          implementer_agent_id: 'implementer-fresh',
+          reviewer_agent_id: null,
+          reviewer2_agent_id: null,
+          audit_agent_id: null,
+        });
+        assert.deepEqual(repaired.tests, expectedTests);
+        assert.equal(JSON.stringify(repaired.implement), JSON.stringify(expectedImplement));
+        assert.equal(repaired.stage, 'review');
+
+        const freshAgent = `${source}-fresh`;
+        await recordSpecialistReturn(
+          root,
+          source,
+          '18',
+          source === 'review'
+            ? reviewReturn(freshAgent, { cycle: 1 })
+            : auditReturn(freshAgent, { cycle: 1 }),
+        );
+        const rerecorded = await readTask(taskDir);
+        assert.deepEqual(rerecorded.judgmentHistory, [archived]);
+        assert.equal(
+          source === 'review'
+            ? rerecorded.review.reviewer_agent_id
+            : rerecorded.audit.audit_agent_id,
+          freshAgent,
+        );
       } finally {
         await rm(root, { recursive: true, force: true });
       }
@@ -2918,55 +3008,289 @@ test('implementation resets a current-cycle judgment despite a later implement k
   }
 });
 
+test('implementation full-resets an equal-instant active untyped judgment round', async (t) => {
+  const sources = ['review', 'audit'];
+  /** @type {Array<[string, Record<string, any>]>} */
+  const encodings = [
+    ['omitted findings', {}],
+    ['empty findings', { findings: [] }],
+  ];
+
+  for (const source of sources) {
+    for (const [encoding, contract] of encodings) {
+      await t.test(`${source}, ${encoding}`, async (t) => {
+        t.mock.timers.enable({
+          apis: ['Date'],
+          now: new Date('2026-07-12T02:00:00Z'),
+        });
+        const currentReview = {
+          verdict: source === 'review' ? 'needs-work' : 'pass',
+          reviewer_agent_id: 'reviewer-current',
+          findings: source === 'review' ? [blockingFinding()] : [],
+          evidence: [{ command: 'node --test', output: 'review evidence' }],
+        };
+        const currentReview2 = {
+          verdict: 'pass',
+          reviewer_agent_id: 'reviewer-two-current',
+          findings: [],
+          evidence: [{ command: 'node --test', output: 'review two evidence' }],
+        };
+        const currentAudit = {
+          required: true,
+          verdict: source === 'audit' ? 'needs-work' : 'pass',
+          audit_agent_id: 'auditor-current',
+          findings: source === 'audit' ? [{ ...blockingFinding(), cwe: 'CWE-20' }] : [],
+          evidence: [{ command: 'review-security --json', output: 'audit evidence' }],
+        };
+        const priorCycle = {
+          at: '2026-07-12T01:00:00+01:00',
+          review: source === 'review'
+            ? { ...currentReview, verdict: 'pass', reviewer_agent_id: 'reviewer-archived', findings: [] }
+            : currentReview,
+          review2: currentReview2,
+          audit: source === 'audit'
+            ? { ...currentAudit, verdict: 'pass', audit_agent_id: 'auditor-archived', findings: [] }
+            : currentAudit,
+        };
+        const task = canonicalTask({
+          stage: 'implement',
+          complexity: 'complex',
+          plan: { refactorOpportunity: null },
+          agents: {
+            implementer_agent_id: 'implementer-old',
+            reviewer_agent_id: 'reviewer-current',
+            reviewer2_agent_id: 'reviewer-two-current',
+            audit_agent_id: 'auditor-current',
+          },
+          tests: {
+            authored_by_agent_id: 'plan-agent',
+            green: true,
+            evidence: [{ command: 'make test', output: 'prior gate pass' }],
+          },
+          review: currentReview,
+          review2: currentReview2,
+          audit: currentAudit,
+          judgmentHistory: [priorCycle],
+          kickbacks: [{
+            from: source,
+            to: 'implement',
+            reason: `Fresh equal-instant ${source} blocker.`,
+            at: '2026-07-12T00:00:00Z',
+            ...contract,
+          }],
+        });
+        const returned = implementReturn('implementer-fresh');
+        const expectedImplement = {
+          agent_id: 'implementer-fresh',
+          result: returned.result,
+          files: returned.files,
+          greenRun: returned.greenRun,
+        };
+        const { root, taskDir } = await makeRoot(task);
+        try {
+          const before = await readTask(taskDir);
+          await recordSpecialistReturn(root, 'implement', '18', returned);
+          const repaired = await readTask(taskDir);
+          const expectedTests = { ...before.tests, green: false };
+          delete expectedTests.gate;
+
+          assert.deepEqual(repaired.judgmentHistory, [
+            priorCycle,
+            {
+              at: '2026-07-12T02:00:00Z',
+              review: currentReview,
+              review2: currentReview2,
+              audit: currentAudit,
+              agents: {
+                reviewer_agent_id: 'reviewer-current',
+                reviewer2_agent_id: 'reviewer-two-current',
+                audit_agent_id: 'auditor-current',
+              },
+            },
+          ]);
+          assert.deepEqual(repaired.review, {
+            verdict: null,
+            reviewer_agent_id: null,
+            findings: [],
+            evidence: [],
+          });
+          assert.equal(repaired.review2, null);
+          assert.deepEqual(repaired.audit, {
+            required: true,
+            verdict: 'na',
+            audit_agent_id: null,
+            findings: [],
+            evidence: [],
+          });
+          assert.deepEqual(repaired.agents, {
+            implementer_agent_id: 'implementer-fresh',
+            reviewer_agent_id: null,
+            reviewer2_agent_id: null,
+            audit_agent_id: null,
+          });
+          assert.deepEqual(repaired.tests, expectedTests);
+          assert.equal(JSON.stringify(repaired.implement), JSON.stringify(expectedImplement));
+          assert.equal(repaired.stage, 'review');
+
+          const freshAgent = source === 'review' ? 'reviewer-rerun' : 'auditor-rerun';
+          const freshReturn = source === 'review'
+            ? reviewReturn(freshAgent, { cycle: 2 })
+            : auditReturn(freshAgent, { cycle: 2 });
+          await recordSpecialistReturn(root, source, '18', freshReturn);
+          const rerecorded = await readTask(taskDir);
+
+          assert.deepEqual(rerecorded.judgmentHistory, repaired.judgmentHistory);
+          assert.deepEqual(rerecorded.agents, {
+            implementer_agent_id: 'implementer-fresh',
+            reviewer_agent_id: source === 'review' ? freshAgent : null,
+            reviewer2_agent_id: null,
+            audit_agent_id: source === 'audit' ? freshAgent : null,
+          });
+          assert.equal(rerecorded.review.reviewer_agent_id, source === 'review' ? freshAgent : null);
+          assert.equal(rerecorded.review2, null);
+          assert.equal(rerecorded.audit.audit_agent_id, source === 'audit' ? freshAgent : null);
+          assert.deepEqual(rerecorded.tests, expectedTests);
+          assert.equal(JSON.stringify(rerecorded.implement), JSON.stringify(expectedImplement));
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+});
+
 test('implementation preserves judgments when history consumed the latest judgment kickback', async (t) => {
-  const cases = [
+  const instants = [
     ['older with offset', '2026-07-12T00:30:00-01:00', '2026-07-12T01:00:00Z'],
     ['equal instant', '2026-07-12T01:00:00+01:00', '2026-07-12T00:00:00Z'],
   ];
+  /** @type {Array<[string, Record<string, any>]>} */
+  const encodings = [
+    ['omitted findings', {}],
+    ['empty findings', { findings: [] }],
+  ];
 
-  for (const [name, boundary, kickbackAt] of cases) {
-    await t.test(name, async () => {
-      const currentReview = {
-        verdict: 'pass',
-        reviewer_agent_id: 'reviewer-current',
-        findings: [],
-        evidence: [{ command: 'git diff --check', output: 'clean' }],
-      };
-      const currentAudit = {
-        required: true,
-        verdict: 'pass',
-        audit_agent_id: 'auditor-current',
-        findings: [],
-        evidence: [{ command: 'review-security --json', output: 'no findings' }],
-      };
-      const history = [{ at: boundary, review: {}, review2: null, audit: {} }];
-      const task = canonicalTask({
-        stage: 'implement',
-        agents: {
-          implementer_agent_id: 'implementer-old',
+  for (const [encoding, contract] of encodings) {
+    for (const [instant, boundary, kickbackAt] of instants) {
+      await t.test(`${encoding}, ${instant}`, async (t) => {
+        t.mock.timers.enable({
+          apis: ['Date'],
+          now: new Date('2026-07-12T02:00:00Z'),
+        });
+        const currentReview = {
+          verdict: 'pass',
           reviewer_agent_id: 'reviewer-current',
-          reviewer2_agent_id: null,
+          findings: [],
+          evidence: [{ command: 'git diff --check', output: 'clean' }],
+        };
+        const currentReview2 = {
+          verdict: 'pass',
+          reviewer_agent_id: 'reviewer-two-current',
+          findings: [],
+          evidence: [{ command: 'git diff --check', output: 'second review clean' }],
+        };
+        const currentAudit = {
+          required: true,
+          verdict: 'pass',
           audit_agent_id: 'auditor-current',
-        },
-        review: currentReview,
-        audit: currentAudit,
-        judgmentHistory: history,
-        kickbacks: [{ from: 'review', to: 'implement', reason: 'Consumed review blocker.', at: kickbackAt }],
-      });
-      const { root, taskDir } = await makeRoot(task);
-      try {
-        await recordSpecialistReturn(root, 'implement', '18', implementReturn('implementer-fresh'));
-        const recorded = await readTask(taskDir);
+          findings: [],
+          evidence: [{ command: 'review-security --json', output: 'no findings' }],
+        };
+        const history = [{
+          at: boundary,
+          review: {
+            verdict: 'needs-work',
+            reviewer_agent_id: 'reviewer-archived',
+            findings: [blockingFinding()],
+            evidence: [{ command: 'node --test', output: 'archived review blocker' }],
+          },
+          review2: currentReview2,
+          audit: currentAudit,
+        }];
+        const legacyImplement = {
+          agent_id: 'implementer-old',
+          result: 'green',
+          files: ['src/core/record.js'],
+          greenRun: { command: 'node --test', output: 'prior implementation pass' },
+        };
+        const legacyRefactor = {
+          agent_id: 'refactorer-old',
+          result: 'clean',
+          files: [],
+          outsideDiff: [],
+          greenRun: { command: 'node --test', output: 'prior refactor pass' },
+          summary: ['No prior refactor needed.'],
+        };
+        const task = canonicalTask({
+          stage: 'implement',
+          plan: { refactorOpportunity: null },
+          agents: {
+            implementer_agent_id: 'implementer-old',
+            reviewer_agent_id: 'reviewer-current',
+            reviewer2_agent_id: 'reviewer-two-current',
+            audit_agent_id: 'auditor-current',
+          },
+          tests: {
+            authored_by_agent_id: 'plan-agent',
+            green: true,
+            evidence: [{ command: 'make test', output: 'prior gate pass' }],
+          },
+          review: currentReview,
+          review2: currentReview2,
+          audit: currentAudit,
+          implement: legacyImplement,
+          refactor: legacyRefactor,
+          judgmentHistory: history,
+          kickbacks: [{
+            from: 'review',
+            to: 'implement',
+            reason: 'Consumed review blocker.',
+            at: kickbackAt,
+            ...contract,
+          }],
+        });
+        const returned = implementReturn('implementer-fresh');
+        const expectedImplement = {
+          agent_id: 'implementer-fresh',
+          result: returned.result,
+          files: returned.files,
+          greenRun: returned.greenRun,
+        };
+        const { root, taskDir } = await makeRoot(task);
+        try {
+          const before = await readTask(taskDir);
+          await recordSpecialistReturn(root, 'implement', '18', returned);
+          const recorded = await readTask(taskDir);
+          const expectedTests = { ...before.tests, green: false };
+          delete expectedTests.gate;
 
-        assert.deepEqual(recorded.judgmentHistory, history);
-        assert.equal(recorded.agents.reviewer_agent_id, 'reviewer-current');
-        assert.equal(recorded.agents.audit_agent_id, 'auditor-current');
-        assert.deepEqual(recorded.review, currentReview);
-        assert.deepEqual(recorded.audit, currentAudit);
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    });
+          assert.deepEqual(recorded.judgmentHistory, before.judgmentHistory);
+          assert.deepEqual(recorded.review, before.review);
+          assert.deepEqual(recorded.review2, before.review2);
+          assert.deepEqual(recorded.audit, before.audit);
+          assert.deepEqual(recorded.agents, {
+            ...before.agents,
+            implementer_agent_id: 'implementer-fresh',
+          });
+          assert.deepEqual(recorded.tests, expectedTests);
+          assert.equal(JSON.stringify(recorded.implement), JSON.stringify(expectedImplement));
+          assert.equal(JSON.stringify(recorded.refactor), JSON.stringify(before.refactor));
+          assert.deepEqual(recorded, {
+            ...before,
+            updatedAt: '2026-07-12T02:00:00Z',
+            stage: 'review',
+            agents: {
+              ...before.agents,
+              implementer_agent_id: 'implementer-fresh',
+            },
+            tests: expectedTests,
+            implement: expectedImplement,
+          });
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
   }
 });
 
@@ -3247,7 +3571,12 @@ test('judgment contracts require a nonnegative active cycle identity', async (t)
 
 test('judgment cycle rejects stale and replayed returns without changing current evidence', async () => {
   const task = /** @type {any} */ (parallelJudgmentTask());
-  task.judgmentHistory = [{ at: '2026-07-12T00:00:01Z', review: {}, review2: null, audit: {} }];
+  task.judgmentHistory = [{
+    at: '2026-07-12T00:00:01Z',
+    review: { verdict: 'na', reviewer_agent_id: null, findings: [], evidence: [] },
+    review2: null,
+    audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+  }];
   const { root, taskDir } = await makeRoot(task);
   try {
     const stale = reviewReturn('reviewer-stale', { cycle: 0 });
@@ -4279,4 +4608,1230 @@ test('Item 3 journal contract', async (t) => {
       await rm(root, { recursive: true, force: true });
     }
   });
+});
+
+/**
+ * @typedef {import('../core/types.js').CanonicalTaskJson & {
+ *   review: import('../core/types.js').Review,
+ *   tests: import('../core/types.js').TaskTests,
+ *   convergence: import('../core/types.js').CodeConvergence
+ * }} Item4CodeTask
+ * @typedef {import('../core/types.js').CanonicalTaskJson & {
+ *   verification: import('../core/types.js').OperationVerification
+ * }} Item4OperationTask
+ */
+
+/** @param {'review' | 'review2' | 'audit'} source @param {Record<string, any>} [overrides] */
+function item4TypedFinding(source, overrides = {}) {
+  return {
+    source,
+    file: 'src/core/record.js',
+    line: source === 'audit' ? 22 : 11,
+    what: `${source} found a confined blocker.`,
+    kickTo: 'implement',
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, any>} [overrides] */
+function item4RepairTask(overrides = {}) {
+  const reviewFinding = blockingFinding({
+    line: 11,
+    what: 'review found a confined blocker.',
+  });
+  const review2Finding = blockingFinding({
+    line: 12,
+    what: 'review2 found a confined blocker.',
+  });
+  const auditFinding = {
+    ...blockingFinding({
+      line: 22,
+      what: 'audit found a confined blocker.',
+    }),
+    cwe: 'CWE-20',
+  };
+  return canonicalTask({
+    stage: 'implement',
+    complexity: 'complex',
+    plan: { refactorOpportunity: null },
+    agents: {
+      implementer_agent_id: 'implementer-old',
+      reviewer_agent_id: 'reviewer-old',
+      reviewer2_agent_id: 'reviewer-two-old',
+      audit_agent_id: 'auditor-old',
+    },
+    tests: {
+      authored_by_agent_id: 'plan-agent',
+      green: true,
+      evidence: ['make test'],
+      gate: {
+        hash: 'abc123',
+        clean: true,
+        green: true,
+        command: 'make test',
+        at: '2026-07-12T00:20:00Z',
+      },
+    },
+    review: {
+      verdict: 'needs-work',
+      reviewer_agent_id: 'reviewer-old',
+      findings: [reviewFinding],
+      evidence: ['review blocker'],
+    },
+    review2: {
+      verdict: 'pass',
+      reviewer_agent_id: 'reviewer-two-old',
+      findings: [],
+      evidence: ['review two pass'],
+    },
+    audit: {
+      required: true,
+      verdict: 'pass',
+      audit_agent_id: 'auditor-old',
+      findings: [],
+      evidence: ['audit pass'],
+    },
+    kickbacks: [{
+      from: 'review',
+      to: 'implement',
+      reason: reviewFinding.what,
+      at: '2026-07-12T00:30:00Z',
+      findings: [item4TypedFinding('review')],
+    }],
+    ...overrides,
+  });
+}
+
+function item4MixedRepairTask() {
+  const base = item4RepairTask();
+  const refactorFinding = blockingFinding({
+    file: 'src/core/invariants.js',
+    line: 12,
+    kickTo: 'refactor',
+    what: 'review requires a confined refactor.',
+  });
+  const refute = {
+    agent_id: 'review-refuter',
+    source: 'review',
+    finding: `${refactorFinding.file}:${refactorFinding.line} ${refactorFinding.what}`,
+    verdict: 'survives',
+    rationale: 'The confined refactor remains necessary.',
+    evidence: [{ command: 'node --test', output: 'failure reproduced' }],
+  };
+  refactorFinding.refute = refute;
+  return item4RepairTask({
+    review: {
+      ...base.review,
+      findings: [...base.review.findings, refactorFinding],
+    },
+    refutes: [refute],
+    kickbacks: [{
+      ...base.kickbacks[0],
+      findings: [
+        item4TypedFinding('review'),
+        item4TypedFinding('review', {
+          file: 'src/core/invariants.js',
+          line: 12,
+          kickTo: 'refactor',
+        }),
+      ],
+    }],
+  });
+}
+
+/** @param {string[]} files */
+function item4ImplementReturn(files) {
+  return {
+    agent_id: 'implementer-fresh',
+    stage: 'implement',
+    result: 'green',
+    files,
+    greenRun: { command: 'node --test', output: 'pass' },
+    kickback: null,
+  };
+}
+
+/** @param {string[]} files */
+function item4RefactorReturn(files) {
+  return {
+    agent_id: 'refactorer-fresh',
+    stage: 'refactor',
+    result: 'clean',
+    files,
+    outsideDiff: [],
+    greenRun: { command: 'node --test', output: 'pass' },
+    summary: ['Applied the confined cleanup.'],
+  };
+}
+
+/** @param {string} agentId @param {number} cycle */
+function item4ReviewReturn(agentId, cycle) {
+  return {
+    agent_id: agentId,
+    stage: 'review',
+    cycle,
+    verdict: 'pass',
+    acLedger: [{ ac: 'AC1', claimed: 'write', rederived: 'write', ok: true }],
+    findings: [],
+    evidence: [{ command: 'git diff --check', output: 'clean' }],
+  };
+}
+
+/** @param {string} agentId @param {number} cycle */
+function item4AuditReturn(agentId, cycle) {
+  return {
+    agent_id: agentId,
+    stage: 'audit',
+    cycle,
+    verdict: 'pass',
+    scan: { command: 'review-security --json', recommendation: 'PASS', reportPath: '/tmp/report.md' },
+    coverage: auditCoverage(),
+    findings: [],
+    evidence: [{ command: 'review-security --json', output: 'no findings' }],
+  };
+}
+
+/** @param {Record<string, any> & {agent_id: string}} value */
+function item4ObservedReturn(value) {
+  const { agent_id: agentId, ...result } = value;
+  return observedReturn(agentId, result);
+}
+
+test('Item 4 targeted repair retains only independently passing judgments', async (t) => {
+  await t.test('review-confined implement retains audit, resets both reviews, and completes after fresh reviews', () => {
+    const task = item4RepairTask();
+    const priorAudit = structuredClone(task.audit);
+    const priorConvergence = structuredClone(task.convergence);
+
+    const repaired = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      task,
+      'implement',
+      item4ImplementReturn(['src/core/record.js']),
+    ));
+
+    assert.equal(repaired.stage, 'review');
+    assert.equal(repaired.review.verdict, null);
+    assert.equal(repaired.review2, null);
+    assert.equal(repaired.agents.reviewer_agent_id, null);
+    assert.equal(repaired.agents.reviewer2_agent_id, null);
+    assert.deepEqual(repaired.audit, priorAudit);
+    assert.equal(repaired.agents.audit_agent_id, 'auditor-old');
+    assert.deepEqual(repaired.convergence, priorConvergence);
+    assert.equal(repaired.tests.green, false);
+    assert.equal(Object.hasOwn(repaired.tests, 'gate'), false);
+
+    assert.throws(
+      () => recordCore.transitionTask(repaired, 'audit', item4AuditReturn('auditor-replay', 1)),
+      /audit slot is already occupied/,
+    );
+
+    const firstReview = recordCore.transitionTask(
+      repaired,
+      'review',
+      item4ReviewReturn('reviewer-fresh', 1),
+    );
+    const completed = recordCore.transitionTask(
+      firstReview,
+      'review',
+      item4ReviewReturn('reviewer-two-fresh', 1),
+    );
+    assert.equal(completed.status, 'done');
+    assert.equal(completed.stage, 'done');
+    assert.deepEqual(completed.audit, priorAudit);
+  });
+
+  await t.test('audit-confined refactor retains both reviews, resets audit, and completes after a fresh audit', () => {
+    const base = item4RepairTask();
+    const task = item4RepairTask({
+      stage: 'refactor',
+      review: { ...base.review, verdict: 'pass', findings: [] },
+      audit: {
+        ...base.audit,
+        verdict: 'needs-work',
+        findings: [{ ...blockingFinding({ line: 22, what: 'audit found a confined blocker.' }), cwe: 'CWE-20' }],
+      },
+      kickbacks: [{
+        from: 'audit',
+        to: 'refactor',
+        reason: 'audit found a confined blocker.',
+        at: '2026-07-12T00:30:00Z',
+        findings: [item4TypedFinding('audit', { kickTo: 'refactor' })],
+      }],
+    });
+    const priorReview = structuredClone(task.review);
+    const priorReview2 = structuredClone(task.review2);
+    const priorConvergence = structuredClone(task.convergence);
+
+    const repaired = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      task,
+      'refactor',
+      item4RefactorReturn(['src/core/record.js']),
+    ));
+
+    assert.equal(repaired.stage, 'audit');
+    assert.deepEqual(repaired.review, priorReview);
+    assert.deepEqual(repaired.review2, priorReview2);
+    assert.equal(repaired.agents.reviewer_agent_id, 'reviewer-old');
+    assert.equal(repaired.agents.reviewer2_agent_id, 'reviewer-two-old');
+    assert.equal(repaired.audit.verdict, 'na');
+    assert.equal(repaired.audit.audit_agent_id, null);
+    assert.equal(repaired.agents.audit_agent_id, null);
+    assert.deepEqual(repaired.convergence, priorConvergence);
+    assert.equal(repaired.tests.green, false);
+    assert.equal(Object.hasOwn(repaired.tests, 'gate'), false);
+
+    assert.throws(
+      () => recordCore.transitionTask(repaired, 'review', item4ReviewReturn('reviewer-replay', 1)),
+      /both review slots are already occupied/,
+    );
+
+    const completed = recordCore.transitionTask(
+      repaired,
+      'audit',
+      item4AuditReturn('auditor-fresh', 1),
+    );
+    assert.equal(completed.status, 'done');
+    assert.equal(completed.stage, 'done');
+    assert.deepEqual(completed.review, priorReview);
+    assert.deepEqual(completed.review2, priorReview2);
+  });
+
+  await t.test('review and audit kickbacks in one round reset every raised source without changing counters', () => {
+    const base = item4RepairTask();
+    const task = item4RepairTask({
+      audit: {
+        ...base.audit,
+        verdict: 'needs-work',
+        findings: [{ ...blockingFinding({ line: 22, what: 'audit found a confined blocker.' }), cwe: 'CWE-20' }],
+      },
+      kickbacks: [
+        ...base.kickbacks,
+        {
+          from: 'audit',
+          to: 'implement',
+          reason: 'audit found a confined blocker.',
+          at: '2026-07-12T00:30:00Z',
+          findings: [item4TypedFinding('audit')],
+        },
+      ],
+    });
+    const counters = structuredClone(task.convergence.stages);
+
+    const repaired = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      task,
+      'implement',
+      item4ImplementReturn(['src/core/record.js']),
+    ));
+
+    assert.equal(repaired.review.verdict, null);
+    assert.equal(repaired.review2, null);
+    assert.equal(repaired.audit.verdict, 'na');
+    assert.equal(repaired.audit.audit_agent_id, null);
+    assert.deepEqual(repaired.convergence.stages, counters);
+  });
+
+  await t.test('mixed implement and refactor full-resets when the second stage exceeds the contract', () => {
+    const task = item4MixedRepairTask();
+
+    const implemented = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      task,
+      'implement',
+      item4ImplementReturn(['src/core/record.js']),
+    ));
+    assert.equal(implemented.stage, 'refactor');
+    assert.equal(implemented.agents.audit_agent_id, 'auditor-old');
+
+    const refactored = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      implemented,
+      'refactor',
+      item4RefactorReturn(['src/core/task-schema.js']),
+    ));
+    assert.equal(refactored.stage, 'review');
+    assert.equal(refactored.review.verdict, null);
+    assert.equal(refactored.review2, null);
+    assert.equal(refactored.agents.reviewer_agent_id, null);
+    assert.equal(refactored.agents.reviewer2_agent_id, null);
+    assert.equal(refactored.audit.verdict, 'na');
+    assert.equal(refactored.audit.audit_agent_id, null);
+    assert.equal(refactored.agents.audit_agent_id, null);
+  });
+});
+
+test('Item 4 authoritative full reset archives outcome-only code judgment identities', async () => {
+  const base = item4RepairTask();
+  const task = item4RepairTask({
+    agents: {
+      ...base.agents,
+      reviewer_agent_id: null,
+      audit_agent_id: null,
+    },
+    kickbacks: /** @type {any[]} */ (base.kickbacks).map(({ findings: _findings, ...kickback }) => kickback),
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+    );
+    const recorded = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+    const history = /** @type {any[]} */ (recorded.judgmentHistory);
+
+    assert.equal(Object.hasOwn(recorded.kickbacks[0], 'findings'), false);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].review.reviewer_agent_id, 'reviewer-old');
+    assert.equal(history[0].agents.reviewer_agent_id, null);
+    assert.equal(history[0].audit.audit_agent_id, 'auditor-old');
+    assert.equal(history[0].agents.audit_agent_id, null);
+    assert.equal(recorded.review.reviewer_agent_id, null);
+    assert.equal(recorded.audit.audit_agent_id, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Item 4 authoritative mixed repair full-resets an unscoped owed refactor and completes fresh judgments', async (t) => {
+  for (const [name, files] of /** @type {Array<[string, string[]]>} */ ([
+    ['out-of-contract files', ['src/core/task-schema.js']],
+    ['empty files', []],
+  ])) await t.test(name, async () => {
+    const { root, taskDir } = await makeRoot(item4MixedRepairTask());
+    try {
+      await recordSpecialistReturn(
+        root,
+        'implement',
+        '18',
+        item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+      );
+      const implemented = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+      assert.equal(implemented.stage, 'refactor');
+      assert.equal(implemented.agents.audit_agent_id, 'auditor-old');
+
+      await recordSpecialistReturn(
+        root,
+        'refactor',
+        '18',
+        item4ObservedReturn(item4RefactorReturn(files)),
+      );
+      const { stage: _stage, ...legacyRefactor } = item4RefactorReturn(files);
+      const reset = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+      assert.equal(reset.stage, 'review');
+      assert.equal(reset.judgmentHistory?.length, 2);
+      assert.equal(reset.review.reviewer_agent_id, null);
+      assert.equal(reset.audit.audit_agent_id, null);
+      assert.equal(reset.agents.audit_agent_id, null);
+      assert.deepEqual((/** @type {any} */ (reset)).refactor, legacyRefactor);
+
+      await recordCurrentGate(root, taskDir);
+      await recordSpecialistReturn(
+        root,
+        'review',
+        '18',
+        item4ObservedReturn(item4ReviewReturn('reviewer-fresh', 2)),
+      );
+      await recordSpecialistReturn(
+        root,
+        'review',
+        '18',
+        item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 2)),
+      );
+      await recordSpecialistReturn(
+        root,
+        'audit',
+        '18',
+        item4ObservedReturn(item4AuditReturn('auditor-fresh', 2)),
+      );
+      const completed = await readTask(taskDir);
+      assert.equal(completed.status, 'done');
+      assert.equal(completed.stage, 'done');
+      assert.equal(completed.judgmentHistory.length, 2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('Item 4 active kickback round survives a generated equal-second collision', (t) => {
+  t.mock.timers.enable({
+    apis: ['Date'],
+    now: new Date('2026-07-12T00:40:00Z'),
+  });
+  const firstRepair = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+    item4RepairTask(),
+    'implement',
+    item4ImplementReturn(['src/core/record.js']),
+  ));
+  const finding = blockingFinding({
+    line: 61,
+    what: 'The second review found another confined blocker.',
+  });
+  const firstReview = recordCore.transitionTask(firstRepair, 'review', {
+    ...item4ReviewReturn('reviewer-fresh', 1),
+    verdict: 'needs-work',
+    findings: [finding],
+  });
+  const secondReview = recordCore.transitionTask(
+    firstReview,
+    'review',
+    item4ReviewReturn('reviewer-two-fresh', 1),
+  );
+  const refuted = recordCore.transitionTask(
+    secondReview,
+    'refute',
+    {
+      agent_id: 'review-refuter-fresh',
+      stage: 'refute',
+      cycle: 1,
+      source: 'review',
+      finding: `${finding.file}:${finding.line} ${finding.what}`,
+      verdict: 'survives',
+      rationale: 'The confined blocker remains observable.',
+      evidence: [{ command: 'node --test', output: 'failure reproduced' }],
+    },
+  );
+
+  const generatedKickback = refuted.kickbacks.at(-1);
+  const generatedHistory = firstRepair.judgmentHistory?.at(-1);
+  assert.ok(generatedKickback);
+  assert.ok(generatedHistory);
+  assert.equal(generatedKickback.at, generatedHistory.at);
+  const secondRepair = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+    refuted,
+    'implement',
+    item4ImplementReturn(['src/core/record.js']),
+  ));
+  assert.ok(secondRepair.judgmentHistory);
+  assert.equal(secondRepair.judgmentHistory.length, 2);
+  assert.equal(secondRepair.stage, 'review');
+  assert.equal(secondRepair.review.verdict, null);
+  assert.equal(secondRepair.review2, null);
+  assert.equal(secondRepair.agents.reviewer_agent_id, null);
+  assert.equal(secondRepair.agents.reviewer2_agent_id, null);
+  assert.equal(secondRepair.agents.audit_agent_id, 'auditor-old');
+});
+
+test('Item 4 non-scoped repairs preserve full reset and unconditional gate invalidation', async (t) => {
+  const base = item4RepairTask();
+  const codeCases = [
+    ['missing findings', /** @type {import('../core/types.js').Kickback[]} */ (base.kickbacks).map(({ findings: _findings, ...kickback }) => kickback), ['src/core/record.js']],
+    ['empty findings', [{ ...base.kickbacks[0], findings: [] }], ['src/core/record.js']],
+    ['file outside findings', base.kickbacks, ['src/core/task-schema.js']],
+    ['empty repair files', base.kickbacks, []],
+    ['capture destination', [{ ...base.kickbacks[0], findings: [item4TypedFinding('review', { kickTo: 'capture' })] }], ['src/core/record.js']],
+    ['plan destination', [{ ...base.kickbacks[0], findings: [item4TypedFinding('review', { kickTo: 'plan' })] }], ['src/core/record.js']],
+  ];
+
+  for (const [name, kickbacks, files] of codeCases) await t.test(String(name), async () => {
+    const result = item4ImplementReturn(/** @type {string[]} */ (files));
+    const { stage: _stage, kickback: _kickback, ...legacyImplement } = result;
+    const { root, taskDir } = await makeRoot(item4RepairTask({ kickbacks }));
+    try {
+      await recordSpecialistReturn(root, 'implement', '18', item4ObservedReturn(result));
+      const repaired = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+
+      assert.deepEqual((/** @type {any} */ (repaired)).implement, legacyImplement);
+      assert.equal(repaired.review.verdict, null);
+      assert.equal(repaired.review2, null);
+      assert.equal(repaired.audit.verdict, 'na');
+      assert.equal(repaired.agents.audit_agent_id, null);
+      assert.equal(repaired.tests.green, false);
+      assert.equal(Object.hasOwn(repaired.tests, 'gate'), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const [name, council] of [
+    ['pending council', { ...base.convergence.council, stage: 'review' }],
+    ['convened council', {
+      ...base.convergence.council,
+      convened: true,
+      stage: 'review',
+      verdict: 'block',
+      outcome: null,
+    }],
+  ]) await t.test(name, () => {
+    const task = item4RepairTask({
+      convergence: {
+        ...base.convergence,
+        council,
+      },
+    });
+    const repaired = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      task,
+      'implement',
+      item4ImplementReturn(['src/core/record.js']),
+    ));
+    assert.equal(repaired.review.verdict, null);
+    assert.equal(repaired.review2, null);
+    assert.equal(repaired.audit.verdict, 'na');
+    assert.equal(repaired.agents.audit_agent_id, null);
+  });
+
+  await t.test('public council recovery preserves the legacy implement record', async (t) => {
+    t.mock.timers.enable({
+      apis: ['Date'],
+      now: new Date('2026-07-12T02:00:00Z'),
+    });
+    const { root, taskDir } = await makeRoot(councilTask());
+    const result = item4ImplementReturn(['src/core/record.js']);
+    const { stage: _stage, kickback: _kickback, ...legacyImplement } = result;
+    try {
+      await recordSpecialistReturn(root, 'council', '18', councilReturn());
+      await recordSpecialistReturn(root, 'implement', '18', item4ObservedReturn(result));
+      const recorded = await readTask(taskDir);
+
+      assert.deepEqual(recorded.implement, legacyImplement);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('refactor invalidates the full-suite gate even for a scoped candidate', () => {
+    const task = item4RepairTask({
+      stage: 'refactor',
+      kickbacks: [{
+        from: 'audit',
+        to: 'refactor',
+        reason: 'audit found a confined blocker.',
+        at: '2026-07-12T00:30:00Z',
+        findings: [item4TypedFinding('audit', { kickTo: 'refactor' })],
+      }],
+    });
+    const repaired = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
+      task,
+      'refactor',
+      item4RefactorReturn(['src/core/record.js']),
+    ));
+    assert.equal(repaired.tests.green, false);
+    assert.equal(Object.hasOwn(repaired.tests, 'gate'), false);
+  });
+
+  await t.test('operation category keeps its prior full judgment reset', () => {
+    const task = operationTask({
+      stage: 'execute',
+      plan: operationPlanState(),
+      agents: {
+        executor_agent_id: 'executor-old',
+        verifier_agent_id: 'verifier-old',
+        audit_agent_id: 'auditor-old',
+      },
+      execution: {
+        result: 'executed',
+        executor_agent_id: 'executor-old',
+        cycle: 0,
+        recordedAt: '2026-07-12T00:20:00Z',
+        actions: ['Applied the first operation.'],
+        evidence: [{ command: 'inspect', output: 'changed' }],
+        approvalRequired: null,
+      },
+      verification: {
+        verdict: 'needs-work',
+        verifier_agent_id: 'verifier-old',
+        postconditions: [],
+        findings: [],
+        evidence: ['verification blocker'],
+      },
+      audit: {
+        required: true,
+        verdict: 'pass',
+        audit_agent_id: 'auditor-old',
+        findings: [],
+        evidence: ['audit pass'],
+      },
+      kickbacks: [{
+        from: 'verify',
+        to: 'execute',
+        reason: 'Operation verification failed.',
+        at: '2026-07-12T00:30:00Z',
+        findings: [item4TypedFinding('review')],
+      }],
+    });
+    const repaired = /** @type {Item4OperationTask} */ (recordCore.transitionTask(task, 'execute', {
+      agent_id: 'executor-fresh',
+      stage: 'execute',
+      result: 'executed',
+      actions: ['Applied the operation repair.'],
+      evidence: [{ command: 'inspect', output: 'repaired' }],
+      kickback: null,
+      approvalRequired: null,
+    }));
+    assert.equal(repaired.verification.verdict, null);
+    assert.equal(repaired.verification.verifier_agent_id, null);
+    assert.equal(repaired.audit.verdict, 'na');
+    assert.equal(repaired.audit.audit_agent_id, null);
+  });
+});
+
+test('Item 4 refute records exact typed blocker contracts and leaves council kickbacks unchanged', async (t) => {
+  await t.test('ordinary review and audit kickbacks carry only the surviving typed blockers', () => {
+    const reviewFinding = blockingFinding({ line: 31, what: 'Review blocker survives.' });
+    const auditFinding = /** @type {Record<string, any>} */ ({
+      ...blockingFinding({ line: 41, kickTo: 'refactor', what: 'Audit blocker survives.' }),
+      cwe: 'CWE-400',
+    });
+    const task = canonicalTask({
+      stage: 'review',
+      agents: {
+        implementer_agent_id: 'implementer',
+        reviewer_agent_id: 'reviewer',
+        reviewer2_agent_id: null,
+        audit_agent_id: 'auditor',
+      },
+      review: {
+        verdict: 'needs-work',
+        reviewer_agent_id: 'reviewer',
+        findings: [reviewFinding],
+        evidence: ['review blocker'],
+      },
+      audit: {
+        required: true,
+        verdict: 'needs-work',
+        audit_agent_id: 'auditor',
+        findings: [auditFinding],
+        evidence: ['audit blocker'],
+      },
+    });
+    const afterReview = recordCore.transitionTask(task, 'refute', {
+      agent_id: 'review-refuter',
+      stage: 'refute',
+      cycle: 0,
+      finding: `${reviewFinding.file}:${reviewFinding.line} ${reviewFinding.what}`,
+      verdict: 'survives',
+      rationale: 'The review blocker is observable.',
+      evidence: [{ command: 'node --test', output: 'review failure' }],
+    });
+    const recorded = /** @type {Item4CodeTask} */ (recordCore.transitionTask(afterReview, 'refute', {
+      agent_id: 'audit-refuter',
+      stage: 'refute',
+      cycle: 0,
+      finding: `${auditFinding.file}:${auditFinding.line} ${auditFinding.what}`,
+      verdict: 'survives',
+      rationale: 'The audit blocker is observable.',
+      evidence: [{ command: 'node --test', output: 'audit failure' }],
+    }));
+
+    assert.deepEqual(
+      recorded.kickbacks.map(({ from, to, findings }) => ({ from, to, findings })),
+      [
+        {
+          from: 'review',
+          to: 'implement',
+          findings: [{
+            source: 'review',
+            file: reviewFinding.file,
+            line: reviewFinding.line,
+            what: reviewFinding.what,
+            kickTo: reviewFinding.kickTo,
+          }],
+        },
+        {
+          from: 'audit',
+          to: 'refactor',
+          findings: [{
+            source: 'audit',
+            file: auditFinding.file,
+            line: auditFinding.line,
+            what: auditFinding.what,
+            kickTo: auditFinding.kickTo,
+          }],
+        },
+      ],
+    );
+    assert.equal(recorded.convergence.stages.review.blockingKickbacks, 1);
+    assert.equal(recorded.convergence.stages.audit.blockingKickbacks, 1);
+  });
+
+  await t.test('source-bound review2 plan blocker persists the first typed kickback with an empty historical ledger', async () => {
+    const finding = blockingFinding({
+      line: 51,
+      kickTo: 'plan',
+      what: 'The Item 4 test contract excludes a code destination.',
+    });
+    const { root, taskDir } = await makeRoot(canonicalTask({
+      stage: 'review',
+      agents: {
+        implementer_agent_id: 'implementer',
+        reviewer_agent_id: 'reviewer',
+        reviewer2_agent_id: 'reviewer-two',
+        audit_agent_id: null,
+      },
+      tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+      judgmentHistory: [],
+      review: {
+        verdict: 'pass',
+        reviewer_agent_id: 'reviewer',
+        findings: [],
+        evidence: ['review passed'],
+      },
+      review2: {
+        verdict: 'needs-work',
+        reviewer_agent_id: 'reviewer-two',
+        findings: [finding],
+        evidence: ['review two blocker'],
+      },
+    }));
+    try {
+      await recordSpecialistReturn(
+        root,
+        'refute',
+        '18',
+        refuteReturn('review-two-refuter', finding, { source: 'review2' }),
+      );
+      const recorded = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+
+      assert.equal(recorded.stage, 'plan');
+      assert.deepEqual(
+        recorded.kickbacks.map(({ from, to, findings }) => ({ from, to, findings })),
+        [{
+          from: 'review',
+          to: 'plan',
+          findings: [{
+            source: 'review2',
+            file: finding.file,
+            line: finding.line,
+            what: finding.what,
+            kickTo: finding.kickTo,
+          }],
+        }],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('council block kickback has the unchanged untyped shape', () => {
+    const recorded = /** @type {Item4CodeTask} */ (recordCore.transitionTask(councilTask(), 'council', councilReturn()));
+    const kickback = /** @type {import('../core/types.js').Kickback} */ (recorded.kickbacks.at(-1));
+    assert.deepEqual(Object.keys(kickback).sort(), ['at', 'from', 'reason', 'to']);
+    assert.deepEqual(
+      { from: kickback.from, to: kickback.to, reason: kickback.reason },
+      {
+        from: 'review',
+        to: 'implement',
+        reason: 'Council block: The recording path loses a result.',
+      },
+    );
+  });
+});
+
+
+test('Item 4 council recovery preserves builder outcomes for non-scoped public refutes', async (t) => {
+  for (const destination of /** @type {const} */ (['capture', 'plan'])) {
+    await t.test(destination, async () => {
+      const finding = blockingFinding({
+        line: destination === 'capture' ? 71 : 72,
+        kickTo: destination,
+        what: `${destination} requires non-scoped recovery.`,
+      });
+      const implement = {
+        agent_id: 'implementer-old',
+        result: 'green',
+        files: ['src/core/record.js'],
+        greenRun: { command: 'node --test', output: 'pass' },
+      };
+      const refactor = {
+        agent_id: 'refactorer-old',
+        result: 'clean',
+        files: [],
+        outsideDiff: [],
+        greenRun: { command: 'node --test', output: 'pass' },
+        summary: ['Kept behavior unchanged.'],
+      };
+      const task = canonicalTask({
+        stage: 'review',
+        agents: {
+          implementer_agent_id: implement.agent_id,
+          reviewer_agent_id: 'reviewer-old',
+          reviewer2_agent_id: null,
+          audit_agent_id: null,
+        },
+        implement,
+        refactor,
+        review: {
+          verdict: 'needs-work',
+          reviewer_agent_id: 'reviewer-old',
+          findings: [finding],
+          evidence: ['non-scoped blocker'],
+        },
+      });
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        const recorded = await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn(`${destination}-refuter`, finding, { source: 'review' }),
+        );
+        const persisted = await readTask(taskDir);
+
+        assert.deepEqual(
+          {
+            returned: { implement: recorded.implement, refactor: recorded.refactor },
+            persisted: { implement: persisted.implement, refactor: persisted.refactor },
+          },
+          {
+            returned: { implement, refactor },
+            persisted: { implement, refactor },
+          },
+        );
+        assert.equal(recorded.stage, destination);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('Item 4 council recovery completes scoped retained audit through the public recorder', async () => {
+  const task = item4RepairTask();
+  const priorAudit = structuredClone(task.audit);
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+    );
+    const repaired = await readTask(taskDir);
+    assert.equal(repaired.stage, 'review');
+    assert.equal(repaired.judgmentHistory.length, 1);
+    assert.deepEqual(repaired.audit, priorAudit);
+
+    await recordCurrentGate(root, taskDir);
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      item4ObservedReturn(item4ReviewReturn('reviewer-fresh', 1)),
+    );
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 1)),
+    );
+    const completed = await readTask(taskDir);
+
+    assert.equal(completed.status, 'done');
+    assert.equal(completed.stage, 'done');
+    assert.deepEqual(completed.audit, priorAudit);
+    assert.equal(completed.tests.gate.clean, true);
+    assert.equal(completed.tests.gate.green, true);
+    assert.equal(completed.tests.gate.hash, runGit(root, ['rev-parse', 'HEAD']));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Item 4 scoped retention survives fresh capture and plan kickbacks until the later full reset', async (t) => {
+  for (const destination of /** @type {const} */ (['capture', 'plan'])) {
+    await t.test(destination, async (t) => {
+      t.mock.timers.enable({
+        apis: ['Date'],
+        now: new Date('2026-07-12T02:00:00Z'),
+      });
+      const finding = blockingFinding({
+        line: destination === 'capture' ? 81 : 82,
+        kickTo: destination,
+        what: `Fresh review requires ${destination}.`,
+      });
+      const { root, taskDir } = await makeRoot(item4RepairTask());
+      try {
+        await recordSpecialistReturn(
+          root,
+          'implement',
+          '18',
+          item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+        );
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn({
+            ...item4ReviewReturn('reviewer-fresh', 1),
+            verdict: 'needs-work',
+            findings: [finding],
+          }),
+        );
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 1)),
+        );
+        await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn(`${destination}-refuter`, finding, {
+            cycle: 1,
+            source: 'review',
+          }),
+        );
+
+        const kicked = await readTask(taskDir);
+        assert.equal(kicked.stage, destination);
+        assert.equal(kicked.agents.audit_agent_id, 'auditor-old');
+        assert.deepEqual(kicked.kickbacks.at(-1).findings, [{
+          source: 'review',
+          file: finding.file,
+          line: finding.line,
+          what: finding.what,
+          kickTo: destination,
+        }]);
+
+        if (destination === 'capture') {
+          kicked.stage = 'plan';
+          await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(kicked, null, 2)}\n`, 'utf8');
+        }
+        await recordSpecialistReturn(root, 'plan', '18', planReturn({}, `${destination}-planner`));
+        await recordSpecialistReturn(
+          root,
+          'implement',
+          '18',
+          item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+        );
+        const reset = await readTask(taskDir);
+
+        assert.equal(reset.stage, 'review');
+        assert.equal(reset.judgmentHistory.length, 2);
+        assert.equal(reset.review.reviewer_agent_id, null);
+        assert.equal(reset.review2, null);
+        assert.equal(reset.audit.audit_agent_id, null);
+        assert.equal(reset.agents.audit_agent_id, null);
+        assert.deepEqual(reset.kickbacks.at(-1).findings, kicked.kickbacks.at(-1).findings);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('Item 4 public mixed repair retains the passing sibling when both stages stay confined', async (t) => {
+  t.mock.timers.enable({
+    apis: ['Date'],
+    now: new Date('2026-07-12T02:00:00Z'),
+  });
+  const { root, taskDir } = await makeRoot(item4MixedRepairTask());
+  try {
+    await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+    );
+    const implemented = await readTask(taskDir);
+    assert.equal(implemented.stage, 'refactor');
+    assert.equal(implemented.judgmentHistory.length, 1);
+    assert.equal(implemented.agents.audit_agent_id, 'auditor-old');
+
+    await recordSpecialistReturn(
+      root,
+      'refactor',
+      '18',
+      item4ObservedReturn(item4RefactorReturn(['src/core/invariants.js'])),
+    );
+    const refactored = await readTask(taskDir);
+
+    assert.equal(refactored.stage, 'review');
+    assert.equal(refactored.judgmentHistory.length, 1);
+    assert.equal(refactored.audit.verdict, 'pass');
+    assert.equal(refactored.audit.audit_agent_id, 'auditor-old');
+    assert.equal(refactored.agents.audit_agent_id, 'auditor-old');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Item 4 fresh typed repair round accepts fresh judgment identities after a prior full reset', async (t) => {
+  t.mock.timers.enable({
+    apis: ['Date'],
+    now: new Date('2026-07-12T03:00:00Z'),
+  });
+  const base = item4RepairTask();
+  const firstRound = item4RepairTask({
+    kickbacks: /** @type {any[]} */ (base.kickbacks).map(({ findings: _findings, ...kickback }) => kickback),
+  });
+  const finding = blockingFinding({
+    line: 91,
+    what: 'Fresh review found a new confined blocker.',
+  });
+  const { root, taskDir } = await makeRoot(firstRound);
+  try {
+    await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+    );
+    await recordCurrentGate(root, taskDir);
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      item4ObservedReturn({
+        ...item4ReviewReturn('reviewer-fresh', 1),
+        verdict: 'needs-work',
+        findings: [finding],
+      }),
+    );
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 1)),
+    );
+    await recordSpecialistReturn(
+      root,
+      'audit',
+      '18',
+      item4ObservedReturn(item4AuditReturn('auditor-fresh', 1)),
+    );
+    await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('review-refuter-fresh', finding, {
+        cycle: 1,
+        source: 'review',
+      }),
+    );
+    const recorded = await readTask(taskDir);
+
+    assert.equal(recorded.stage, 'implement');
+    assert.equal(recorded.judgmentHistory.length, 1);
+    assert.equal(recorded.judgmentHistory[0].audit.audit_agent_id, 'auditor-old');
+    assert.equal(recorded.review.reviewer_agent_id, 'reviewer-fresh');
+    assert.equal(recorded.review2.reviewer_agent_id, 'reviewer-two-fresh');
+    assert.equal(recorded.audit.audit_agent_id, 'auditor-fresh');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Item 4 council recovery permits second scoped repair before council at equal and later clocks', async (t) => {
+  for (const [name, later] of /** @type {Array<[string, boolean]>} */ ([
+    ['equal-second', false],
+    ['later-second', true],
+  ])) {
+    await t.test(name, async (t) => {
+      const base = item4RepairTask();
+      const task = item4RepairTask({
+        convergence: {
+          ...base.convergence,
+          cap: 1,
+        },
+      });
+      const { root, taskDir } = await makeRoot(task);
+      t.mock.timers.enable({
+        apis: ['Date'],
+        now: new Date('2026-07-12T02:00:00Z'),
+      });
+      try {
+        await recordSpecialistReturn(
+          root,
+          'implement',
+          '18',
+          item4ObservedReturn({
+            ...item4ImplementReturn(['src/core/record.js']),
+            agent_id: 'implementer-first',
+          }),
+        );
+        const firstRepair = await readTask(taskDir);
+        assert.equal(firstRepair.agents.audit_agent_id, 'auditor-old');
+        assert.equal(firstRepair.judgmentHistory.length, 1);
+
+        const secondBlocker = blockingFinding({
+          line: 61,
+          what: 'The second review found another confined blocker.',
+        });
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn({
+            ...item4ReviewReturn('reviewer-fresh', 1),
+            verdict: 'needs-work',
+            findings: [secondBlocker],
+          }),
+        );
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 1)),
+        );
+        if (later) t.mock.timers.tick(1_000);
+
+        await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn('review-refuter-second', secondBlocker, {
+            cycle: 1,
+            source: 'review',
+          }),
+        );
+        const secondKickback = await readTask(taskDir);
+        assert.equal(secondKickback.stage, 'implement');
+        assert.equal(secondKickback.kickbacks.length, 2);
+        assert.equal(secondKickback.agents.audit_agent_id, 'auditor-old');
+
+        await recordSpecialistReturn(
+          root,
+          'implement',
+          '18',
+          item4ObservedReturn({
+            ...item4ImplementReturn(['src/core/record.js']),
+            agent_id: 'implementer-second',
+          }),
+        );
+        const secondRepair = await readTask(taskDir);
+        assert.equal(secondRepair.stage, 'review');
+        assert.equal(secondRepair.judgmentHistory.length, 2);
+        assert.equal(secondRepair.agents.audit_agent_id, 'auditor-old');
+
+        const councilBlocker = blockingFinding();
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn({
+            ...item4ReviewReturn('reviewer-third', 2),
+            verdict: 'needs-work',
+            findings: [councilBlocker],
+          }),
+        );
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn(item4ReviewReturn('reviewer-fourth', 2)),
+        );
+        await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn('review-refuter-third', councilBlocker, {
+            cycle: 2,
+            source: 'review',
+          }),
+        );
+        const awaitingCouncil = await readTask(taskDir);
+        assert.equal(awaitingCouncil.stage, 'review');
+        assert.equal(awaitingCouncil.convergence.council.stage, 'review');
+
+        await recordSpecialistReturn(root, 'council', '18', councilReturn());
+        const escalated = await readTask(taskDir);
+        assert.equal(escalated.stage, 'implement');
+        assert.equal(escalated.convergence.council.convened, true);
+        assert.equal(escalated.convergence.council.verdict, 'block');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
 });

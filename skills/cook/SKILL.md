@@ -193,6 +193,12 @@ Every active judgment finding self-classifies as blocking or follow-up. A blocki
 
 The independent counters are `review`/`audit` for code and `verify`/`audit` for operation. The 3rd would-be kickback from either source triggers the one council before any other source counter increments or ordinary kickback is appended.
 
+Ordinary code judgment kickbacks carry the exact surviving blockers in optional `findings`: `[{source,file,line,what,kickTo}]`, where `source` is `review | review2 | audit` and `kickTo` is `capture | plan | implement | refactor`. Council-block kickbacks keep their existing untyped shape.
+
+A code repair is scoped only when every judgment kickback in the active round has a nonempty typed findings contract, every finding targets the narrower `implement | refactor` subset, every recorded implement/refactor file set in an owed repair chain is nonempty and confined to the finding file union, and no council is pending or convened. Live failing identities relative to the latest archived row distinguish the active round; one timestamp still collapses same-round review and audit kickbacks but is not a unique round id. The repair archives the current judgments once, resets every raising source, retains exact passing sibling identities and outcomes from that latest row, leaves convergence counters unchanged, and settles to the vacancy. A review kickback resets both review slots; an audit kickback resets only audit; both reset all three. Any ineligible or later unconfined stage uses the full judgment reset.
+
+The scoped implement or refactor brief quotes the typed findings contract verbatim. The fresh re-judgment brief quotes it as "the kicked findings this cycle must resolve". Fresh judges still inspect the full diff. Retention requires the same live identity in the latest archived row; equal output from a new identity is fresh. This trades a sibling re-run for a file-confined proof, not for narrower judgment. Every implement or refactor repair invalidates the full-suite gate, and Jeff re-runs that gate on the new checkpoint as the mandatory anchor.
+
 ## Git (be smart; interrupt rarely)
 
 - Run `cook validate` before every commit. Never block on a dirty tree; never ask the Chef to stash or clean.

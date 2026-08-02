@@ -13,6 +13,8 @@
  * a "validation OK" on a store it could not evaluate.
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import { isType } from './validate.js';
 import { archivedJudgeAgentIds, forbiddenCouncilAgentIds, isAgentId } from './identity-policy.js';
 import {
@@ -160,6 +162,203 @@ function hasRetainedSourceRefute(task, source, finding) {
     && Array.isArray(task.refutes)
     && task.refutes.some((/** @type {any} */ retained) => isSameRefute(retained, refute));
 }
+
+/**
+ * @param {any} outcome
+ * @param {any} agents
+ * @param {string} outcomeIdentity
+ * @param {string} agentIdentity
+ */
+function judgmentIdentity(outcome, agents, outcomeIdentity, agentIdentity) {
+  return outcome?.[outcomeIdentity] ?? agents?.[agentIdentity] ?? null;
+}
+
+/** @param {any} task */
+function hasTargetedRepairProof(task) {
+  if (task.category === 'operation' || !Array.isArray(task.judgmentHistory)) return true;
+  const judgmentKickbacks = Array.isArray(task.kickbacks)
+    ? task.kickbacks.filter((/** @type {any} */ kickback) => ['review', 'audit'].includes(kickback?.from))
+    : [];
+  const hasTypedKickback = judgmentKickbacks.some((/** @type {any} */ kickback) => (
+    Array.isArray(kickback.findings) && kickback.findings.length > 0
+  ));
+  if (!hasTypedKickback) return true;
+  if (task.judgmentHistory.length === 0) return true;
+
+  const history = task.judgmentHistory.at(-1);
+  const council = task.convergence?.council;
+  const lastKickback = judgmentKickbacks.at(-1);
+  const councilReason = `Council block: ${(Array.isArray(council?.findings) ? council.findings : [])
+    .filter((/** @type {any} */ finding) => finding.survived === true)
+    .map((/** @type {any} */ finding) => finding.summary)
+    .join('; ')}`;
+  const hasPendingCouncilKickback = council?.convened === true
+    && council.verdict === 'block'
+    && council.outcome === null
+    && lastKickback?.from === council.stage
+    && lastKickback?.to === 'implement'
+    && lastKickback?.reason === councilReason
+    && lastKickback?.findings === undefined;
+  const contractKickbacks = hasPendingCouncilKickback
+    ? judgmentKickbacks.slice(0, -1)
+    : judgmentKickbacks;
+  const latestKickback = contractKickbacks.at(-1);
+  if (!isType(history, 'object') || !isType(latestKickback, 'object')) return false;
+  const judgments = [
+    ['review', 'reviewer_agent_id'],
+    ['review2', 'reviewer_agent_id'],
+    ['audit', 'audit_agent_id'],
+  ];
+  const staleIdentity = judgments.some(([source, identity]) => {
+    const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+    const liveId = judgmentIdentity(task[source], task.agents, identity, agentIdentity);
+    const archivedId = judgmentIdentity(
+      history[source],
+      history.agents,
+      identity,
+      agentIdentity,
+    );
+    return liveId != null
+      && archivedId !== liveId
+      && task.judgmentHistory.slice(0, -1).some((/** @type {any} */ entry) => (
+        judgmentIdentity(entry?.[source], entry?.agents, identity, agentIdentity) === liveId
+      ));
+  });
+  if (staleIdentity) return false;
+  const retainedSources = judgments.filter(([source, identity]) => {
+    const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+    const liveId = judgmentIdentity(task[source], task.agents, identity, agentIdentity);
+    const archivedId = judgmentIdentity(
+      history[source],
+      history.agents,
+      identity,
+      agentIdentity,
+    );
+    return liveId != null && archivedId === liveId;
+  });
+  const liveRaisingSources = [
+    ...(task.review?.verdict === 'needs-work' || task.review2?.verdict === 'needs-work'
+      ? ['review'] : []),
+    ...(task.audit?.verdict === 'needs-work' ? ['audit'] : []),
+  ];
+  const isAwaitingFreshRepair = ['implement', 'refactor'].includes(task.stage)
+    && task.convergence?.council?.stage == null
+    && task.convergence?.council?.convened !== true
+    && liveRaisingSources.includes(latestKickback.from)
+    && Number.isFinite(Date.parse(latestKickback.at))
+    && Number.isFinite(Date.parse(history.at))
+    && Date.parse(history.at) <= Date.parse(latestKickback.at);
+  const isAwaitingFreshReset = ['capture', 'plan'].includes(latestKickback.to)
+    && ['capture', 'plan', 'implement'].includes(task.stage)
+    && liveRaisingSources.includes(latestKickback.from)
+    && Number.isFinite(Date.parse(latestKickback.at))
+    && Number.isFinite(Date.parse(history.at))
+    && Date.parse(history.at) <= Date.parse(latestKickback.at);
+  const isAwaitingJudgmentWork = isAwaitingFreshRepair || isAwaitingFreshReset;
+  if (!Array.isArray(latestKickback.findings) || latestKickback.findings.length === 0) {
+    return retainedSources.length === 0;
+  }
+
+  const raisingSources = isAwaitingJudgmentWork
+    ? liveRaisingSources
+    : [
+      ...(history.review?.verdict === 'needs-work' || history.review2?.verdict === 'needs-work'
+        ? ['review'] : []),
+      ...(history.audit?.verdict === 'needs-work' ? ['audit'] : []),
+    ];
+  if (!raisingSources.includes(latestKickback.from)) return retainedSources.length === 0;
+  const kickbacks = raisingSources.map((source) => contractKickbacks.findLast((/** @type {any} */ kickback) => (
+    kickback.from === source && kickback.at === latestKickback.at
+  ))).filter((kickback) => kickback !== undefined);
+  const findings = kickbacks.flatMap((/** @type {any} */ kickback) => kickback.findings ?? []);
+  const typedContract = kickbacks.length === raisingSources.length
+    && kickbacks.every((/** @type {any} */ kickback) => (
+      ['implement', 'refactor'].includes(kickback.to)
+      && Array.isArray(kickback.findings)
+      && kickback.findings.length > 0
+      && kickback.findings.every((/** @type {any} */ finding) => (
+        ['implement', 'refactor'].includes(finding?.kickTo)
+        && (finding?.source === kickback.from
+          || (kickback.from === 'review' && finding?.source === 'review2'))
+        && typeof finding?.file === 'string'
+        && finding.file.length > 0
+      ))
+    ));
+  if ((!typedContract && !isAwaitingFreshReset)
+    || !Number.isFinite(Date.parse(latestKickback.at))
+    || !Number.isFinite(Date.parse(history.at))
+    || (!isAwaitingJudgmentWork && Date.parse(history.at) < Date.parse(latestKickback.at))) {
+    return retainedSources.length === 0;
+  }
+
+  const findingFiles = new Set(findings.map((/** @type {any} */ finding) => finding.file));
+  const repairStages = [...new Set([
+    ...kickbacks.map((/** @type {any} */ kickback) => kickback.to),
+    ...findings.map((/** @type {any} */ finding) => finding.kickTo),
+  ])];
+  const pendingRepairStage = isAwaitingFreshRepair
+    ? task.stage
+    : (task.stage === 'refactor'
+      && repairStages.includes('implement')
+      && repairStages.includes('refactor') ? task.stage : null);
+  const recordedRepairs = repairStages
+    .filter((stage) => pendingRepairStage !== 'implement' && stage !== pendingRepairStage)
+    .map((stage) => [stage, task[stage]])
+    .filter(([, repair]) => isType(repair, 'object'));
+  const permitsLegacyRepairProof = task.judgmentHistory.length === 1
+    && contractKickbacks.filter((/** @type {any} */ kickback) => (
+      Array.isArray(kickback.findings) && kickback.findings.length > 0
+    )).length === raisingSources.length;
+  const repairsAreConfined = recordedRepairs.every(([stage, repair]) => (
+    (stage === 'implement' ? repair.result === 'green' : repair.result === 'clean')
+    && (repair.repairRound === contractKickbacks.length
+      || (repair.repairRound === undefined && permitsLegacyRepairProof))
+    && Array.isArray(repair.files)
+    && repair.files.length > 0
+    && repair.files.every((/** @type {any} */ file) => findingFiles.has(file))
+  ));
+  const hasConfinedRepair = repairStages.length > 0
+    && recordedRepairs.length === repairStages.length
+    && repairsAreConfined;
+  const hasPartialConfinedRepair = repairStages.includes(task.stage)
+    && recordedRepairs.length > 0
+    && repairsAreConfined;
+  const hasCurrentRepairProof = hasConfinedRepair || hasPartialConfinedRepair;
+  const raised = new Set(raisingSources);
+  if (retainedSources.length === 0) {
+    const hasRetainableSibling = judgments.some(([source, identity]) => {
+      const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+      const archivedId = judgmentIdentity(history[source], history.agents, identity, agentIdentity);
+      const liveId = judgmentIdentity(task[source], task.agents, identity, agentIdentity);
+      return !raised.has(source === 'review2' ? 'review' : source)
+        && archivedId != null
+        && archivedId === liveId
+        && history[source]?.verdict === 'pass';
+    });
+    if (isAwaitingJudgmentWork) return !hasRetainableSibling;
+    if (!hasCurrentRepairProof) return true;
+  }
+  if (!hasCurrentRepairProof && !isAwaitingJudgmentWork) return false;
+  if (retainedSources.some(([source]) => raised.has(source === 'review2' ? 'review' : source))) {
+    return false;
+  }
+  return judgments
+    .filter(([source]) => !raised.has(source === 'review2' ? 'review' : source))
+    .every(([source, identity]) => {
+      const archived = history[source];
+      const live = task[source];
+      const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+      const archivedId = judgmentIdentity(archived, history.agents, identity, agentIdentity);
+      const liveId = judgmentIdentity(live, task.agents, identity, agentIdentity);
+      if (archivedId === null && liveId === null) return true;
+      return archivedId !== null
+        && archivedId === liveId
+        && archived?.verdict === 'pass'
+        && live?.verdict === 'pass'
+        && isDeepStrictEqual(live, archived);
+    });
+}
+
 
 /** @param {any} task @param {any} [verification] @param {any} [audit] */
 function operationBlockers(task, verification = task.verification, audit = task.audit) {
@@ -529,6 +728,9 @@ export function runInvariants(
 
     // convergence block (inv7-11); absent ⇒ skipped
     convergenceChecks(t, id, ids, out);
+    if (!hasTargetedRepairProof(t)) {
+      out.push(`task ${id}: retained judgment lacks an exact confined repair proof [inv12]`);
+    }
 
     // status-conditional required fields
     if (t.status === 'blocked' && jqOr(t.blockedReason, '') === '') {
