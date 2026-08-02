@@ -217,11 +217,41 @@
  */
 
 /**
+ * @typedef {Omit<Review, 'verdict'> & {
+ *   verdict: ReviewVerdict | 'na',
+ *   reportedVerdict?: 'pass' | 'needs-work',
+ *   findings: Finding[],
+ *   acLedger?: unknown[]
+ * }} HistoricalCodeReview
+ */
+
+/**
+ * @typedef {Omit<Audit, 'findings'> & {
+ *   findings: Finding[]
+ * }} HistoricalCodeAuditOutcome
+ */
+
+/**
+ * @typedef {{
+ *   required: false,
+ *   verdict: 'na',
+ *   audit_agent_id: null,
+ *   evidence: [],
+ *   reportedVerdict?: never,
+ *   findings?: never,
+ *   scan?: never,
+ *   coverage?: never
+ * }} ArchivedUnauditedCodeAudit
+ */
+
+/** @typedef {HistoricalCodeAuditOutcome | ArchivedUnauditedCodeAudit} HistoricalCodeAudit */
+
+/**
  * @typedef {Object} CodeJudgmentHistory
  * @property {string} at
- * @property {Review} review
- * @property {Review | null} review2
- * @property {Audit} audit
+ * @property {HistoricalCodeReview} review
+ * @property {HistoricalCodeReview | null} review2
+ * @property {HistoricalCodeAudit} audit
  * @property {{reviewer_agent_id: string | null, reviewer2_agent_id: string | null, audit_agent_id: string | null}} [agents]
  */
 

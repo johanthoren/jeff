@@ -1968,12 +1968,27 @@ test('issue 95 named plan opportunity runs refactor before review without judgme
     assert.equal((await readTask(taskDir)).plan.refactorOpportunity, opportunity);
 
     await recordSpecialistReturn(root, 'implement', '18', implementReturn());
-    assert.equal((await readTask(taskDir)).stage, 'refactor');
+    const implemented = await readTask(taskDir);
+    assert.equal(implemented.stage, 'refactor');
+    assert.deepEqual(implemented.implement, {
+      agent_id: 'implementer',
+      result: 'green',
+      files: ['src/core/record.js'],
+      greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
+    });
 
     await recordSpecialistReturn(root, 'refactor', '18', refactorReturn());
     const refactored = await readTask(taskDir);
     assert.equal(refactored.stage, 'review');
     assert.equal(refactored.judgmentHistory, undefined);
+    assert.deepEqual(refactored.refactor, {
+      agent_id: 'refactorer',
+      result: 'clean',
+      files: [],
+      outsideDiff: [],
+      greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
+      summary: ['No refactor needed.'],
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -2930,7 +2945,11 @@ test('implementation preserves judgments when history consumed the latest judgme
   ];
 
   for (const [name, boundary, kickbackAt] of cases) {
-    await t.test(name, async () => {
+    await t.test(name, async (t) => {
+      t.mock.timers.enable({
+        apis: ['Date'],
+        now: new Date('2026-07-12T02:00:00Z'),
+      });
       const currentReview = {
         verdict: 'pass',
         reviewer_agent_id: 'reviewer-current',
@@ -2946,9 +2965,14 @@ test('implementation preserves judgments when history consumed the latest judgme
       };
       const history = [{
         at: boundary,
-        review: { verdict: 'na', reviewer_agent_id: null, findings: [], evidence: [] },
+        review: {
+          verdict: 'needs-work',
+          reviewer_agent_id: 'reviewer-archived',
+          findings: [blockingFinding()],
+          evidence: [{ command: 'node --test', output: 'archived review blocker' }],
+        },
         review2: null,
-        audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+        audit: currentAudit,
       }];
       const task = canonicalTask({
         stage: 'implement',
@@ -4700,12 +4724,14 @@ test('Item 4 authoritative mixed repair full-resets an unscoped owed refactor an
         '18',
         item4ObservedReturn(item4RefactorReturn(files)),
       );
+      const { stage: _stage, ...legacyRefactor } = item4RefactorReturn(files);
       const reset = /** @type {Item4CodeTask} */ (await readTask(taskDir));
       assert.equal(reset.stage, 'review');
       assert.equal(reset.judgmentHistory?.length, 2);
       assert.equal(reset.review.reviewer_agent_id, null);
       assert.equal(reset.audit.audit_agent_id, null);
       assert.equal(reset.agents.audit_agent_id, null);
+      assert.deepEqual((/** @type {any} */ (reset)).refactor, legacyRefactor);
 
       await recordCurrentGate(root, taskDir);
       await recordSpecialistReturn(
@@ -4806,19 +4832,24 @@ test('Item 4 non-scoped repairs preserve full reset and unconditional gate inval
     ['plan destination', [{ ...base.kickbacks[0], findings: [item4TypedFinding('review', { kickTo: 'plan' })] }], ['src/core/record.js']],
   ];
 
-  for (const [name, kickbacks, files] of codeCases) await t.test(String(name), () => {
-    const task = item4RepairTask({ kickbacks });
-    const repaired = /** @type {Item4CodeTask} */ (recordCore.transitionTask(
-      task,
-      'implement',
-      item4ImplementReturn(/** @type {string[]} */ (files)),
-    ));
-    assert.equal(repaired.review.verdict, null);
-    assert.equal(repaired.review2, null);
-    assert.equal(repaired.audit.verdict, 'na');
-    assert.equal(repaired.agents.audit_agent_id, null);
-    assert.equal(repaired.tests.green, false);
-    assert.equal(Object.hasOwn(repaired.tests, 'gate'), false);
+  for (const [name, kickbacks, files] of codeCases) await t.test(String(name), async () => {
+    const result = item4ImplementReturn(/** @type {string[]} */ (files));
+    const { stage: _stage, kickback: _kickback, ...legacyImplement } = result;
+    const { root, taskDir } = await makeRoot(item4RepairTask({ kickbacks }));
+    try {
+      await recordSpecialistReturn(root, 'implement', '18', item4ObservedReturn(result));
+      const repaired = /** @type {Item4CodeTask} */ (await readTask(taskDir));
+
+      assert.deepEqual((/** @type {any} */ (repaired)).implement, legacyImplement);
+      assert.equal(repaired.review.verdict, null);
+      assert.equal(repaired.review2, null);
+      assert.equal(repaired.audit.verdict, 'na');
+      assert.equal(repaired.agents.audit_agent_id, null);
+      assert.equal(repaired.tests.green, false);
+      assert.equal(Object.hasOwn(repaired.tests, 'gate'), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   for (const [name, council] of [
@@ -4846,6 +4877,25 @@ test('Item 4 non-scoped repairs preserve full reset and unconditional gate inval
     assert.equal(repaired.review2, null);
     assert.equal(repaired.audit.verdict, 'na');
     assert.equal(repaired.agents.audit_agent_id, null);
+  });
+
+  await t.test('public council recovery preserves the legacy implement record', async (t) => {
+    t.mock.timers.enable({
+      apis: ['Date'],
+      now: new Date('2026-07-12T02:00:00Z'),
+    });
+    const { root, taskDir } = await makeRoot(councilTask());
+    const result = item4ImplementReturn(['src/core/record.js']);
+    const { stage: _stage, kickback: _kickback, ...legacyImplement } = result;
+    try {
+      await recordSpecialistReturn(root, 'council', '18', councilReturn());
+      await recordSpecialistReturn(root, 'implement', '18', item4ObservedReturn(result));
+      const recorded = await readTask(taskDir);
+
+      assert.deepEqual(recorded.implement, legacyImplement);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   await t.test('refactor invalidates the full-suite gate even for a scoped candidate', () => {
@@ -5003,7 +5053,7 @@ test('Item 4 refute records exact typed blocker contracts and leaves council kic
     assert.equal(recorded.convergence.stages.audit.blockingKickbacks, 1);
   });
 
-  await t.test('source-bound review2 plan blocker persists a typed kickback and routes to plan', async () => {
+  await t.test('source-bound review2 plan blocker persists the first typed kickback with an empty historical ledger', async () => {
     const finding = blockingFinding({
       line: 51,
       kickTo: 'plan',
@@ -5018,6 +5068,7 @@ test('Item 4 refute records exact typed blocker contracts and leaves council kic
         audit_agent_id: null,
       },
       tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+      judgmentHistory: [],
       review: {
         verdict: 'pass',
         reviewer_agent_id: 'reviewer',
@@ -5300,6 +5351,72 @@ test('Item 4 public mixed repair retains the passing sibling when both stages st
     assert.equal(refactored.audit.verdict, 'pass');
     assert.equal(refactored.audit.audit_agent_id, 'auditor-old');
     assert.equal(refactored.agents.audit_agent_id, 'auditor-old');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Item 4 fresh typed repair round accepts fresh judgment identities after a prior full reset', async (t) => {
+  t.mock.timers.enable({
+    apis: ['Date'],
+    now: new Date('2026-07-12T03:00:00Z'),
+  });
+  const base = item4RepairTask();
+  const firstRound = item4RepairTask({
+    kickbacks: /** @type {any[]} */ (base.kickbacks).map(({ findings: _findings, ...kickback }) => kickback),
+  });
+  const finding = blockingFinding({
+    line: 91,
+    what: 'Fresh review found a new confined blocker.',
+  });
+  const { root, taskDir } = await makeRoot(firstRound);
+  try {
+    await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+    );
+    await recordCurrentGate(root, taskDir);
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      item4ObservedReturn({
+        ...item4ReviewReturn('reviewer-fresh', 1),
+        verdict: 'needs-work',
+        findings: [finding],
+      }),
+    );
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 1)),
+    );
+    await recordSpecialistReturn(
+      root,
+      'audit',
+      '18',
+      item4ObservedReturn(item4AuditReturn('auditor-fresh', 1)),
+    );
+    await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('review-refuter-fresh', finding, {
+        cycle: 1,
+        source: 'review',
+      }),
+    );
+    const recorded = await readTask(taskDir);
+
+    assert.equal(recorded.stage, 'implement');
+    assert.equal(recorded.judgmentHistory.length, 1);
+    assert.equal(recorded.judgmentHistory[0].audit.audit_agent_id, 'auditor-old');
+    assert.equal(recorded.review.reviewer_agent_id, 'reviewer-fresh');
+    assert.equal(recorded.review2.reviewer_agent_id, 'reviewer-two-fresh');
+    assert.equal(recorded.audit.audit_agent_id, 'auditor-fresh');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

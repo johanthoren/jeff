@@ -383,6 +383,11 @@ function resetJudgmentsAfterFix(task, at, files) {
   if (latestHistory && !isIsoDateTime(latestHistory.at)) {
     throw new Error('[record-transition] judgmentHistory latest at is invalid');
   }
+  if (latestHistory
+    && latestJudgmentKickback.findings === undefined
+    && Date.parse(latestJudgmentKickback.at) <= Date.parse(latestHistory.at)) {
+    return false;
+  }
 
   const sources = /** @type {('review' | 'audit')[]} */ (['review', 'audit']);
   const activeSources = sources.filter((source) => hasUnarchivedFailure(task, latestHistory, source));
@@ -979,7 +984,6 @@ export function transitionTask(task, stage, result) {
       result: result.result,
       files: result.files,
       greenRun: result.greenRun,
-      repairRound: currentCodeRepairRound(next),
     };
     if (isScopedCouncilFix || !result.kickback) invalidateVerification(next);
     if (isScopedCouncilFix && (result.result !== 'green' || result.kickback !== null)) {
@@ -994,6 +998,9 @@ export function transitionTask(task, stage, result) {
       let scopedJudgmentRepair = false;
       if (isScopedCouncilFix) archiveAndResetJudgments(next, at);
       else scopedJudgmentRepair = resetJudgmentsAfterFix(next, at, result.files);
+      if (scopedJudgmentRepair) {
+        next.implement.repairRound = currentCodeRepairRound(next);
+      }
       if (refactorOwed) next.stage = 'refactor';
       else if (scopedJudgmentRepair) settleJudgments(next);
       else next.stage = 'review';
@@ -1006,9 +1013,11 @@ export function transitionTask(task, stage, result) {
       outsideDiff: result.outsideDiff,
       greenRun: result.greenRun,
       summary: result.summary,
-      repairRound: currentCodeRepairRound(next),
     };
-    resetJudgmentsAfterFix(next, at, result.files);
+    const scopedJudgmentRepair = resetJudgmentsAfterFix(next, at, result.files);
+    if (scopedJudgmentRepair) {
+      next.refactor.repairRound = currentCodeRepairRound(next);
+    }
     invalidateVerification(next);
     settleJudgments(next);
   } else if (stage === 'review') recordReview(next, result);

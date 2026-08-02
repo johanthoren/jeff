@@ -183,6 +183,7 @@ function hasTargetedRepairProof(task) {
     Array.isArray(kickback.findings) && kickback.findings.length > 0
   ));
   if (!hasTypedKickback) return true;
+  if (task.judgmentHistory.length === 0) return true;
 
   const history = task.judgmentHistory.at(-1);
   const council = task.convergence?.council;
@@ -327,8 +328,11 @@ function hasTargetedRepairProof(task) {
   if (retainedSources.length === 0) {
     const hasRetainableSibling = judgments.some(([source, identity]) => {
       const agentIdentity = source === 'review2' ? 'reviewer2_agent_id' : identity;
+      const archivedId = judgmentIdentity(history[source], history.agents, identity, agentIdentity);
+      const liveId = judgmentIdentity(task[source], task.agents, identity, agentIdentity);
       return !raised.has(source === 'review2' ? 'review' : source)
-        && judgmentIdentity(history[source], history.agents, identity, agentIdentity) != null
+        && archivedId != null
+        && archivedId === liveId
         && history[source]?.verdict === 'pass';
     });
     if (isAwaitingJudgmentWork) return !hasRetainableSibling;
