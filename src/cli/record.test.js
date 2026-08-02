@@ -4633,7 +4633,14 @@ function item4TypedFinding(source, overrides = {}) {
   };
 }
 
-/** @param {Record<string, any>} [overrides] */
+/**
+ * One completed typed review repair round: a single `from: "review"` kickback
+ * carrying a findings contract. `recordRefute` increments the source counter
+ * whenever it appends such a kickback, so the review counter is 1, not the
+ * canonical 0; a 0 here describes a ledger the recorder cannot produce.
+ *
+ * @param {Record<string, any>} [overrides]
+ */
 function item4RepairTask(overrides = {}) {
   const reviewFinding = blockingFinding({
     line: 11,
@@ -4650,9 +4657,17 @@ function item4RepairTask(overrides = {}) {
     }),
     cwe: 'CWE-20',
   };
+  const defaults = canonicalTask();
   return canonicalTask({
     stage: 'implement',
     complexity: 'complex',
+    convergence: {
+      ...defaults.convergence,
+      stages: {
+        ...defaults.convergence.stages,
+        review: { blockingKickbacks: 1 },
+      },
+    },
     plan: { refactorOpportunity: null },
     agents: {
       implementer_agent_id: 'implementer-old',
@@ -5719,10 +5734,13 @@ test('Item 4 council recovery permits second scoped repair before council at equ
   ])) {
     await t.test(name, async (t) => {
       const base = item4RepairTask();
+      // The fixture's seeded round already spent one of the two allowed
+      // kickbacks, so exactly one more scoped repair fits before the cap and
+      // the round after it arms the council.
       const task = item4RepairTask({
         convergence: {
           ...base.convergence,
-          cap: 1,
+          cap: 2,
         },
       });
       const { root, taskDir } = await makeRoot(task);
