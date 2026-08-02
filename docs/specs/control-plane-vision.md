@@ -37,7 +37,8 @@ surface** that can sit beside them.
 Keep cooking in **OMP and Claude Code** (and Pi/Codex when used). Beside them
 runs a local **Jeff Control** stack:
 
-- a multi-project dashboard with live task graphs
+- a multi-project terminal control client (TUI) with live task graphs; a web
+  dashboard is a possible later client on the same protocol
 - a project inbox that is real Chef↔Jeff chat, including structured decisions
 - an optional global attention view so the Chef is not forced into tab-dance
 - an optional autonomous drain supervisor
@@ -78,6 +79,11 @@ primitives:
 - worktree-per-concurrent-task rule
 - journal-backed resume (item 3)
 
+The backend's read contract is slate item 8, `cook snapshot --json`: a
+versioned, additive-only JSON projection. Its core has no hard dependency on
+item 7 and may be pulled forward; the claim fields stay absent until item 7
+lands.
+
 Until those exist and dogfood, this vision is spec-only. The dashboard may
 later read today’s ledgers in a degraded read-only mode; it must not invent a
 parallel claim system.
@@ -111,6 +117,11 @@ Parked non-goals for this vision:
 | Host launch | Claim task, then launch host in that repo/worktree already bound to the task |
 | Scheduling | Spec now; implement after `6.0.0-alpha.7` dogfood |
 | First artifact | This vision doc only |
+| Client (2026-08-02 follow-up) | TUI-first (Rust, ratatui); web dashboard is a later project, a second client on the same protocol |
+| Backend (2026-08-02 follow-up) | Rust `jeffd`; unix-socket API; never parses ledgers, invokes each project's own `cook` for reads and legal writes |
+| Layout (2026-08-02 follow-up) | Three cards: task graph roughly the right third (ratio adapts to terminal width); chat full-width on the left; inbox and detail sharing the row below |
+| Input (2026-08-02 follow-up) | Mouse and keyboard both first-class: click selection, tab cycling, fuzzy-find jump to any task/project/card |
+| Code home (2026-08-02 follow-up) | Rust workspace folder `control/` in this repo, outside the npm `files` allowlist; CLI-only boundary enforced by the language wall and the item 8 contract |
 
 ## 5. Field survey: steal semantics, not dependencies
 
@@ -146,28 +157,96 @@ OMP, Claude Code, Pi, or Codex running Jeff interactively.
 
 ### 6.2 Control backend (`jeffd` or equivalent)
 
-Local process started/stopped by CLI. Responsibilities:
+Long-lived local daemon, written in Rust (launchd agent on macOS),
+started/stopped by CLI. Responsibilities:
 
 1. read the home project registry
 2. watch registered projects’ `.jeff/**` and project inboxes
-3. expose a live projection API (HTTP + event stream)
+3. expose a live projection API (unix socket: JSON requests + event stream)
 4. own optional drain supervisors
-5. deliver inbox messages to the correct driver / standby brain
-6. launch or attach host sessions for claimed tasks
-7. hold driver model/effort settings for managed runtimes
+5. launch or attach host sessions for claimed tasks
+6. hold driver model/effort settings for managed runtimes
+
+Two hard constraints:
+
+- **`jeffd` never parses ledgers.** Projection and mutation go through each
+  project's own installed `cook` (`cook snapshot --json` per slate item 8,
+  `cook ready`, `cook claims`, `cook claim`/`release`/`approve`/
+  `journal`). Schema knowledge stays in one place and the backend is immune
+  to per-project jeff version skew. FS events only trigger a re-read.
+- **Drivers tail inbox files themselves.** `jeffd` writes inbox messages on
+  behalf of its own clients and projects the files; it is not a delivery
+  channel that can diverge from disk (finding 18.2).
 
 It is **not** the authority on task legality. `cook validate`, ledgers, and
 host Jeff sessions remain authoritative.
 
-### 6.3 Web dashboard
+### 6.3 Control TUI (v1 client)
 
-Browser UI against the backend:
+Rust ratatui client over the backend socket. Where this doc says "dashboard",
+read "control client": TUI now, web later. Surfaces:
 
 - home: all registered projects, attention counts
 - project: live graph, claims, drain state, inbox
-- task detail drawer from graph nodes
+- task detail from graph nodes
 - levers for orchestrator model/effort on managed drivers
 - completed-task toggle on the graph
+
+Project view layout, three cards by default:
+
+```text
+┌──────────────────────────────┬───────────────┐
+│ Chef↔Jeff chat               │               │
+│ (full left width)            │  task graph   │
+│                              │  (~right      │
+├──────────────┬───────────────┤   third)      │
+│ inbox cards  │ selected-node │               │
+│              │ detail        │               │
+└──────────────┴───────────────┴───────────────┘
+```
+
+Chat spans the full width of the left side; open inbox cards and
+selected-node detail share the row below it. The graph takes roughly the right third;
+splits are ratio-based and adapt to terminal width, and on narrow terminals
+panes collapse or tab rather than shrink below legibility. The graph pane is
+a zoomable canvas (feasibility survey below); a dense tree projection remains
+as a fallback view for narrow terminals.
+
+#### Graph pane feasibility survey (2026-08-02)
+
+Confirmed: a zoomable, even 3D-rendered, graph view inside a ratatui pane is
+feasible, with prior art at every layer. No single crate ships the whole
+thing, so the layout-plus-viewport composition is owned code.
+
+| Layer | Prior art | Status |
+|---|---|---|
+| Graph model | `petgraph` | v0.8.x, standard |
+| Layout | `layout-rs` (Sugiyama layered) | maintained, ~573K dl/month; right shape for DAGs. Force-directed alternatives: `forceatlas2` maintained, `fdg` in rewrite limbo |
+| Render, baseline | ratatui `Canvas` with `Octant`/`Braille` markers; zoom/pan = rescaling `x_bounds`/`y_bounds` per frame (core demo pattern) | in ratatui core; ~2x4 sub-cell resolution |
+| Render, pixel upgrade | `ratatui-image` over the Kitty graphics protocol; production prior art: `serie` draws git DAGs as in-terminal images | QA-clean on Kitty ≥0.28; halfblock fallback elsewhere |
+| Render, true 3D | `bevy_ratatui_camera` (Bevy scene into a ratatui widget; proven by `ttysvr`); `ratatui-plt` `Camera3DState` | possible; costs a Bevy-scale dependency, 24-bit color required |
+| Node-graph widgets | `tui-nodes` (caller-positioned, cycle panics), `ratatui-flow` fork (pan only, very new) | closest existing widgets; none sufficient alone |
+
+Leaning: layered 2D canvas with an owned zoom/pan viewport as baseline, pixel
+upgrade on Kitty through the same layout pipeline. True 3D is confirmed
+possible; whether it earns the Bevy-scale dependency is open question 17.1.
+Because the viewport and layout composition is owned code, the design spec
+must define the viewport math and layout pipeline exactly.
+
+#### Interaction model
+
+Mouse and keyboard are both first-class:
+
+- **Mouse:** click selects any node, card, or message; wheel zooms the graph
+  viewport. Graph clicks hit-test back through the viewport transform, which
+  is a second reason that transform is specced exactly. Standard crossterm
+  mouse capture.
+- **Keyboard:** tab/shift-tab cycle panes and selectable elements; a fuzzy
+  finder (nucleo-class matcher) jumps directly to any task, project, or open
+  decision card. The fuzzy index is client-side, built over the same
+  snapshot data the protocol already carries.
+
+Every action reachable by mouse must have a keyboard path, and vice versa.
 
 Visual bar: calm, dense, legible. Active claimed tasks pulse. Blocked / awaiting
 Chef states are unmistakable. This is an operator instrument cluster, not a
@@ -184,8 +263,14 @@ jeff drain on | off [project]
 jeff claim-status [project]          # thin sugar over cook claims, optional
 ```
 
-`jeffd start` brings up the backend; `open` launches the dashboard. Project
+`jeffd start` brings up the backend; `open` attaches the TUI client. Project
 add/list/rm edits the registry only. Drain toggles are per project.
+
+### 6.5 Web dashboard (later project)
+
+A second client on the same socket protocol; out of scope for v1. When it
+ships, review finding 18.1.2 re-attaches: browser auth (token plus strict
+Origin checks) before any mutating endpoint is exposed over HTTP.
 
 ## 7. Multi-project registry
 
@@ -446,10 +531,11 @@ configured host adapter capable of running Jeff lanes.
 
 ```text
                     ┌──────────────────────────────┐
-                    │  Dashboard (browser)         │
+                    │  TUI client (terminal)       │
                     │  projects · graph · inbox UI │
+                    │  (later: web client)         │
                     └──────────────┬───────────────┘
-                                   │ HTTP + events
+                                   │ unix socket + events
                     ┌──────────────▼───────────────┐
                     │  jeffd control backend       │
                     │  registry · projector        │
@@ -480,9 +566,10 @@ method-legal paths (claim, record, approve, host launch, steer).
 
 When implementation is unblocked, the smallest complete system is:
 
-1. `jeffd` with FS projector + event API
+1. Rust `jeffd`: FS watch, per-project `cook` projection, socket event API
 2. `~/.jeff/projects.json` registry
-3. web UI: project list, task DAG, task detail, completed toggle
+3. TUI: project list, task graph tree, task detail, completed toggle,
+   two-pane project view
 4. `.jeff/inbox/` transcript + open decision cards + project chat UI
 5. optional global attention bar + joint chat as a merge view
 6. drain supervisor calling item-7 CLI loop with hybrid standby brain
@@ -515,16 +602,22 @@ Everything else is deferred sugar.
 
 ## 16. Implementation phases (after the gate)
 
-Ordered for learning, not for calendar commitment:
+Ordered for learning, not for calendar commitment.
+
+Dogfood convergence (2026-08-02): queuing these phases as jeff tasks makes
+Jeff Control itself the first real workload for the item-7 `cook all` drain.
+The alpha.7 gate and this track then converge instead of serializing: the
+drain dogfood the gate demands is the act of building P1+.
 
 | Phase | Deliverable | Depends on |
 |---|---|---|
 | P0 | This vision (done) | none |
-| P1 | Read-only projector + project registry + task DAG UI | stable ledgers; claims optional/degraded |
+| P1 | Read-only projector + project registry + task DAG TUI | stable ledgers; claims optional/degraded |
 | P2 | Project inbox + decision cards + joint attention view | P1 |
 | P3 | Claim-aware UI + open-in-host (claim + launch) | item 7 claims |
 | P4 | Autodrain supervisor + hybrid standby brain | item 7 drain dogfood + journals |
 | P5 | Polish: presets, richer agent detail, host adapter pack | P4 |
+| P6 | Web client on the socket protocol (auth per 18.1.2) | P2 |
 
 P1 may prototype against pre-item-7 stores as read-only. P3+ must not ship a
 side claim mechanism.
@@ -534,19 +627,93 @@ side claim mechanism.
 These are not blocked on product intent; they are implementation or taste
 calls for later:
 
-1. Exact dashboard stack (local static UI vs small SSR; graph library choice).
-2. Whether `jeffd` lives in this repo, a sibling package, or a workspace
-   folder without shipping inside the npm method payload initially.
-3. Inbox gitignore defaults and whether any inbox subset is ever committed.
-4. How aggressively the standby Jeff brain compresses drain narration.
-5. Whether global joint chat allows Chef to address “all projects” in one
+1. Graph pane rendering tier (survey in 6.3): layered 2D canvas everywhere,
+   pixel upgrade on Kitty, or true 3D via Bevy. Zoom exists in all tiers;
+   leaning 2D canvas plus Kitty upgrade, 3D only if it earns the dependency.
+2. Inbox gitignore defaults and whether any inbox subset is ever committed.
+3. How aggressively the standby Jeff brain compresses drain narration.
+4. Whether global joint chat allows Chef to address “all projects” in one
    steer, or always requires a single project target (leaning single-target).
-6. Session attach vs always-fresh host launch when a holder label already
+5. Session attach vs always-fresh host launch when a holder label already
    points at a live process (leaning: detect+focus if cheap; else fresh).
-7. Name of the backend binary and whether `cook` grows subcommands vs a
+6. Name of the backend binary and whether `cook` grows subcommands vs a
    separate `jeffd` front door.
 
-## 18. Doc control
+## 18. Architecture review findings (2026-08-02)
+
+Independent architecture review of this vision against the repository
+(graph-slate items 3 and 7, shipped `cook approve`, `src/pi/`, store and
+validate code). Fold into implementation planning; the two items in 18.1 are
+blocking for their phases.
+
+### 18.1 Blocking
+
+1. **Decision cards are projections, not a second store.** The ledger already
+   persists every blocking condition: escalations in `task.json.plan`
+   (`result: "escalation"` with fork/options), `blocked` plus `blockedReason`,
+   operation approvals in `execution.approval` plus append-only `approvals[]`.
+   A durable card in `open/` with no reconciliation rule goes stale the moment
+   the Chef answers in a host session instead. Rule: the projector opens a
+   card keyed to task plus ledger condition and archives it when the ledger
+   resolves, regardless of which surface resolved it. Only chat, steer, and
+   system messages are native inbox content. This extends invariant 8 one
+   layer down (project inbox vs task ledger). Reshapes P2.
+2. **Backend auth is a v1 requirement, not polish.** A localhost HTTP API
+   that can run `cook approve`, release claims, and exec host processes is
+   reachable from any open web page via CSRF or DNS rebinding, making
+   invariant 3 violable by construction and the launch endpoint arbitrary
+   process execution. Unix socket, or per-start bearer token plus strict
+   Origin checks, from P1 onward. Direction update, same day: the v1 client
+   is a TUI over a unix socket (6.3), which removes the browser attack
+   surface; this requirement re-attaches when the web client ships (6.5).
+
+### 18.2 Fold into the relevant sections
+
+- Interactive inbox use (chat, answering cards) with no live host session
+  requires the standby brain, hence at least one configured host adapter.
+  Only observation is runtime-free; state the dependency in 6.2/10.3. A brain
+  acting on a card answer claims the task first.
+- Failed host launch (10.4): the launcher is the legal claim holder and
+  releases its own claim on failed exec; do not leave it to the 24 h
+  staleness report.
+- Item 7 feedback (does not modify the slate): `cook release` as specified
+  has no holder check, so "no silent steal" (10.2 rule 5) is UI convention
+  only. Suggest release warns or requires a flag when the releaser label
+  differs from the holder label.
+- The inbox transcript is multi-writer (backend, brain, host sessions).
+  Single-writer through `jeffd` would break the standalone guarantee (9.2);
+  use the existing mkdir-lock primitive family for appends, or per-message
+  files.
+- Drop backend responsibility 5 in 6.2 ("deliver inbox messages to the
+  correct driver"): drivers tail the inbox files themselves; `jeffd` only
+  projects. A delivery channel can diverge from disk.
+- Packaging: the npm `files` allowlist ships `src/**/*.js`, so `jeffd` under
+  `src/` would ship inside the method payload. Resolved: the Rust workspace
+  lives in `control/`, which is never in the allowlist, so nothing ships.
+- OMP wording in section 12: today OMP is a Pi-SDK isolation mode inside
+  `role-session.js`, not a fourth adapter. Inventory reads: Claude Code
+  (Agent tool), Pi (`cook_dispatch`), Codex (native dispatch), OMP as a
+  Pi-family launch target.
+- Method-side prerequisite for the backend contract: `cook snapshot --json`,
+  now slate item 8 (`6.0.0-alpha.8`), so `jeffd` never learns the task
+  schema.
+
+### 18.3 Verified as specified
+
+- Item 7 primitives match 3.2, including the conditional worktree rule
+  (worktrees only when two or more tasks are claimed simultaneously), which
+  10.4 already reflects.
+- `.claim` is slate-excluded from `cook validate`; the journal is documented
+  as unvalidated and is tailable by a projector.
+- `cook approve` is shipped; byte-matched boundary and requester-not-granter
+  semantics fit the decision-card design.
+- No existing daemon, watcher, HTTP surface, or home-level state anywhere;
+  `~/.jeff/projects.json` would be jeff's first (store.js currently rejects
+  any path escaping the repo root).
+- `.jeff/inbox/` collides with nothing; `src/pi/` matches the "thin launch
+  plus specialist-dispatch boundary" description.
+
+## 19. Doc control
 
 - Supersedes nothing in `skills/cook/SKILL.md` or the state schema.
 - Parallel to `docs/specs/graph-slate-6.0.md`; consumes item 7 as a dependency,
@@ -555,3 +722,10 @@ calls for later:
   the method wins until Johan revises this file.
 - Kitchen voice is optional in UI copy; artifacts and specs stay substrate-first
   (see `docs/brand.md`).
+- Implementation handoff: the design spec for Jeff Control will be authored
+  on this track, but implementation is planned for a different frontier
+  model (Grok 4.5 at time of writing). Design artifacts must therefore be
+  fully self-contained: exact socket protocol schemas, crate layout, the
+  `cook` invocation contract, and mechanical acceptance checks. No reliance
+  on conversational context, Claude-specific agent tooling, or this
+  repository's host plugins beyond the documented CLI surface.
