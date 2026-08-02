@@ -267,3 +267,45 @@ The lite **run-ledger** is the `task.json` shape above minus the registry-only o
 ## Dropped from the old schema
 
 `phase` / `phaseIndex` / 8-file `artifacts` map, `flowState`, `resume` (`command`/`artifact`/`requiredInputs`), `kind`, `batchId` + entire `BatchState`, `disposition` (folded into `status`), `abandonRefs` / `abandonNote` / `abandonedAt` (keep only `abandonReason`), the gate/proof ledger, all attestation/digest fields, `cookSlices`.
+
+## Snapshot projection
+
+`cook snapshot --json` prints one versioned JSON document that projects the
+active store for external read-only observers (for example a control-plane
+backend). It never takes a lock, never writes under `.jeff/`, and does not
+judge legality: an invalid-but-parseable store still projects so observers can
+see broken state. Legality remains `cook validate`.
+
+The projection is **additive-only**. Absent fields mean exact legacy semantics.
+Consumers gate on `schemaVersion` and never sniff fields for meaning.
+
+### Document shape
+
+Top level always:
+
+- `schemaVersion` (integer; starts at `1`)
+- `generatedAt` (ISO 8601 UTC)
+- `mode` (`lite` | `full`, from `readMode`)
+- `tasks` (array, sorted by `id` with the same total order as `cook ls`)
+
+Top level optional (present only when the underlying state carries them):
+
+- `maxParallelTasks` (from `.jeff/config.json` when set)
+
+Each task always projects:
+
+- `id`, `slug`, `title`, `status`, `stage`, `priority`, `deps`, `blockedReason`
+
+Each task optionally projects when present on the ledger or side files:
+
+- `category`
+- `discoveredFrom`
+- `claim` as `{ by, at }` from `.jeff/tasks/<dir>/.claim/claim.json` beside
+  the task directory (not from `task.json`); omitted when missing, unreadable,
+  or malformed
+- `escalation` as `{ fork, options }` only when `plan.escalation` is a non-null
+  parked summary
+
+Outside an initialized project (no readable `.jeff/config.json`), the command
+exits non-zero with a clear `cook: snapshot: …` error.
+

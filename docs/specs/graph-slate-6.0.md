@@ -29,7 +29,7 @@ that as a spec defect: stop and ask Johan rather than guessing.
 Toolchain prerequisites: a POSIX system with git, Node.js ≥ 22.19, and `bats`
 (the test suite is bats + `node:test`; see the `Makefile`).
 
-- Implement the seven items **in order**. Each item is one jeff task, cooked
+- Implement the eight items **in order**. Each item is one jeff task, cooked
   through jeff's own pipeline in this repo (`.jeff/` here runs lite mode;
   `node src/cli/cook.js` is the CLI). Dogfood: cook item N on the pipeline as
   merged through item N-1.
@@ -47,13 +47,14 @@ Toolchain prerequisites: a POSIX system with git, Node.js ≥ 22.19, and `bats`
 - Each item carries its matching prerelease version in lockstep metadata:
   item 1 is `6.0.0-alpha.1`, item 2 is `6.0.0-alpha.2`, item 3 is
   `6.0.0-alpha.3`, item 4 is `6.0.0-alpha.4`, item 5 is
-  `6.0.0-alpha.5`, item 6 is `6.0.0-alpha.6`, and item 7 is
-  `6.0.0-alpha.7`. After Johan approves and merges each item, a separate
+  `6.0.0-alpha.5`, item 6 is `6.0.0-alpha.6`, item 7 is `6.0.0-alpha.7`, and
+  item 8 is `6.0.0-alpha.8`. After Johan approves and merges each item, a separate
   operation task with exact operator approval creates that alpha's immutable
   bare tag, publishes it to npm `next`, and then refreshes the dogfood installs
   on Pi, OMP, Claude Code, and Codex. npm `latest` remains stable `5.0.0`.
-  After `6.0.0-alpha.7` dogfoods at least one real drain, a separately approved
-  task cuts plain `6.0.0` (see §Release).
+  After `6.0.0-alpha.7` dogfoods at least one real drain and item 8 has merged
+  as `6.0.0-alpha.8`, a separately approved task cuts plain `6.0.0` (see
+  §Release).
 - Before touching anything, read: `AGENTS.md` (iron rules),
   `docs/maintaining-jeff.md`, `docs/specs/jeff-design.md`,
   `skills/cook/reference/jeff-state-schema.md`, `skills/cook/SKILL.md`.
@@ -99,6 +100,7 @@ Toolchain prerequisites: a POSIX system with git, Node.js ≥ 22.19, and `bats`
 | 5 | Evidence-scaled escalation | ceremony | 4 | council + follow-up ceremony |
 | 6 | Capture decomposition + discovered-from + lite cycle check | width | none (before 7) | width to drain |
 | 7 | `cook all`: parallel DAG drain | width | 3, 6 | one task at a time |
+| 8 | `cook snapshot`: machine projection | surface | none (ordered after 7; claim fields need 7) | external consumers parsing ledgers |
 
 Item 3 is deliberately before 4 and 5: while the kickback machinery is being
 rebuilt and dogfooded, the journal guarantees an interrupted dispatch is
@@ -597,6 +599,71 @@ Audit: **required** (git operations, filesystem, concurrency).
 
 ---
 
+## Item 8: `cook snapshot`, the machine projection
+
+**Motivation.** External read-only consumers need the project's task state
+without parsing ledgers themselves. The first consumer is the Jeff Control
+plane (`docs/specs/control-plane-vision.md`), whose backend is bound by a
+hard constraint: it never learns the task schema. Today the only machine
+surfaces are `cook validate` (legality, not content) and raw `task.json`
+files, so any outside tool would re-implement schema knowledge and silently
+break on schema evolution. One versioned projection command keeps schema
+knowledge in this repo, in one place.
+
+**Behavior.** `cook snapshot --json` prints one JSON document for the active
+store and exits. Read-only: the store is byte-identical before and after. It
+projects; it does not judge. An invalid store still snapshots (observers must
+be able to see broken states); legality remains `cook validate`'s job.
+
+Document shape:
+
+- top level: `schemaVersion` (integer, starts at 1), `generatedAt`
+  (ISO 8601 UTC), `mode`, and `tasks` (sorted by id)
+- per task: `id`, `slug`, `title`, `status`, `stage`, `category`,
+  `priority`, `deps`, `discoveredFrom`, `blockedReason`, and `escalation`
+  (present only when the plan parked one: `{fork, options}` summary)
+- item 7 surfaces, present only when the underlying state exists: per-task
+  `claim` (`{by, at}`) and top-level `maxParallelTasks`
+
+Absent field means exact legacy semantics, per the binding back-compat rule.
+The contract evolves additively only; consumers gate on `schemaVersion` and
+never sniff fields.
+
+**Sequencing.** Slate order places this after item 7, but nothing in the core
+projection depends on item 7. Johan may pull it forward to unblock control
+plane P1; in that case the item 7 fields simply stay absent until item 7
+lands.
+
+**Mechanics.**
+- New `snapshot` subcommand in `src/cli/cook.js`; projection logic in
+  `src/core/` reusing the existing store readers (`collectTasks`). No new
+  state on disk, no lock taken.
+- Contract documented in `skills/cook/reference/jeff-state-schema.md` under a
+  new "Snapshot projection" section, including the additive-only rule.
+- `skills/cook/SKILL.md` gets one line: snapshot exists for external
+  observers and is not part of the method loop.
+
+**Test contract** (RED first).
+- Golden test: fixture store in, exact documented JSON out, `tasks` sorted
+  by id.
+- Optionality: `claim` and `maxParallelTasks` appear when present in the
+  store and are absent otherwise; a legacy store without item 7 state
+  produces no item 7 fields.
+- Read-only proof: store bytes identical before and after the command.
+- Bats: exits 0 with parseable JSON in an initialized project; clear error
+  and non-zero exit outside one; an invalid store still emits a snapshot.
+
+**Acceptance criteria.**
+- `cook snapshot --json` emits the documented, versioned schema, proven by
+  golden test.
+- Item 7 fields are strictly optional and absent on legacy stores.
+- The command never mutates the store.
+- The contract is documented in the state schema reference as additive-only.
+
+Audit: not required (read-only projection; no trust boundary crossed).
+
+---
+
 ## Non-goals (parked, do not implement)
 
 - Operation-category targeted repair (item 4 is code-only).
@@ -613,8 +680,8 @@ Audit: **required** (git operations, filesystem, concurrency).
 
 Each item carries its matching prerelease version in lockstep metadata: item 1
 is `6.0.0-alpha.1`, item 2 is `6.0.0-alpha.2`, item 3 is `6.0.0-alpha.3`, item
-4 is `6.0.0-alpha.4`, item 5 is `6.0.0-alpha.5`, item 6 is `6.0.0-alpha.6`, and
-item 7 is `6.0.0-alpha.7`.
+4 is `6.0.0-alpha.4`, item 5 is `6.0.0-alpha.5`, item 6 is `6.0.0-alpha.6`,
+item 7 is `6.0.0-alpha.7`, and item 8 is `6.0.0-alpha.8`.
 
 - After Johan approves and merges each item, a separate operation task with
   exact operator approval creates that alpha's immutable bare tag (no `v`
@@ -622,9 +689,10 @@ item 7 is `6.0.0-alpha.7`.
   and then refreshes the dogfood installs on Pi, OMP, Claude Code, and Codex.
   Never move or reuse an alpha tag or version. npm `latest` remains stable
   `5.0.0` throughout the alpha track.
-- After `6.0.0-alpha.7` dogfoods at least one real drain in this repo, a
-  separately approved release task cuts plain **6.0.0**: consolidated notes
-  covering all seven items (the semantic changes in items 4 and 5 are the
+- After `6.0.0-alpha.7` dogfoods at least one real drain in this repo and
+  item 8 has merged as `6.0.0-alpha.8`, a separately approved release task
+  cuts plain **6.0.0**: consolidated notes
+  covering all eight items (the semantic changes in items 4 and 5 are the
   majority-defining behavior changes), `package.json` bump, bare tag `6.0.0`
   (no `v` prefix), and publish per the existing release process
   (`make release-check`; the version cut itself is Johan's call to approve).

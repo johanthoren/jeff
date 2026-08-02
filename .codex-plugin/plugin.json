@@ -1,9 +1,9 @@
 {
   "name": "jeff",
-  "version": "6.0.0-alpha.5",
+  "version": "6.0.0-alpha.6",
   "description": "Jeff is a model-native quality control plane and cooperative workflow protocol, not a security sandbox.",
   "author": {
-    "name": "Johan Thor\u00e9n"
+    "name": "Johan Thorén"
   },
   "homepage": "https://github.com/johanthoren/jeff",
   "repository": "https://github.com/johanthoren/jeff",
@@ -19,7 +19,7 @@
     "displayName": "Jeff",
     "shortDescription": "A model-native quality control plane",
     "longDescription": "Your sous chef, Jeff, is a model-native quality control plane and cooperative workflow protocol for trusted operators and friendly agents, not a security sandbox. Fresh specialist contexts, enforced separation, durable evidence, and deterministic gates hold the pass.",
-    "developerName": "Johan Thor\u00e9n",
+    "developerName": "Johan Thorén",
     "category": "Developer Tools",
     "capabilities": [
       "Task orchestration",
