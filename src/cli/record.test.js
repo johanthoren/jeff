@@ -5835,3 +5835,166 @@ test('Item 4 council recovery permits second scoped repair before council at equ
     });
   }
 });
+
+/**
+ * Item 5: a source that has reached the cap buys one convergent bonus cycle
+ * before the council arms, and only on recorded evidence: an unspent bonus, a
+ * fully confined surviving round, and a strictly smaller surviving-blocker
+ * count than the last recorded kickback from that source.
+ *
+ * @param {number | null} count - null records a historical kickback with no findings
+ * @returns {Record<string, any>}
+ */
+function item5PriorReviewKickback(count) {
+  const kickback = {
+    from: 'review',
+    to: 'implement',
+    reason: 'Confined review blockers survived.',
+    at: '2026-07-12T00:30:00Z',
+  };
+  if (count === null) return kickback;
+  return {
+    ...kickback,
+    findings: Array.from({ length: count }, (_, index) => (
+      item4TypedFinding('review', { line: 200 + index, what: `review blocker ${index}.` })
+    )),
+  };
+}
+
+/**
+ * @param {Record<string, any>[]} kickbacks
+ * @param {Record<string, any>[]} findings
+ * @param {Record<string, any>} [reviewCounter]
+ * @returns {any}
+ */
+function item5CappedReviewTask(kickbacks, findings, reviewCounter = {}) {
+  return canonicalTask({
+    stage: 'review',
+    agents: {
+      implementer_agent_id: 'implementer',
+      reviewer_agent_id: 'reviewer',
+      reviewer2_agent_id: null,
+      audit_agent_id: null,
+    },
+    tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+    review: {
+      verdict: 'needs-work',
+      reviewer_agent_id: 'reviewer',
+      findings,
+      evidence: [{ command: 'git diff --check', output: 'review blockers' }],
+    },
+    kickbacks,
+    convergence: {
+      cap: 2,
+      stages: {
+        review: { blockingKickbacks: 2, ...reviewCounter },
+        audit: { blockingKickbacks: 0 },
+      },
+      council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+    },
+  });
+}
+
+/** @param {any} task @param {Record<string, any>[]} findings @returns {any} */
+function item5RefuteRound(task, findings) {
+  return findings.reduce((/** @type {any} */ current, finding, index) => recordCore.transitionTask(current, 'refute', {
+    agent_id: `item5-refuter-${index}`,
+    stage: 'refute',
+    cycle: 0,
+    finding: `${finding.file}:${finding.line} ${finding.what}`,
+    verdict: 'survives',
+    rationale: 'The blocker is reachable on a supported input.',
+    evidence: [{ command: 'node --test src/cli/record.test.js', output: 'failure reproduced' }],
+  }), task);
+}
+
+test('Item 5 a capped source spends one bonus cycle on shrinking confined evidence', async (t) => {
+  await t.test('eligible round appends the ordinary kickback and leaves the council unarmed', () => {
+    const survivor = blockingFinding({ line: 210, what: 'The last confined blocker survives.' });
+    const recorded = item5RefuteRound(
+      item5CappedReviewTask(
+        [item5PriorReviewKickback(3), item5PriorReviewKickback(2)],
+        [survivor],
+      ),
+      [survivor],
+    );
+
+    assert.equal(recorded.convergence.stages.review.bonusGranted, true);
+    assert.equal(recorded.convergence.stages.review.blockingKickbacks, 2);
+    assert.equal(recorded.convergence.stages.audit.blockingKickbacks, 0);
+    assert.equal(recorded.convergence.council.stage, null);
+    assert.equal(recorded.convergence.council.convened, false);
+    assert.equal(recorded.kickbacks.length, 3);
+    const { from, to, findings } = recorded.kickbacks.at(-1);
+    assert.deepEqual({ from, to, findings }, {
+      from: 'review',
+      to: 'implement',
+      findings: [{
+        source: 'review',
+        file: survivor.file,
+        line: survivor.line,
+        what: survivor.what,
+        kickTo: survivor.kickTo,
+      }],
+    });
+    assert.equal(recorded.stage, 'implement');
+    assert.equal(recorded.status, 'in_progress');
+  });
+
+  /** @type {Array<[string, any, Record<string, any>[]]>} */
+  const councilCases = [
+    [
+      'a spent bonus convenes the council unconditionally',
+      item5CappedReviewTask(
+        [item5PriorReviewKickback(3), item5PriorReviewKickback(2)],
+        [blockingFinding({ line: 211, what: 'The next confined blocker survives.' })],
+        { bonusGranted: true },
+      ),
+      [blockingFinding({ line: 211, what: 'The next confined blocker survives.' })],
+    ],
+    [
+      'a non-shrinking surviving round convenes the council',
+      item5CappedReviewTask(
+        [item5PriorReviewKickback(3), item5PriorReviewKickback(1)],
+        [blockingFinding({ line: 212, what: 'The same-size blocker survives.' })],
+      ),
+      [blockingFinding({ line: 212, what: 'The same-size blocker survives.' })],
+    ],
+    [
+      'an unconfined surviving blocker convenes the council',
+      item5CappedReviewTask(
+        [item5PriorReviewKickback(3), item5PriorReviewKickback(3)],
+        [
+          blockingFinding({ line: 213, what: 'The confined blocker survives.' }),
+          blockingFinding({ line: 214, kickTo: 'plan', what: 'The unconfined blocker survives.' }),
+        ],
+      ),
+      [
+        blockingFinding({ line: 213, what: 'The confined blocker survives.' }),
+        blockingFinding({ line: 214, kickTo: 'plan', what: 'The unconfined blocker survives.' }),
+      ],
+    ],
+    [
+      'a historical kickback without findings convenes the council',
+      item5CappedReviewTask(
+        [item5PriorReviewKickback(3), item5PriorReviewKickback(null)],
+        [blockingFinding({ line: 215, what: 'The untyped predecessor blocker survives.' })],
+      ),
+      [blockingFinding({ line: 215, what: 'The untyped predecessor blocker survives.' })],
+    ],
+  ];
+
+  for (const [name, task, findings] of councilCases) await t.test(name, () => {
+    const before = task.kickbacks.length;
+    const recorded = item5RefuteRound(task, findings);
+
+    assert.equal(recorded.convergence.council.stage, 'review');
+    assert.equal(recorded.convergence.council.convened, false);
+    assert.equal(recorded.convergence.stages.review.blockingKickbacks, 2);
+    assert.equal(recorded.kickbacks.length, before);
+    assert.equal(
+      recorded.convergence.stages.review.bonusGranted,
+      task.convergence.stages.review.bonusGranted,
+    );
+  });
+});
