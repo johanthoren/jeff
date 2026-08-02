@@ -384,7 +384,9 @@ function resetJudgmentsAfterFix(task, at, files) {
     throw new Error('[record-transition] judgmentHistory latest at is invalid');
   }
   if (latestHistory
-    && latestJudgmentKickback.findings === undefined
+    && (latestJudgmentKickback.findings === undefined
+      || (Array.isArray(latestJudgmentKickback.findings)
+        && latestJudgmentKickback.findings.length === 0))
     && Date.parse(latestJudgmentKickback.at) <= Date.parse(latestHistory.at)) {
     return false;
   }
