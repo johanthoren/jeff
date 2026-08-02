@@ -70,7 +70,30 @@ What is startable without item 7: the design spec, item 8, vision phase P1
 cards). Blocked on item 7: P3 (claim-aware UI, open in host) and P4
 (autodrain). Never ship a side claim mechanism to work around this.
 
-## 4. Immediate next deliverable
+## 4. Recommended first move: cook item 8 before designing against it
+
+Item 8 (`cook snapshot --json`) is the true unblocker for phase P1, and it is
+small, self-contained, and read-only. Cook it in this repo first, through the
+normal jeff pipeline, before or alongside drafting the design spec. Two
+reasons:
+
+1. The Rust work then builds against a **real** contract with real output,
+   not a specified one. Every protocol decision downstream inherits the
+   snapshot document shape; discovering it is wrong after the backend exists
+   is expensive.
+2. It is a clean, low-risk warm-up task on the method itself: a normal cook
+   cycle in JavaScript, exercising the pipeline before the two-language work
+   starts.
+
+Item 8's core has no hard dependency on item 7, so pulling it forward ahead
+of the drain work is legal per the slate's sequencing note. The item 7 fields
+(`claim`, `maxParallelTasks`) simply stay absent until item 7 lands.
+
+Do not begin the Rust workspace before the snapshot document shape is
+settled, either by cooking item 8 or by Johan explicitly freezing the shape
+in the design spec.
+
+## 5. Immediate next deliverable
 
 **A self-contained design spec for the control plane**, written to the
 standard `docs/specs/graph-slate-6.0.md` sets: cold-context, contract-first,
@@ -83,7 +106,7 @@ mechanically checkable. It must define at minimum:
    jeff is older than the snapshot schema the backend expects.
 3. Crate layout under `control/`.
 4. Projection and cache model, including the debounce and coalesce rules in
-   section 5 below.
+   section 6 below.
 5. Viewport math for the graph pane: world coordinates, zoom levels, pan
    bounds, and the hit-test transform that maps a mouse cell back to a node.
    This is owned code; no crate provides it.
@@ -93,7 +116,7 @@ mechanically checkable. It must define at minimum:
    existing mkdir-lock primitive family, or per-message files).
 8. Mechanical acceptance checks per phase.
 
-## 5. Performance guidance (asked and answered 2026-08-02)
+## 6. Performance guidance (asked and answered 2026-08-02)
 
 Concern raised: does the CLI boundary bottleneck on large graphs?
 
@@ -120,7 +143,7 @@ selection, or status-only updates.
 Do not "optimize" by parsing ledgers directly in Rust. That trades a bounded
 latency problem for an unbounded correctness problem across jeff versions.
 
-## 6. Working agreement for the successor
+## 7. Working agreement for the successor
 
 - Method rules bind this work: builder and judge separation, RED-proven
   tests before implementation, independent review, no self-assessment. The
@@ -138,7 +161,7 @@ latency problem for an unbounded correctness problem across jeff versions.
   `cook all` drain, so the alpha.7 dogfood gate and this track converge
   instead of serializing (vision section 16).
 
-## 7. Open questions carried forward
+## 8. Open questions carried forward
 
 Vision section 17 holds the live list. The two that most affect early
 implementation: the graph rendering tier (17.1) and the backend binary naming
