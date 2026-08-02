@@ -245,7 +245,7 @@ function hasTargetedRepairProof(task) {
       ? ['review'] : []),
     ...(task.audit?.verdict === 'needs-work' ? ['audit'] : []),
   ];
-  const isAwaitingFreshRepair = ['implement', 'refactor'].includes(task.stage)
+  const isAwaitingFreshRepair = CONFINED_KICK_STAGES.includes(task.stage)
     && task.convergence?.council?.stage == null
     && task.convergence?.council?.convened !== true
     && liveRaisingSources.includes(latestKickback.from)
@@ -793,7 +793,7 @@ export function runInvariants(
  */
 function typedSourceKickbacks(t, stage) {
   return jqOr(t.kickbacks, []).filter((/** @type {any} */ k) => (
-    k !== null && k !== undefined && k.from === stage && Array.isArray(k.findings)
+    k?.from === stage && Array.isArray(k.findings)
   ));
 }
 
@@ -809,9 +809,8 @@ function hasBonusEvidence(typed) {
   const last = typed.at(-1);
   const previous = typed.at(-2);
   if (last === undefined || previous === undefined) return false;
-  return last.findings.every((/** @type {any} */ f) => (
-    f !== null && f !== undefined && CONFINED_KICK_STAGES.includes(f.kickTo)
-  )) && last.findings.length < previous.findings.length;
+  return last.findings.every((/** @type {any} */ f) => CONFINED_KICK_STAGES.includes(f?.kickTo))
+    && last.findings.length < previous.findings.length;
 }
 
 /**
@@ -837,11 +836,12 @@ function convergenceChecks(t, id, ids, out) {
     out.push(`task ${id}: convergence.cap must be an integer ≥ 1 [inv7]`);
   } else {
     for (const st of judgmentStages) {
-      const bk = (c.stages && c.stages[st]) ? c.stages[st].blockingKickbacks : undefined;
+      const counter = c.stages?.[st];
+      const bk = counter?.blockingKickbacks;
       if (typeof bk !== 'number' || bk < 0 || bk > cap || Math.floor(bk) !== bk) {
         out.push(`task ${id}: convergence.stages.${st}.blockingKickbacks must be an integer in 0..${cap} [inv7]`);
       }
-      const bonus = ((c.stages && c.stages[st]) ? c.stages[st].bonusGranted : undefined) === true;
+      const bonus = counter?.bonusGranted === true;
       const typed = typedSourceKickbacks(t, st);
       if (bonus && !hasBonusEvidence(typed)) {
         out.push(`task ${id}: convergence.stages.${st}.bonusGranted requires a strictly smaller, fully confined last typed kickback [inv7]`);

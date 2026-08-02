@@ -581,18 +581,19 @@ function recordRefute(task, result, at) {
     counter.blockingKickbacks >= task.convergence.cap
   ));
   const bonusGroups = cappedGroups.filter((group) => isBonusEligible(task, group));
-  if (cappedGroups.length > bonusGroups.length) {
+  if (cappedGroups.some((group) => !bonusGroups.includes(group))) {
     if (task.convergence.council.convened !== true && task.convergence.council.stage === null) {
       task.convergence.council.stage = cappedGroups[0].convergenceStage;
     }
     settleJudgments(task);
     return;
   }
-  for (const { counter } of bonusGroups) counter.bonusGranted = true;
+  for (const group of survivorGroups) {
+    if (bonusGroups.includes(group)) group.counter.bonusGranted = true;
+    else group.counter.blockingKickbacks += 1;
+  }
 
-  const kickbacks = survivorGroups.map((group) => {
-    const { convergenceStage, counter, survivors } = group;
-    if (!bonusGroups.includes(group)) counter.blockingKickbacks += 1;
+  const kickbacks = survivorGroups.map(({ convergenceStage, survivors }) => {
     const destination = survivors
       .map(({ finding: item }) => item.kickTo)
       .sort((left, right) => KICKBACK_STAGE_ORDER.indexOf(left) - KICKBACK_STAGE_ORDER.indexOf(right))[0];
