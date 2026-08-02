@@ -5074,3 +5074,237 @@ test('Item 4 refute records exact typed blocker contracts and leaves council kic
     );
   });
 });
+
+
+test('Item 4 council recovery preserves builder outcomes for non-scoped public refutes', async (t) => {
+  for (const destination of /** @type {const} */ (['capture', 'plan'])) {
+    await t.test(destination, async () => {
+      const finding = blockingFinding({
+        line: destination === 'capture' ? 71 : 72,
+        kickTo: destination,
+        what: `${destination} requires non-scoped recovery.`,
+      });
+      const implement = {
+        agent_id: 'implementer-old',
+        result: 'green',
+        files: ['src/core/record.js'],
+        greenRun: { command: 'node --test', output: 'pass' },
+      };
+      const refactor = {
+        agent_id: 'refactorer-old',
+        result: 'clean',
+        files: [],
+        outsideDiff: [],
+        greenRun: { command: 'node --test', output: 'pass' },
+        summary: ['Kept behavior unchanged.'],
+      };
+      const task = canonicalTask({
+        stage: 'review',
+        agents: {
+          implementer_agent_id: implement.agent_id,
+          reviewer_agent_id: 'reviewer-old',
+          reviewer2_agent_id: null,
+          audit_agent_id: null,
+        },
+        implement,
+        refactor,
+        review: {
+          verdict: 'needs-work',
+          reviewer_agent_id: 'reviewer-old',
+          findings: [finding],
+          evidence: ['non-scoped blocker'],
+        },
+      });
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        const recorded = await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn(`${destination}-refuter`, finding, { source: 'review' }),
+        );
+        const persisted = await readTask(taskDir);
+
+        assert.deepEqual(
+          {
+            returned: { implement: recorded.implement, refactor: recorded.refactor },
+            persisted: { implement: persisted.implement, refactor: persisted.refactor },
+          },
+          {
+            returned: { implement, refactor },
+            persisted: { implement, refactor },
+          },
+        );
+        assert.equal(recorded.stage, destination);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('Item 4 council recovery completes scoped retained audit through the public recorder', async () => {
+  const task = item4RepairTask();
+  const priorAudit = structuredClone(task.audit);
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+    );
+    const repaired = await readTask(taskDir);
+    assert.equal(repaired.stage, 'review');
+    assert.equal(repaired.judgmentHistory.length, 1);
+    assert.deepEqual(repaired.audit, priorAudit);
+
+    await recordCurrentGate(root, taskDir);
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      item4ObservedReturn(item4ReviewReturn('reviewer-fresh', 1)),
+    );
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 1)),
+    );
+    const completed = await readTask(taskDir);
+
+    assert.equal(completed.status, 'done');
+    assert.equal(completed.stage, 'done');
+    assert.deepEqual(completed.audit, priorAudit);
+    assert.equal(completed.tests.gate.clean, true);
+    assert.equal(completed.tests.gate.green, true);
+    assert.equal(completed.tests.gate.hash, runGit(root, ['rev-parse', 'HEAD']));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Item 4 council recovery permits second scoped repair before council at equal and later clocks', async (t) => {
+  for (const [name, later] of /** @type {Array<[string, boolean]>} */ ([
+    ['equal-second', false],
+    ['later-second', true],
+  ])) {
+    await t.test(name, async (t) => {
+      const base = item4RepairTask();
+      const task = item4RepairTask({
+        convergence: {
+          ...base.convergence,
+          cap: 1,
+        },
+      });
+      const { root, taskDir } = await makeRoot(task);
+      t.mock.timers.enable({
+        apis: ['Date'],
+        now: new Date('2026-07-12T02:00:00Z'),
+      });
+      try {
+        await recordSpecialistReturn(
+          root,
+          'implement',
+          '18',
+          item4ObservedReturn({
+            ...item4ImplementReturn(['src/core/record.js']),
+            agent_id: 'implementer-first',
+          }),
+        );
+        const firstRepair = await readTask(taskDir);
+        assert.equal(firstRepair.agents.audit_agent_id, 'auditor-old');
+        assert.equal(firstRepair.judgmentHistory.length, 1);
+
+        const secondBlocker = blockingFinding({
+          line: 61,
+          what: 'The second review found another confined blocker.',
+        });
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn({
+            ...item4ReviewReturn('reviewer-fresh', 1),
+            verdict: 'needs-work',
+            findings: [secondBlocker],
+          }),
+        );
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 1)),
+        );
+        if (later) t.mock.timers.tick(1_000);
+
+        await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn('review-refuter-second', secondBlocker, {
+            cycle: 1,
+            source: 'review',
+          }),
+        );
+        const secondKickback = await readTask(taskDir);
+        assert.equal(secondKickback.stage, 'implement');
+        assert.equal(secondKickback.kickbacks.length, 2);
+        assert.equal(secondKickback.agents.audit_agent_id, 'auditor-old');
+
+        await recordSpecialistReturn(
+          root,
+          'implement',
+          '18',
+          item4ObservedReturn({
+            ...item4ImplementReturn(['src/core/record.js']),
+            agent_id: 'implementer-second',
+          }),
+        );
+        const secondRepair = await readTask(taskDir);
+        assert.equal(secondRepair.stage, 'review');
+        assert.equal(secondRepair.judgmentHistory.length, 2);
+        assert.equal(secondRepair.agents.audit_agent_id, 'auditor-old');
+
+        const councilBlocker = blockingFinding();
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn({
+            ...item4ReviewReturn('reviewer-third', 2),
+            verdict: 'needs-work',
+            findings: [councilBlocker],
+          }),
+        );
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn(item4ReviewReturn('reviewer-fourth', 2)),
+        );
+        await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn('review-refuter-third', councilBlocker, {
+            cycle: 2,
+            source: 'review',
+          }),
+        );
+        const awaitingCouncil = await readTask(taskDir);
+        assert.equal(awaitingCouncil.stage, 'review');
+        assert.equal(awaitingCouncil.convergence.council.stage, 'review');
+
+        await recordSpecialistReturn(root, 'council', '18', councilReturn());
+        const escalated = await readTask(taskDir);
+        assert.equal(escalated.stage, 'implement');
+        assert.equal(escalated.convergence.council.convened, true);
+        assert.equal(escalated.convergence.council.verdict, 'block');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});

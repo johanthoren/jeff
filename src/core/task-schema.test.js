@@ -3226,3 +3226,26 @@ test('Item 4 INV-12 rejects every incomplete or mismatched retention proof', asy
     assertNamedFailure(result, '[inv12]');
   });
 });
+
+test('Item 4 council recovery accepts positive single-owner scoped retention ledgers', async (t) => {
+  const cases = /** @type {const} */ ([
+    ['outcome-only retained audit', 'review', 'audit', 'audit_agent_id', 'outcome'],
+    ['agents-only retained review', 'audit', 'review', 'reviewer_agent_id', 'agents'],
+  ]);
+  for (const [name, raisingSource, retainedSource, identityField, owner] of cases) {
+    await t.test(name, async () => {
+      const task = item4RetainedLedger(raisingSource);
+      const history = task.judgmentHistory[0];
+      if (owner === 'outcome') {
+        task.agents[identityField] = null;
+        history.agents[identityField] = null;
+      } else {
+        task[retainedSource][identityField] = null;
+        history[retainedSource][identityField] = null;
+      }
+
+      const result = await verdictFor(task);
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+    });
+  }
+});

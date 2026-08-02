@@ -185,7 +185,23 @@ function hasTargetedRepairProof(task) {
   if (!hasTypedKickback) return true;
 
   const history = task.judgmentHistory.at(-1);
-  const latestKickback = judgmentKickbacks.at(-1);
+  const council = task.convergence?.council;
+  const lastKickback = judgmentKickbacks.at(-1);
+  const councilReason = `Council block: ${(Array.isArray(council?.findings) ? council.findings : [])
+    .filter((/** @type {any} */ finding) => finding.survived === true)
+    .map((/** @type {any} */ finding) => finding.summary)
+    .join('; ')}`;
+  const hasPendingCouncilKickback = council?.convened === true
+    && council.verdict === 'block'
+    && council.outcome === null
+    && lastKickback?.from === council.stage
+    && lastKickback?.to === 'implement'
+    && lastKickback?.reason === councilReason
+    && lastKickback?.findings === undefined;
+  const contractKickbacks = hasPendingCouncilKickback
+    ? judgmentKickbacks.slice(0, -1)
+    : judgmentKickbacks;
+  const latestKickback = contractKickbacks.at(-1);
   if (!isType(history, 'object') || !isType(latestKickback, 'object')) return false;
   const judgments = [
     ['review', 'reviewer_agent_id'],
@@ -219,17 +235,31 @@ function hasTargetedRepairProof(task) {
     );
     return liveId != null && archivedId === liveId;
   });
+  const liveRaisingSources = [
+    ...(task.review?.verdict === 'needs-work' || task.review2?.verdict === 'needs-work'
+      ? ['review'] : []),
+    ...(task.audit?.verdict === 'needs-work' ? ['audit'] : []),
+  ];
+  const isAwaitingFreshRepair = ['implement', 'refactor'].includes(task.stage)
+    && task.convergence?.council?.stage == null
+    && task.convergence?.council?.convened !== true
+    && liveRaisingSources.includes(latestKickback.from)
+    && Number.isFinite(Date.parse(latestKickback.at))
+    && Number.isFinite(Date.parse(history.at))
+    && Date.parse(history.at) <= Date.parse(latestKickback.at);
   if (!Array.isArray(latestKickback.findings) || latestKickback.findings.length === 0) {
     return retainedSources.length === 0;
   }
 
-  const raisingSources = [
-    ...(history.review?.verdict === 'needs-work' || history.review2?.verdict === 'needs-work'
-      ? ['review'] : []),
-    ...(history.audit?.verdict === 'needs-work' ? ['audit'] : []),
-  ];
+  const raisingSources = isAwaitingFreshRepair
+    ? liveRaisingSources
+    : [
+      ...(history.review?.verdict === 'needs-work' || history.review2?.verdict === 'needs-work'
+        ? ['review'] : []),
+      ...(history.audit?.verdict === 'needs-work' ? ['audit'] : []),
+    ];
   if (!raisingSources.includes(latestKickback.from)) return retainedSources.length === 0;
-  const kickbacks = raisingSources.map((source) => judgmentKickbacks.findLast((/** @type {any} */ kickback) => (
+  const kickbacks = raisingSources.map((source) => contractKickbacks.findLast((/** @type {any} */ kickback) => (
     kickback.from === source && kickback.at === latestKickback.at
   ))).filter((kickback) => kickback !== undefined);
   const findings = kickbacks.flatMap((/** @type {any} */ kickback) => kickback.findings ?? []);
@@ -249,7 +279,7 @@ function hasTargetedRepairProof(task) {
   if (!typedContract
     || !Number.isFinite(Date.parse(latestKickback.at))
     || !Number.isFinite(Date.parse(history.at))
-    || Date.parse(history.at) < Date.parse(latestKickback.at)) {
+    || (!isAwaitingFreshRepair && Date.parse(history.at) < Date.parse(latestKickback.at))) {
     return retainedSources.length === 0;
   }
 
@@ -258,7 +288,13 @@ function hasTargetedRepairProof(task) {
     ...kickbacks.map((/** @type {any} */ kickback) => kickback.to),
     ...findings.map((/** @type {any} */ finding) => finding.kickTo),
   ])];
+  const pendingRepairStage = isAwaitingFreshRepair
+    ? task.stage
+    : (task.stage === 'refactor'
+      && repairStages.includes('implement')
+      && repairStages.includes('refactor') ? task.stage : null);
   const recordedRepairs = repairStages
+    .filter((stage) => pendingRepairStage !== 'implement' && stage !== pendingRepairStage)
     .map((stage) => [stage, task[stage]])
     .filter(([, repair]) => isType(repair, 'object'));
   const repairsAreConfined = recordedRepairs.every(([stage, repair]) => (
@@ -270,10 +306,10 @@ function hasTargetedRepairProof(task) {
   const hasConfinedRepair = repairStages.length > 0
     && recordedRepairs.length === repairStages.length
     && repairsAreConfined;
-  if (!hasConfinedRepair
-    && repairStages.includes(task.stage)
+  const hasPartialConfinedRepair = repairStages.includes(task.stage)
     && recordedRepairs.length > 0
-    && repairsAreConfined) return true;
+    && repairsAreConfined;
+  const hasCurrentRepairProof = hasConfinedRepair || hasPartialConfinedRepair;
   const raised = new Set(raisingSources);
   if (retainedSources.length === 0) {
     const hasRetainableSibling = judgments.some(([source, identity]) => {
@@ -282,9 +318,10 @@ function hasTargetedRepairProof(task) {
         && judgmentIdentity(history[source], history.agents, identity, agentIdentity) != null
         && history[source]?.verdict === 'pass';
     });
-    return !hasRetainableSibling || !hasConfinedRepair;
+    if (isAwaitingFreshRepair) return !hasRetainableSibling;
+    return !hasRetainableSibling || !hasCurrentRepairProof;
   }
-  if (!hasConfinedRepair) return false;
+  if (!hasCurrentRepairProof && !isAwaitingFreshRepair) return false;
   if (retainedSources.some(([source]) => raised.has(source === 'review2' ? 'review' : source))) {
     return false;
   }

@@ -576,10 +576,6 @@ function recordRefute(task, result, at) {
     settleJudgments(task);
     return;
   }
-  if (!isOperation(task)) {
-    delete task.implement;
-    delete task.refactor;
-  }
   task.kickbacks = [...task.kickbacks, ...kickbacks];
   task.stage = kickbacks
     .map((kickback) => kickback.to)
