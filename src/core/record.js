@@ -340,6 +340,13 @@ function judgmentRoundKickbacks(task, latest, sources) {
   ))).filter((kickback) => kickback !== undefined);
 }
 
+/** @param {MutableRecordTask} task */
+function currentCodeRepairRound(task) {
+  return task.kickbacks.filter((/** @type {any} */ kickback) => (
+    ['review', 'audit'].includes(kickback.from)
+  )).length;
+}
+
 
 /** @param {MutableRecordTask} task @param {string} at @param {unknown} [files] */
 function resetJudgmentsAfterFix(task, at, files) {
@@ -393,7 +400,7 @@ function resetJudgmentsAfterFix(task, at, files) {
 
   if (!latestHistory || !hasRetainedJudgment(task, latestHistory)) return false;
   const raisingSources = sources.filter((source) => (
-    sourceJudgments(task, latestHistory, source).some(([outcome]) => isFailingJudgment(outcome))
+    sourceJudgments(task, latestHistory, source).some(([, archived]) => isFailingJudgment(archived))
   ));
   const consumedKickbacks = judgmentRoundKickbacks(task, latestJudgmentKickback, raisingSources);
   const includesImplement = consumedKickbacks.some((kickback) => (
@@ -967,7 +974,13 @@ export function transitionTask(task, stage, result) {
   } else if (stage === 'implement') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
     next.agents.implementer_agent_id = result.agent_id;
-    next.implement = { agent_id: result.agent_id, result: result.result, files: result.files, greenRun: result.greenRun };
+    next.implement = {
+      agent_id: result.agent_id,
+      result: result.result,
+      files: result.files,
+      greenRun: result.greenRun,
+      repairRound: currentCodeRepairRound(next),
+    };
     if (isScopedCouncilFix || !result.kickback) invalidateVerification(next);
     if (isScopedCouncilFix && (result.result !== 'green' || result.kickback !== null)) {
       blockCouncilRecovery(next);
@@ -986,7 +999,15 @@ export function transitionTask(task, stage, result) {
       else next.stage = 'review';
     }
   } else if (stage === 'refactor') {
-    next.refactor = { agent_id: result.agent_id, result: result.result, files: result.files, outsideDiff: result.outsideDiff, greenRun: result.greenRun, summary: result.summary };
+    next.refactor = {
+      agent_id: result.agent_id,
+      result: result.result,
+      files: result.files,
+      outsideDiff: result.outsideDiff,
+      greenRun: result.greenRun,
+      summary: result.summary,
+      repairRound: currentCodeRepairRound(next),
+    };
     resetJudgmentsAfterFix(next, at, result.files);
     invalidateVerification(next);
     settleJudgments(next);

@@ -33,6 +33,22 @@ const canonicalTask = {
   audit: { required: true, verdict: 'na', audit_agent_id: null, evidence: [] },
   commits: [],
   kickbacks: [],
+  judgmentHistory: [{
+    at: '2026-07-12T00:30:00.000Z',
+    review: {
+      verdict: 'pass',
+      reviewer_agent_id: 'historical-reviewer',
+      evidence: [],
+    },
+    review2: null,
+    audit: {
+      required: true,
+      verdict: 'pass',
+      audit_agent_id: 'historical-auditor',
+      findings: [],
+      evidence: [],
+    },
+  }],
   blockedReason: null,
   abandonReason: null,
   convergence: {
@@ -255,6 +271,27 @@ const operationTask = {
   },
 };
 void operationTask;
+
+/** @type {import('./types.js').OperationJudgmentHistory} */
+// @ts-expect-error - operation history rows keep mandatory verifier and auditor ownership
+const operationHistoryWithoutAgents = {
+  at: '2026-07-12T00:45:00.000Z',
+  verification: {
+    verdict: 'pass',
+    verifier_agent_id: 'historical-verifier',
+    postconditions: [],
+    findings: [],
+    evidence: [],
+  },
+  audit: {
+    required: true,
+    verdict: 'pass',
+    audit_agent_id: 'historical-auditor',
+    findings: [],
+    evidence: [],
+  },
+};
+void operationHistoryWithoutAgents;
 
 /** @type {import('./types.js').TaskJson} */
 const historicalTaskWithoutRefactorOpportunity = {

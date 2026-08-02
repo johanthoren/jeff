@@ -247,11 +247,18 @@ function hasTargetedRepairProof(task) {
     && Number.isFinite(Date.parse(latestKickback.at))
     && Number.isFinite(Date.parse(history.at))
     && Date.parse(history.at) <= Date.parse(latestKickback.at);
+  const isAwaitingFreshReset = ['capture', 'plan'].includes(latestKickback.to)
+    && ['capture', 'plan', 'implement'].includes(task.stage)
+    && liveRaisingSources.includes(latestKickback.from)
+    && Number.isFinite(Date.parse(latestKickback.at))
+    && Number.isFinite(Date.parse(history.at))
+    && Date.parse(history.at) <= Date.parse(latestKickback.at);
+  const isAwaitingJudgmentWork = isAwaitingFreshRepair || isAwaitingFreshReset;
   if (!Array.isArray(latestKickback.findings) || latestKickback.findings.length === 0) {
     return retainedSources.length === 0;
   }
 
-  const raisingSources = isAwaitingFreshRepair
+  const raisingSources = isAwaitingJudgmentWork
     ? liveRaisingSources
     : [
       ...(history.review?.verdict === 'needs-work' || history.review2?.verdict === 'needs-work'
@@ -276,10 +283,10 @@ function hasTargetedRepairProof(task) {
         && finding.file.length > 0
       ))
     ));
-  if (!typedContract
+  if ((!typedContract && !isAwaitingFreshReset)
     || !Number.isFinite(Date.parse(latestKickback.at))
     || !Number.isFinite(Date.parse(history.at))
-    || (!isAwaitingFreshRepair && Date.parse(history.at) < Date.parse(latestKickback.at))) {
+    || (!isAwaitingJudgmentWork && Date.parse(history.at) < Date.parse(latestKickback.at))) {
     return retainedSources.length === 0;
   }
 
@@ -297,8 +304,14 @@ function hasTargetedRepairProof(task) {
     .filter((stage) => pendingRepairStage !== 'implement' && stage !== pendingRepairStage)
     .map((stage) => [stage, task[stage]])
     .filter(([, repair]) => isType(repair, 'object'));
+  const permitsLegacyRepairProof = task.judgmentHistory.length === 1
+    && contractKickbacks.filter((/** @type {any} */ kickback) => (
+      Array.isArray(kickback.findings) && kickback.findings.length > 0
+    )).length === raisingSources.length;
   const repairsAreConfined = recordedRepairs.every(([stage, repair]) => (
     (stage === 'implement' ? repair.result === 'green' : repair.result === 'clean')
+    && (repair.repairRound === contractKickbacks.length
+      || (repair.repairRound === undefined && permitsLegacyRepairProof))
     && Array.isArray(repair.files)
     && repair.files.length > 0
     && repair.files.every((/** @type {any} */ file) => findingFiles.has(file))
@@ -318,10 +331,10 @@ function hasTargetedRepairProof(task) {
         && judgmentIdentity(history[source], history.agents, identity, agentIdentity) != null
         && history[source]?.verdict === 'pass';
     });
-    if (isAwaitingFreshRepair) return !hasRetainableSibling;
+    if (isAwaitingJudgmentWork) return !hasRetainableSibling;
     return !hasRetainableSibling || !hasCurrentRepairProof;
   }
-  if (!hasCurrentRepairProof && !isAwaitingFreshRepair) return false;
+  if (!hasCurrentRepairProof && !isAwaitingJudgmentWork) return false;
   if (retainedSources.some(([source]) => raised.has(source === 'review2' ? 'review' : source))) {
     return false;
   }

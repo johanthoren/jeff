@@ -222,7 +222,7 @@
  * @property {Review} review
  * @property {Review | null} review2
  * @property {Audit} audit
- * @property {{reviewer_agent_id: string | null, reviewer2_agent_id: string | null, audit_agent_id: string | null}} agents
+ * @property {{reviewer_agent_id: string | null, reviewer2_agent_id: string | null, audit_agent_id: string | null}} [agents]
  */
 
 /**

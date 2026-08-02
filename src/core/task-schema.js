@@ -26,7 +26,6 @@ const ISO_DATETIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?
 const KEBAB_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OPERATION_FINDING_DESTINATIONS = ['capture', 'plan', 'execute'];
 const CODE_JUDGMENT_SOURCES = ['review', 'review2', 'audit'];
-const CODE_REPAIR_DESTINATIONS = ['implement', 'refactor'];
 const CODE_JUDGMENT_DESTINATIONS = ['capture', 'plan', 'implement', 'refactor'];
 const AUDIT_CATEGORIES = [
   'secrets',
@@ -647,8 +646,7 @@ function isArchivedUnauditedAudit(value) {
 /** @param {any} task @param {string[]} out */
 function validateCodeJudgmentHistory(task, out) {
   if (task.judgmentHistory === undefined) return;
-  requireField(out, 'judgmentHistory', Array.isArray(task.judgmentHistory)
-    && task.judgmentHistory.length > 0);
+  requireField(out, 'judgmentHistory', Array.isArray(task.judgmentHistory));
   if (!Array.isArray(task.judgmentHistory)) return;
   task.judgmentHistory.forEach((/** @type {any} */ entry, /** @type {number} */ index) => {
     const field = `judgmentHistory[${index}]`;

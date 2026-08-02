@@ -2970,6 +2970,15 @@ test('Item 4 code judgmentHistory schema rejects malformed entries', async () =>
   assertNamedFailure(result, 'judgmentHistory[0]');
 });
 
+test('Item 4 code judgmentHistory accepts an empty historical ledger without typed retention proof', async () => {
+  const task = item4RetainedLedger('review');
+  task.judgmentHistory = [];
+  delete task.kickbacks[0].findings;
+
+  const result = await verdictFor(task);
+  assert.equal(result.ok, true, result.stderr.join('\n'));
+});
+
 test('Item 4 code judgmentHistory preserves archived unaudited audits without findings', async () => {
   const task = item4RetainedLedger('review');
   task.kickbacks = [];
@@ -3133,6 +3142,54 @@ test('Item 4 INV-12 selects the actual latest judgment kickback', async (t) => {
       assertNamedFailure(result, '[inv12]');
     });
   }
+});
+
+test('Item 4 INV-12 rejects same-file prior-round repair records as latest-round proof', async (t) => {
+  const cases = /** @type {Array<[string, Array<'implement' | 'refactor'>]>} */ ([
+    ['latest implement-only contract', ['implement']],
+    ['latest refactor-only contract', ['refactor']],
+    ['fully populated latest mixed-stage contract', ['implement', 'refactor']],
+  ]);
+
+  for (const [name, owedStages] of cases) await t.test(name, async () => {
+    const task = item4RetainedLedger('review');
+    task.kickbacks[0].to = owedStages[0];
+    task.kickbacks[0].findings = owedStages.map((stage) => (
+      item4KickbackFinding('review', { kickTo: stage })
+    ));
+    task.kickbacks.unshift({
+      ...structuredClone(task.kickbacks[0]),
+      reason: 'Prior round used the same repair files.',
+      at: '2026-07-12T00:10:00Z',
+    });
+    const priorHistory = structuredClone(task.judgmentHistory[0]);
+    priorHistory.at = '2026-07-12T00:20:00Z';
+    task.judgmentHistory.unshift(priorHistory);
+
+    delete task.implement;
+    delete task.refactor;
+    if (owedStages.includes('implement')) {
+      task.implement = {
+        agent_id: 'prior-round-implementer',
+        result: 'green',
+        files: ['src/core/record.js'],
+        greenRun: { command: 'node --test', output: 'pass' },
+      };
+    }
+    if (owedStages.includes('refactor')) {
+      task.refactor = {
+        agent_id: 'prior-round-refactorer',
+        result: 'clean',
+        files: ['src/core/record.js'],
+        outsideDiff: [],
+        greenRun: { command: 'node --test', output: 'pass' },
+        summary: ['Applied a prior-round refactor.'],
+      };
+    }
+
+    const result = await verdictFor(task);
+    assertNamedFailure(result, '[inv12]');
+  });
 });
 
 test('Item 4 INV-12 rejects prior-round repair records as current-round proof', async (t) => {

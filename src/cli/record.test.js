@@ -5185,6 +5185,126 @@ test('Item 4 council recovery completes scoped retained audit through the public
   }
 });
 
+test('Item 4 scoped retention survives fresh capture and plan kickbacks until the later full reset', async (t) => {
+  for (const destination of /** @type {const} */ (['capture', 'plan'])) {
+    await t.test(destination, async (t) => {
+      t.mock.timers.enable({
+        apis: ['Date'],
+        now: new Date('2026-07-12T02:00:00Z'),
+      });
+      const finding = blockingFinding({
+        line: destination === 'capture' ? 81 : 82,
+        kickTo: destination,
+        what: `Fresh review requires ${destination}.`,
+      });
+      const { root, taskDir } = await makeRoot(item4RepairTask());
+      try {
+        await recordSpecialistReturn(
+          root,
+          'implement',
+          '18',
+          item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+        );
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn({
+            ...item4ReviewReturn('reviewer-fresh', 1),
+            verdict: 'needs-work',
+            findings: [finding],
+          }),
+        );
+        await recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          item4ObservedReturn(item4ReviewReturn('reviewer-two-fresh', 1)),
+        );
+        await recordSpecialistReturn(
+          root,
+          'refute',
+          '18',
+          refuteReturn(`${destination}-refuter`, finding, {
+            cycle: 1,
+            source: 'review',
+          }),
+        );
+
+        const kicked = await readTask(taskDir);
+        assert.equal(kicked.stage, destination);
+        assert.equal(kicked.agents.audit_agent_id, 'auditor-old');
+        assert.deepEqual(kicked.kickbacks.at(-1).findings, [{
+          source: 'review',
+          file: finding.file,
+          line: finding.line,
+          what: finding.what,
+          kickTo: destination,
+        }]);
+
+        if (destination === 'capture') {
+          kicked.stage = 'plan';
+          await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(kicked, null, 2)}\n`, 'utf8');
+        }
+        await recordSpecialistReturn(root, 'plan', '18', planReturn({}, `${destination}-planner`));
+        await recordSpecialistReturn(
+          root,
+          'implement',
+          '18',
+          item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+        );
+        const reset = await readTask(taskDir);
+
+        assert.equal(reset.stage, 'review');
+        assert.equal(reset.judgmentHistory.length, 2);
+        assert.equal(reset.review.reviewer_agent_id, null);
+        assert.equal(reset.review2, null);
+        assert.equal(reset.audit.audit_agent_id, null);
+        assert.equal(reset.agents.audit_agent_id, null);
+        assert.deepEqual(reset.kickbacks.at(-1).findings, kicked.kickbacks.at(-1).findings);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('Item 4 public mixed repair retains the passing sibling when both stages stay confined', async (t) => {
+  t.mock.timers.enable({
+    apis: ['Date'],
+    now: new Date('2026-07-12T02:00:00Z'),
+  });
+  const { root, taskDir } = await makeRoot(item4MixedRepairTask());
+  try {
+    await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      item4ObservedReturn(item4ImplementReturn(['src/core/record.js'])),
+    );
+    const implemented = await readTask(taskDir);
+    assert.equal(implemented.stage, 'refactor');
+    assert.equal(implemented.judgmentHistory.length, 1);
+    assert.equal(implemented.agents.audit_agent_id, 'auditor-old');
+
+    await recordSpecialistReturn(
+      root,
+      'refactor',
+      '18',
+      item4ObservedReturn(item4RefactorReturn(['src/core/invariants.js'])),
+    );
+    const refactored = await readTask(taskDir);
+
+    assert.equal(refactored.stage, 'review');
+    assert.equal(refactored.judgmentHistory.length, 1);
+    assert.equal(refactored.audit.verdict, 'pass');
+    assert.equal(refactored.audit.audit_agent_id, 'auditor-old');
+    assert.equal(refactored.agents.audit_agent_id, 'auditor-old');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Item 4 council recovery permits second scoped repair before council at equal and later clocks', async (t) => {
   for (const [name, later] of /** @type {Array<[string, boolean]>} */ ([
     ['equal-second', false],

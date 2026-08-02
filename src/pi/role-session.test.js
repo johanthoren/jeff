@@ -449,6 +449,73 @@ test('dispatchRoleSession prompt includes role context but omits the generated h
   });
 });
 
+test('Item 4 typed findings dispatch reaches scoped implement and fresh full-diff review prompts verbatim', async () => {
+  await withRepo(async (repoRoot) => {
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-implement.md'),
+      '---\nname: cook-implement\neffort: high\ntools: Read, Grep, Glob, Bash\n---\n\nImplement body.\n',
+    );
+    const findingsPayload = JSON.stringify([{
+      source: 'review',
+      file: 'src/core/invariants.js',
+      line: 296,
+      what: 'Prior-round builder proof is stale.',
+      kickTo: 'implement',
+    }], null, 2);
+    /** @type {string[]} */
+    const capturedPrompts = [];
+    const sdk = {
+      SessionManager: { inMemory: (/** @type {string} */ cwd) => ({ cwd }) },
+      createAgentSession: async () => {
+        /** @type {(event: any) => void} */
+        let listener = () => {};
+        return {
+          session: {
+            model: { provider: 'local', id: 'qwen-dev' },
+            thinkingLevel: 'xhigh',
+            /** @param {(event: any) => void} fn */
+            subscribe(fn) {
+              listener = fn;
+              return () => {};
+            },
+            /** @param {string} prompt */
+            async prompt(prompt) {
+              capturedPrompts.push(prompt);
+              listener({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'complete' } });
+            },
+            dispose() {},
+          },
+        };
+      },
+    };
+    const currentModel = { provider: 'local', id: 'qwen-dev' };
+    /** @param {'implement' | 'review'} stage @param {string} brief */
+    const dispatch = (stage, brief) => dispatchRoleSession({
+      stage,
+      brief,
+      taskDir: '.jeff/tasks/lite-162-1196773702',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      modelRegistry: { find: assert.fail, getAvailable: assert.fail },
+      sdk,
+      generateAgentId: () => `${stage}-agent`,
+    });
+
+    await dispatch('implement', `Apply the scoped repair for these exact typed findings:\n${findingsPayload}`);
+    await dispatch(
+      'review',
+      `Review the full diff. the kicked findings this cycle must resolve:\n${findingsPayload}`,
+    );
+
+    assert.equal(capturedPrompts.length, 2);
+    assert.ok(capturedPrompts[0].includes(findingsPayload));
+    assert.ok(capturedPrompts[1].includes(findingsPayload));
+    assert.match(capturedPrompts[1], /the kicked findings this cycle must resolve/);
+    assert.match(capturedPrompts[1], /full diff/);
+  });
+});
+
 test('issue 105 cooperative dispatch uses host-native stage tools without fixed operation tools', async () => {
   await withRepo(async (repoRoot) => {
     /** @type {Record<string, string>} */
