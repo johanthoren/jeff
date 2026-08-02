@@ -336,7 +336,7 @@ function hasTargetedRepairProof(task) {
         && history[source]?.verdict === 'pass';
     });
     if (isAwaitingJudgmentWork) return !hasRetainableSibling;
-    return !hasRetainableSibling || !hasCurrentRepairProof;
+    if (!hasCurrentRepairProof) return true;
   }
   if (!hasCurrentRepairProof && !isAwaitingJudgmentWork) return false;
   if (retainedSources.some(([source]) => raised.has(source === 'review2' ? 'review' : source))) {
