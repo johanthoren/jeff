@@ -57,11 +57,11 @@ implementation choices left open there, this file wins for P1a.
 - Ship standalone `jeff graph` first. That is the P1a vehicle.
 - Kitty composition of standalone processes is valid from day one and is the
   early way to run multiple surfaces side by side.
-- Bare `jeff` is help-only until a later multi-pane composition earns it.
-- Bare `jeff` is deferred out of first ship; it does not open a combined
-- shell in this phase.
+- Bare `jeff` is help-only until a later multi-pane composition earns it. It
+  is deferred out of first ship and does not open a combined shell in this
+  phase.
 - Design shared widgets so a late Ratatui multi-pane shell can compose them
-- later. Do not require that shell for P1a.
+  later. Do not require that shell for P1a.
 
 ## Socket protocol
 
@@ -310,16 +310,16 @@ Suggested crates (names may shift slightly; responsibilities must not):
 ```text
 control/
   Cargo.toml                 # workspace
-  jeffd/                     # backend binary: registry, FS watch, cook spawn, socket
-  jeff/                      # CLI front door: `jeff graph`, `jeffd start|stop|status`, help
+  jeffd/                     # daemon binary: registry, FS watch, cook spawn, socket; CLI `jeffd start|stop|status`
+  jeff/                      # operator client: `jeff graph`, bare help
   jeff-project/              # shared: snapshot types, graph view model, protocol enums
   jeff-graph/                # optional lib: layout + viewport + ratatui graph widgets
 ```
 
 | Crate | Role in P1a |
 |---|---|
-| `control/jeffd` | Projector backend. Owns socket server, debounce, per-project snapshot cache, registry load. |
-| `control/jeff` | Operator CLI. `jeff graph [project]` attaches the standalone graph TUI. `jeffd start\|stop\|status` manages the daemon. Bare `jeff` with no subcommand prints help only. |
+| `control/jeffd` | Projector daemon. Owns socket server, debounce, per-project snapshot cache, registry load. CLI: `jeffd start\|stop\|status`. |
+| `control/jeff` | Operator client. `jeff graph [project]` attaches the standalone graph TUI. Bare `jeff` with no subcommand prints help only. |
 | `control/jeff-project` | Shared serde types for snapshot JSON, protocol envelopes, registry records. No TUI dependency. |
 | `control/jeff-graph` | petgraph build, layout-rs call, viewport math, Canvas widget. Used by `jeff graph`; reusable later. |
 
