@@ -44,17 +44,20 @@ Toolchain prerequisites: a POSIX system with git, Node.js ≥ 22.19, and `bats`
   failing tests first (RED proven), a separate implementer makes them green,
   independent review, audit where flagged. One branch and one PR per item to
   `main`. **Johan approves every merge; never merge or push `main` yourself.**
-- Each item carries its matching prerelease version in lockstep metadata:
-  item 1 is `6.0.0-alpha.1`, item 2 is `6.0.0-alpha.2`, item 3 is
-  `6.0.0-alpha.3`, item 4 is `6.0.0-alpha.4`, item 5 is
-  `6.0.0-alpha.5`, item 6 is `6.0.0-alpha.6`, item 7 is `6.0.0-alpha.7`, and
-  item 8 is `6.0.0-alpha.8`. After Johan approves and merges each item, a separate
-  operation task with exact operator approval creates that alpha's immutable
-  bare tag, publishes it to npm `next`, and then refreshes the dogfood installs
-  on Pi, OMP, Claude Code, and Codex. npm `latest` remains stable `5.0.0`.
-  After `6.0.0-alpha.7` dogfoods at least one real drain and item 8 has merged
-  as `6.0.0-alpha.8`, a separately approved task cuts plain `6.0.0` (see
-  §Release).
+- Alpha versions are allocated by **release order, not by slate item**. Every
+  merged change that reaches the alpha track takes the next unused
+  `6.0.0-alpha.N` in lockstep metadata, whatever it contains, including a
+  defect fix that is not a slate item. Items 1 through 5 happened to align with
+  `6.0.0-alpha.1` through `6.0.0-alpha.5`; from `6.0.0-alpha.6` onward they do
+  not, and no item-to-alpha correspondence is claimed for any unreleased item.
+  §Release records what each alpha actually carried. After Johan approves and
+  merges each item, a separate operation task with exact operator approval
+  creates that alpha's immutable bare tag, publishes it to npm `next`, and
+  then refreshes the dogfood installs on Pi, OMP, Claude Code, and Codex. npm
+  `latest` remains stable `5.0.0`.
+  After all eight items have merged and item 7's `cook all` has dogfooded at
+  least one real drain in this repo, a separately approved task cuts plain
+  `6.0.0` (see §Release).
 - Before touching anything, read: `AGENTS.md` (iron rules),
   `docs/maintaining-jeff.md`, `docs/specs/jeff-design.md`,
   `skills/cook/reference/jeff-state-schema.md`, `skills/cook/SKILL.md`.
@@ -678,10 +681,33 @@ Audit: not required (read-only projection; no trust boundary crossed).
 
 ## Release: 6.0.0
 
-Each item carries its matching prerelease version in lockstep metadata: item 1
-is `6.0.0-alpha.1`, item 2 is `6.0.0-alpha.2`, item 3 is `6.0.0-alpha.3`, item
-4 is `6.0.0-alpha.4`, item 5 is `6.0.0-alpha.5`, item 6 is `6.0.0-alpha.6`,
-item 7 is `6.0.0-alpha.7`, and item 8 is `6.0.0-alpha.8`.
+Alpha versions are allocated by **release order, not by slate item**. Every
+merged change that reaches the alpha track takes the next unused
+`6.0.0-alpha.N` in lockstep metadata, whatever it contains, including a defect
+fix that is not a slate item. Items 1 through 5 happened to align with
+`6.0.0-alpha.1` through `6.0.0-alpha.5`; from `6.0.0-alpha.6` onward they do
+not, and no item-to-alpha correspondence is claimed for any unreleased item.
+
+What each alpha actually carried:
+
+| Version | Contents |
+| --- | --- |
+| `6.0.0-alpha.1` | item 1 |
+| `6.0.0-alpha.2` | item 2 |
+| `6.0.0-alpha.3` | item 3 |
+| `6.0.0-alpha.4` | item 4 |
+| `6.0.0-alpha.5` | item 5 |
+| `6.0.0-alpha.6` | item 8, pulled forward ahead of items 6 and 7 to unblock the control plane, per the sequencing note at §Item 8 |
+| `6.0.0-alpha.7` | issue #173, a defect fix and not a slate item; allocated by PR #181 and not yet tagged |
+
+The sequence skips for two reasons, neither of them a mistake. Item 8 was
+pulled forward under the sequencing note at §Item 8. Issue #173 then changed
+shipped payload, and `scripts/release-check` requires any payload change to
+carry a version strictly above the last tag, so `6.0.0-alpha.7` was the only
+number available to it.
+
+Issue #176, item 6, and item 7 remain. Each takes the next unused number on
+merge.
 
 - After Johan approves and merges each item, a separate operation task with
   exact operator approval creates that alpha's immutable bare tag (no `v`
@@ -689,9 +715,9 @@ item 7 is `6.0.0-alpha.7`, and item 8 is `6.0.0-alpha.8`.
   and then refreshes the dogfood installs on Pi, OMP, Claude Code, and Codex.
   Never move or reuse an alpha tag or version. npm `latest` remains stable
   `5.0.0` throughout the alpha track.
-- After `6.0.0-alpha.7` dogfoods at least one real drain in this repo and
-  item 8 has merged as `6.0.0-alpha.8`, a separately approved release task
-  cuts plain **6.0.0**: consolidated notes
+- After all eight items have merged and item 7's `cook all` has dogfooded at
+  least one real drain in this repo, a separately approved release task cuts
+  plain **6.0.0**: consolidated notes
   covering all eight items (the semantic changes in items 4 and 5 are the
   majority-defining behavior changes), `package.json` bump, bare tag `6.0.0`
   (no `v` prefix), and publish per the existing release process
