@@ -44,20 +44,14 @@ Toolchain prerequisites: a POSIX system with git, Node.js ≥ 22.19, and `bats`
   failing tests first (RED proven), a separate implementer makes them green,
   independent review, audit where flagged. One branch and one PR per item to
   `main`. **Johan approves every merge; never merge or push `main` yourself.**
-- Alpha versions are allocated by **release order, not by slate item**. Every
+- Alpha versions are allocated by **release order, not by slate item**: every
   merged change that reaches the alpha track takes the next unused
-  `6.0.0-alpha.N` in lockstep metadata, whatever it contains, including a
-  defect fix that is not a slate item. Items 1 through 5 happened to align with
-  `6.0.0-alpha.1` through `6.0.0-alpha.5`; from `6.0.0-alpha.6` onward they do
-  not, and no item-to-alpha correspondence is claimed for any unreleased item.
-  §Release records what each alpha actually carried. After Johan approves and
-  merges each item, a separate operation task with exact operator approval
-  creates that alpha's immutable bare tag, publishes it to npm `next`, and
-  then refreshes the dogfood installs on Pi, OMP, Claude Code, and Codex. npm
-  `latest` remains stable `5.0.0`.
-  After all eight items have merged and item 7's `cook all` has dogfooded at
-  least one real drain in this repo, a separately approved task cuts plain
-  `6.0.0` (see §Release).
+  `6.0.0-alpha.N` in lockstep metadata, whatever it contains. §Release owns
+  that rule in full, records what each alpha actually carried, and states the
+  gate on plain `6.0.0`. After Johan approves and merges each item, a separate
+  operation task with exact operator approval creates that alpha's immutable
+  bare tag, publishes it to npm `next`, and then refreshes the dogfood installs
+  on Pi, OMP, Claude Code, and Codex. npm `latest` remains stable `5.0.0`.
 - Before touching anything, read: `AGENTS.md` (iron rules),
   `docs/maintaining-jeff.md`, `docs/specs/jeff-design.md`,
   `skills/cook/reference/jeff-state-schema.md`, `skills/cook/SKILL.md`.
