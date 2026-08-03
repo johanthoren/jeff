@@ -40,6 +40,7 @@ const OMP_SETTINGS = {
  */
 function toolsForStage(stage) {
   if (['plan', 'implement', 'refactor', 'execute'].includes(stage)) return EDIT_TOOLS;
+  if (['verify', 'audit'].includes(stage)) return COMMAND_TOOLS;
   return READ_TOOLS;
 }
 
