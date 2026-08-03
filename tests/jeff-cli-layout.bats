@@ -9,6 +9,7 @@
 #   - Makefile make test does not list jeff-cli.bats
 #   - control/jeff declares assert_cmd under [dev-dependencies]
 #   - control/jeff/tests/cli.rs is the assert_cmd integration suite
+#   - control/jeff crate version string equals package.json product version
 #
 # Parallel-safe: read-only path and grep checks. No cargo, network, or clock.
 
@@ -48,4 +49,31 @@ setup_file() { cook_hermetic_git; }
     END { exit found ? 0 : 1 }
   ' "$toml" \
     || { echo "control/jeff/Cargo.toml missing assert_cmd under [dev-dependencies]"; return 1; }
+}
+
+@test "#179 AC12: control/jeff crate version matches package.json" {
+  # Checked-in lockstep only (no build-script injection). assert_cmd still
+  # asserts env!(CARGO_PKG_VERSION); this guards the source string itself.
+  local pkg crate_ver
+  pkg="$(jq -r .version "$REPO/package.json")"
+  [ -n "$pkg" ] && [ "$pkg" != "null" ] \
+    || { echo "package.json missing version"; return 1; }
+  crate_ver="$(
+    awk '
+      /^\[package\]/ { in_pkg=1; next }
+      /^\[/ { in_pkg=0 }
+      in_pkg && $0 ~ /^version[[:space:]]*=/ {
+        if (match($0, /"[^"]+"/)) {
+          print substr($0, RSTART+1, RLENGTH-2)
+          exit
+        }
+      }
+    ' "$REPO/control/jeff/Cargo.toml"
+  )"
+  [ -n "$crate_ver" ] \
+    || { echo "could not read version from control/jeff/Cargo.toml"; return 1; }
+  if [ "$crate_ver" != "$pkg" ]; then
+    echo "control/jeff version ($crate_ver) != package.json ($pkg)"
+    return 1
+  fi
 }

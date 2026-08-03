@@ -10,9 +10,11 @@
 #   - last_tag = highest tag matching ^[0-9]+\.[0-9]+\.[0-9]+$
 #   - version from .claude-plugin/plugin.json
 #   - Payload prefixes: skills/ agents/ commands/ hooks/ .claude-plugin/
-#     .codex-plugin/ .agents/plugins/
-#     (bin/ dropped by task 0034; skills/ covers the CLI at its new location)
+#     .codex-plugin/ .agents/plugins/ src/ control/
+#     (bin/ dropped by task 0034; skills/ covers the shell CLI; control/ is the Rust plane)
 #   - Payload files: AGENTS.md package.json
+#   - Version lockstep (when present): package.json, package-lock.json,
+#     .codex-plugin/plugin.json, control/jeff/Cargo.toml
 #   - Excluded: .jeff/ tests/ .github/ docs/ README.md Makefile dotfiles
 #   - Exit 0 = pass; non-zero = fail; reason on stderr
 #
@@ -73,6 +75,17 @@ bump_version() {
   printf '{"version":"%s"}\n' "$new_version" > "$dir/.codex-plugin/plugin.json"
   git -C "$dir" add .claude-plugin/plugin.json .codex-plugin/plugin.json
   git -C "$dir" commit -q -m "bump version to $new_version"
+}
+
+# write_jeff_cargo_toml <dir> <version>
+#
+# Writes a minimal control/jeff/Cargo.toml with [package] version = "<version>".
+# Used for lockstep mismatch fixtures when the control crate is present.
+write_jeff_cargo_toml() {
+  local dir="$1" version="$2"
+  mkdir -p "$dir/control/jeff"
+  printf '[package]\nname = "jeff"\nversion = "%s"\nedition = "2021"\n' "$version" \
+    > "$dir/control/jeff/Cargo.toml"
 }
 
 # run_script <dir>
@@ -208,6 +221,33 @@ teardown() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"package.json"* ]]
+}
+
+@test "version mismatch: control/jeff/Cargo.toml version differs from plugin version" {
+  # AC12/AC13: when the control crate exists, its checked-in version must equal
+  # the product/plugin version. Absent file is ignored (same as package-lock).
+  init_fixture_repo "$FIX" "1.0.0"
+  write_jeff_cargo_toml "$FIX" "0.1.0"
+  git -C "$FIX" add control/jeff/Cargo.toml
+  git -C "$FIX" commit -q -m "add mismatched control jeff crate version"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"version mismatch"* ]]
+  [[ "$output" == *"control/jeff/Cargo.toml"* ]]
+}
+
+@test "payload/control: change under control/ requires a version bump" {
+  # AC14: control/** is release payload (Rust plane). A path change without a
+  # strict version bump above last_tag must fail and name the path.
+  init_fixture_repo "$FIX" "1.0.0"
+  commit_file "$FIX" "control/jeff/src/main.rs" "fn main() {}"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"control/jeff/src/main.rs"* ]]
 }
 
 # ---------------------------------------------------------------------------
