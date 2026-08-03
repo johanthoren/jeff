@@ -7,11 +7,28 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { prepareInstalledSdkSession } from './pi-sdk-adapter.js';
 
-export const STAGES = ['plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute'];
-
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
 const COMMAND_TOOLS = [...READ_TOOLS, 'bash'];
 const EDIT_TOOLS = [...COMMAND_TOOLS, 'edit', 'write'];
+
+/**
+ * Every stage and the tier it is granted, each stated rather than reached by fallthrough.
+ * `STAGES` derives from these keys, so no stage exists without a grant.
+ * @type {Record<string, string[]>}
+ */
+const STAGE_TOOLS = {
+  plan: EDIT_TOOLS,
+  implement: EDIT_TOOLS,
+  refactor: EDIT_TOOLS,
+  execute: EDIT_TOOLS,
+  review: READ_TOOLS,
+  verify: COMMAND_TOOLS,
+  audit: COMMAND_TOOLS,
+  refute: READ_TOOLS,
+};
+
+export const STAGES = Object.keys(STAGE_TOOLS);
+
 const PACKAGE_ROOT = realpathSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..'));
 const OMP_SETTINGS = {
   'advisor.enabled': false,
@@ -33,16 +50,6 @@ const OMP_SETTINGS = {
   'ttsr.enabled': false,
   'ttsr.builtinRules': false,
 };
-
-/**
- * @param {string} stage
- * @returns {string[]}
- */
-function toolsForStage(stage) {
-  if (['plan', 'implement', 'refactor', 'execute'].includes(stage)) return EDIT_TOOLS;
-  if (['verify', 'audit'].includes(stage)) return COMMAND_TOOLS;
-  return READ_TOOLS;
-}
 
 /** @returns {string} */
 export function generateAgentId() {
@@ -378,7 +385,7 @@ export async function dispatchRoleSession(opts) {
   let streamed = '';
   let final = '';
   const sessionManager = sdk.SessionManager?.inMemory?.(opts.cwd);
-  const tools = toolsForStage(opts.stage);
+  const tools = STAGE_TOOLS[opts.stage];
   const omp = typeof sdk.createSubagentSettings === 'function'
     ? await prepareOmpSession(sdk, opts.cwd, tools, agentId, opts.modelRegistry, opts.currentModel)
     : undefined;
