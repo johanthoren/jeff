@@ -10,7 +10,29 @@ const SKILL_FILES = [
   '../../skills/security-auditor/SKILL.md',
   '../../skills/testing/SKILL.md',
 ];
-const JUDGMENT_AGENT_FILES = ['../../agents/cook-review.md', '../../agents/cook-verify.md', '../../agents/cook-audit.md', '../../agents/cook-refute.md'];
+// Issue 101 removed command capability from all four judgment stations and
+// pinned the narrow grant here. Issue 173 reverses that for the two operation
+// judgment stations only, and the reversal is deliberate rather than a repair:
+// every verification seam an operation can name is a command (`git ls-remote`,
+// `gh run view`, `npm view`), so a station that cannot run one cannot verify at
+// all. Issue 170 is the observed instance. Issue 101 could not foresee it,
+// because it introduced the operation category in the same task.
+//
+// The other half of issue 101 stands. No judgment station mutates, so none
+// carries Edit or Write, and `cook-review` / `cook-refute` keep the narrow
+// grant: both read a diff already present in the working tree, so neither was
+// structurally broken the way the operation stations were.
+//
+// Exact equality is load-bearing in both directions: this fails if an operation
+// station narrows again, and it fails if any judgment station gains Edit or
+// Write.
+const JUDGMENT_AGENT_GRANTS = {
+  '../../agents/cook-review.md': 'tools: Read, Grep, Glob',
+  '../../agents/cook-verify.md': 'tools: Read, Grep, Glob, Bash',
+  '../../agents/cook-audit.md': 'tools: Read, Grep, Glob, Bash',
+  '../../agents/cook-refute.md': 'tools: Read, Grep, Glob',
+};
+const JUDGMENT_AGENT_FILES = Object.keys(JUDGMENT_AGENT_GRANTS);
 const MAX_SKILL_DESCRIPTION_CHARS = 1024;
 
 /**
@@ -73,13 +95,13 @@ test('skill frontmatter descriptions stay under Pi limit', async () => {
   }
 });
 
-test('issue 101 surviving blocker: judgment agent frontmatter stays read-only', async () => {
-  for (const relative of JUDGMENT_AGENT_FILES) {
+test('issue 173 reverses issue 101: operation judgment stations run commands, no judgment station edits or writes', async () => {
+  for (const [relative, expected] of Object.entries(JUDGMENT_AGENT_GRANTS)) {
     const file = new URL(relative, import.meta.url);
     const text = await readFile(file, 'utf8');
     const tools = frontmatterLines(text).find((line) => line.startsWith('tools:'));
 
-    assert.equal(tools, 'tools: Read, Grep, Glob', `${relative} must stay read-only`);
+    assert.equal(tools, expected, `${relative} must grant exactly this`);
   }
 });
 

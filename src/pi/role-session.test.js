@@ -566,14 +566,17 @@ test('issue 105 cooperative dispatch uses host-native stage tools without fixed 
       });
     }
 
+    // Issue 173: three tiers, not two. The builders edit; `verify` and `audit`
+    // judge live state, so they run commands and never edit or write; `review`
+    // and `refute` judge a diff already in the tree, so they stay read-only.
     assert.deepEqual(toolsByStage, {
       plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       refactor: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       execute: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
-      verify: ['read', 'grep', 'find', 'ls'],
+      verify: ['read', 'grep', 'find', 'ls', 'bash'],
       review: ['read', 'grep', 'find', 'ls'],
-      audit: ['read', 'grep', 'find', 'ls'],
+      audit: ['read', 'grep', 'find', 'ls', 'bash'],
       refute: ['read', 'grep', 'find', 'ls'],
     });
     assert.deepEqual(customToolsByStage, {
@@ -661,15 +664,17 @@ test('issue 105 dispatchRoleSession translates every stage to an isolated OMP ch
       },
     };
     const modelRegistry = ompParentModelRegistry(currentModel);
+    // Issue 173: the OMP child sees the same three tiers as the installed SDK
+    // path above, projected through OMP's own tool names.
     /** @type {Record<string, string[]>} */
     const expectedTools = {
       plan: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       refactor: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
       execute: ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write'],
-      verify: ['read', 'grep', 'find', 'ls'],
+      verify: ['read', 'grep', 'find', 'ls', 'bash'],
       review: ['read', 'grep', 'find', 'ls'],
-      audit: ['read', 'grep', 'find', 'ls'],
+      audit: ['read', 'grep', 'find', 'ls', 'bash'],
       refute: ['read', 'grep', 'find', 'ls'],
     };
     /** @type {Record<string, string[]>} */
@@ -677,10 +682,10 @@ test('issue 105 dispatchRoleSession translates every stage to an isolated OMP ch
       plan: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
       implement: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
       execute: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
-      verify: ['read', 'grep', 'glob'],
+      verify: ['read', 'grep', 'glob', 'bash'],
       refactor: ['read', 'grep', 'glob', 'bash', 'edit', 'write'],
       review: ['read', 'grep', 'glob'],
-      audit: ['read', 'grep', 'glob'],
+      audit: ['read', 'grep', 'glob', 'bash'],
       refute: ['read', 'grep', 'glob'],
     };
 

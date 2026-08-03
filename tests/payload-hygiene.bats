@@ -357,9 +357,10 @@ EOF
 #
 # Seam: unchanged from #117. The payload prose IS the product, and the shipped
 # role files are the only place a host observes it. A dispatched station runs
-# with Read, Grep, Glob and no skill loader, so it reaches a bundled skill only
-# through a path its own role file names, resolved against the absolute form
-# the brief supplies.
+# with no skill loader whatever its tool grant is, so it reaches a bundled skill
+# only through a path its own role file names, resolved against the absolute
+# form the brief supplies. (The grant itself moved in #173 and is not what this
+# block depends on; agents/*.md frontmatter owns it.)
 #
 # One declaration drives three assertions:
 #   guard   : every declared role file binds the brief's absolute path and
