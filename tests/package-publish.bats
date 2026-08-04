@@ -109,8 +109,9 @@ select_dist_tag() {
   # Supply-chain floor for the whole .github/workflows directory, not just the
   # publish workflow: a mutable tag or branch ref lets an upstream action owner
   # change what runs here after review.
+  #
+  # An unmatched glob stays literal, so -f is what rejects an empty directory.
   local workflows=("$REPO"/.github/workflows/*.y*ml)
-  [ "${#workflows[@]}" -gt 0 ]
   [ -f "${workflows[0]}" ]
   # Matches both the "- uses: x" and "uses: x" step spellings, so a step
   # written in either YAML style cannot slip past the pin requirement.
@@ -149,8 +150,9 @@ select_dist_tag() {
   # string over the whole file has no spelling left to miss, and there is no
   # accumulator to lose to a subshell. A workflow with a genuine need for the
   # trigger fails here, which is the review conversation that need should have.
+  #
+  # An unmatched glob stays literal, so -f is what rejects an empty directory.
   local workflows=("$REPO"/.github/workflows/*.y*ml)
-  [ "${#workflows[@]}" -gt 0 ]
   [ -f "${workflows[0]}" ]
   run grep -HFn pull_request_target "${workflows[@]}"
   if [ "$status" -eq 0 ]; then
