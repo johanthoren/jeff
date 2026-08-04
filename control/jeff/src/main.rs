@@ -1,12 +1,8 @@
 use clap::{CommandFactory, Parser};
 use std::io::Write;
 
-#[derive( Parser, Debug)]
-#[command(
-    name = "jeff",
-    version,
-    about = "Jeff control-plane client"
-)]
+#[derive(Parser, Debug)]
+#[command(name = "jeff", version, about = "Jeff control-plane client")]
 struct Cli {}
 
 fn main() -> std::io::Result<()> {
