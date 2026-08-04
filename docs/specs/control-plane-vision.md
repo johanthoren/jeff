@@ -8,8 +8,9 @@ and the design rationale (`docs/specs/jeff-design.md`).
 
 This document completes a product vision that sits **beside** the method, not
 inside it. It does not weaken iron rules, replace host sessions, or schedule
-work against the 6.0 alpha track. Implementation is gated on
-`6.0.0-alpha.7` dogfood (real `cook all` drain) unless Johan reopens that gate.
+work against the 6.0 alpha track. Implementation waits for the item 7 dogfood
+(a real `cook all` drain in this repo) unless Johan explicitly reopens that
+gate.
 
 Audience: Johan and any frontier-class model continuing this track. The file
 plus the repository is the complete input.
@@ -80,9 +81,9 @@ primitives:
 - journal-backed resume (item 3)
 
 The backend's read contract is slate item 8, `cook snapshot --json`: a
-versioned, additive-only JSON projection. Its core has no hard dependency on
-item 7 and may be pulled forward; the claim fields stay absent until item 7
-lands.
+versioned, additive-only JSON projection. It shipped in `6.0.0-alpha.6`,
+pulled forward ahead of items 6 and 7 because its core has no hard dependency
+on item 7; the claim fields stay absent until item 7 lands.
 
 Until those exist and dogfood, this vision is spec-only. The dashboard may
 later read today’s ledgers in a degraded read-only mode; it must not invent a
@@ -115,7 +116,7 @@ Parked non-goals for this vision:
 | Model levers | Orchestrator/driver only; specialists inherit model; role frontmatter owns effort where supported |
 | Drain brain | Hybrid: mechanical ready/claim/launch loop; standby Jeff brain per project while autodrain is on or inbox needs a reply |
 | Host launch | Claim task, then launch host in that repo/worktree already bound to the task |
-| Scheduling | Spec now; implement after `6.0.0-alpha.7` dogfood |
+| Scheduling | Spec now; implement after the item 7 drain dogfood |
 | First artifact | This vision doc only |
 | Client (2026-08-02 follow-up) | TUI-first (Rust, ratatui); web dashboard is a later project, a second client on the same protocol |
 | Backend (2026-08-02 follow-up) | Rust `jeffd`; unix-socket API; never parses ledgers, invokes each project's own `cook` for reads and legal writes |
@@ -639,8 +640,8 @@ Ordered for learning, not for calendar commitment.
 
 Dogfood convergence (2026-08-02): queuing these phases as jeff tasks makes
 Jeff Control itself the first real workload for the item-7 `cook all` drain.
-The alpha.7 gate and this track then converge instead of serializing: the
-drain dogfood the gate demands is the act of building P1+.
+The item 7 drain dogfood gate and this track then converge instead of
+serializing: the drain dogfood the gate demands is the act of building P1+.
 
 | Phase | Deliverable | Depends on |
 |---|---|---|
@@ -737,7 +738,7 @@ blocking for their phases.
   (Agent tool), Pi (`cook_dispatch`), Codex (native dispatch), OMP as a
   Pi-family launch target.
 - Method-side prerequisite for the backend contract: `cook snapshot --json`,
-  now slate item 8 (`6.0.0-alpha.8`), so `jeffd` never learns the task
+  slate item 8, shipped in `6.0.0-alpha.6`, so `jeffd` never learns the task
   schema.
 
 ### 18.3 Verified as specified

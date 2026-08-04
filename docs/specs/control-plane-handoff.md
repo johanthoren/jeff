@@ -16,8 +16,9 @@ Johan rather than guessing.
    (locked decisions), 6.3 (TUI layout, graph feasibility survey, interaction
    model), 10 (runtime and coexistence), 15 (invariants), 16 (phases),
    18 (architecture review findings) carry the load.
-3. `docs/specs/graph-slate-6.0.md`: the method track. Item 7 (`cook all`
-   drain primitives) and item 8 (`cook snapshot`) are the dependencies.
+3. `docs/specs/graph-slate-6.0.md`: the method track. Item 8 (`cook snapshot`)
+   has shipped in `6.0.0-alpha.6`; item 7 (`cook all` drain primitives) is the
+   outstanding dependency.
 4. `skills/cook/reference/jeff-state-schema.md`: ledger shapes item 8
    projects.
 5. `docs/maintaining-jeff.md`, `skills/cook/SKILL.md`: method mechanics.
@@ -66,40 +67,32 @@ Johan rather than guessing.
 | Piece | State |
 |---|---|
 | Item 7 (`cook ready`/`claim`/`release`/`claims`, `.claim`, `maxParallelTasks`, drain loop) | specified in the slate, **not implemented** |
-| Item 8 (`cook snapshot --json`) | specified in the slate as `6.0.0-alpha.8`, **not implemented**; core has no hard item 7 dependency and may be pulled forward |
+| Item 8 (`cook snapshot --json`) | **shipped** in `6.0.0-alpha.6`, pulled forward ahead of items 6 and 7; the item 7 fields stay absent until item 7 lands |
 | Journal (item 3) | implemented; append-only `journal.jsonl` per task dir, tailable |
 | `cook approve` | shipped; byte-matched boundary, requester is not granter |
 | `jeffd`, TUI, registry, backlog surface | **nothing exists**; no daemon, watcher, HTTP surface, or home-level state anywhere in the repo today |
 
 What is startable without item 7: the design spec biased to **P1a standalone
-`jeff graph` alone**, item 8, vision phase P1a (projector, registry, graph
+`jeff graph` alone**, vision phase P1a (projector, registry, graph
 TUI, claims degraded), then P1b (`jeff backlog`). Broader backlog card work
 and joint attention follow. Blocked on item 7: P3 (claim-aware UI, open in
 host) and P4 (autodrain). Never ship a side claim mechanism to work around
 this.
 
-## 4. Recommended first move: cook item 8 before designing against it
+## 4. First move: design against the shipped item 8 contract
 
-Item 8 (`cook snapshot --json`) is the true unblocker for phase P1a
-(standalone `jeff graph`), and it is small, self-contained, and read-only.
-Cook it in this repo first, through the normal jeff pipeline, before or
-alongside drafting the design spec. Two reasons:
+Item 8 (`cook snapshot --json`) is cooked and shipped in `6.0.0-alpha.6`,
+pulled forward ahead of items 6 and 7 per the slate's sequencing note. The
+true unblocker for phase P1a (standalone `jeff graph`) therefore already
+exists: `src/core/snapshot.js` behind the `cook snapshot --json` verb,
+read-only and versioned. The item 7 fields (`claim`, `maxParallelTasks`) stay
+absent until item 7 lands.
 
-1. The Rust work then builds against a **real** contract with real output,
-   not a specified one. Every protocol decision downstream inherits the
-   snapshot document shape; discovering it is wrong after the backend exists
-   is expensive.
-2. It is a clean, low-risk warm-up task on the method itself: a normal cook
-   cycle in JavaScript, exercising the pipeline before the two-language work
-   starts.
-
-Item 8's core has no hard dependency on item 7, so pulling it forward ahead
-of the drain work is legal per the slate's sequencing note. The item 7 fields
-(`claim`, `maxParallelTasks`) simply stay absent until item 7 lands.
-
-Do not begin the Rust workspace before the snapshot document shape is
-settled, either by cooking item 8 or by Johan explicitly freezing the shape
-in the design spec.
+Read that command's real output before drafting the design spec. The Rust work
+builds against a **real** contract rather than a specified one, and every
+downstream protocol decision inherits the shape the snapshot actually emits.
+The prior constraint on starting the Rust workspace (the snapshot document
+shape must be settled first) is satisfied, not pending.
 
 ## 5. Immediate next deliverable
 
@@ -173,7 +166,7 @@ latency problem for an unbounded correctness problem across jeff versions.
   belongs to the npm method releases.
 - Queue the phases as jeff tasks in this repo's `.jeff/`. That is deliberate:
   building Jeff Control becomes the first real workload for the item 7
-  `cook all` drain, so the alpha.7 dogfood gate and this track converge
+  `cook all` drain, so the item 7 drain dogfood gate and this track converge
   instead of serializing (vision section 16).
 
 ## 8. Open questions carried forward
