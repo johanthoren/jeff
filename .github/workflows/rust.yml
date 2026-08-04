@@ -1,0 +1,33 @@
+name: Rust
+
+on:
+  push:
+    branches: [main, pi-shell]
+    paths:
+      - 'control/**'
+  pull_request:
+    branches: [main, pi-shell]
+    paths:
+      - 'control/**'
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    name: Format, lint, test the control workspace
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # ubuntu-latest ships rustup with cargo, rustfmt and clippy, so no toolchain setup step is needed.
+      - name: Format
+        run: cargo fmt --manifest-path control/Cargo.toml --check
+
+      - name: Lint
+        run: cargo clippy --locked --manifest-path control/Cargo.toml --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --manifest-path control/Cargo.toml

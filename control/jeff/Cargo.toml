@@ -1,0 +1,10 @@
+[package]
+name = "jeff"
+version = "6.0.0-alpha.7"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+assert_cmd = "2"
