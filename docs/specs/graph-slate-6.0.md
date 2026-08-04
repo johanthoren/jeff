@@ -675,13 +675,13 @@ Audit: not required (read-only projection; no trust boundary crossed).
 
 ## Release: 6.0.0
 
-Alpha versions are allocated by **release order, not by slate item**. A merged
-change that reaches the alpha track carries whichever `6.0.0-alpha.N` lockstep
-metadata holds when it lands: the next unused number if the previous one has
-already been tagged, otherwise the number already allocated and not yet tagged,
-which absorbs it under the accumulation rule below. Either way the number
-follows release order and takes whatever the merge contains, including a defect
-fix that is not a slate item. Items 1 through 5 happened to align with
+Alpha versions are allocated by **release order, not by slate item**, and
+allocation is a separate event from tagging. A merge takes the next unused
+`6.0.0-alpha.N` in lockstep metadata only when the previous number has already
+been tagged. Otherwise it joins the number already allocated and not yet
+tagged, which absorbs every further merge until its own tag is cut. Either way
+the number takes whatever the merge contains, including a defect fix that is
+not a slate item. Items 1 through 5 happened to align with
 `6.0.0-alpha.1` through `6.0.0-alpha.5`; from `6.0.0-alpha.6` onward they do
 not, and no item-to-alpha correspondence is claimed for any unreleased item.
 
@@ -712,11 +712,10 @@ The merges into `main` recorded for `6.0.0-alpha.7` so far, in merge order:
   issue rather than by PR because the merge does not exist while the text is
   being authored.
 
-The list is a record kept by hand, so it is complete only up to its last
-edit. Any merge landing after that and before the tag is cut joins
-`6.0.0-alpha.7` too, under the accumulation rule below. Once the tag exists,
-`git log --first-parent --merges 6.0.0-alpha.6..6.0.0-alpha.7` is the
-authority for what the release actually took.
+The list is kept by hand, so it is complete only up to its last edit: any merge
+landing after that and before the tag is cut joins `6.0.0-alpha.7` too. Once
+the tag exists, `git log --first-parent --merges 6.0.0-alpha.6..6.0.0-alpha.7`
+is the authority for what the release actually took.
 
 PR #187, carrying the six-location alpha.7 lockstep, the path-filtered Rust
 CI workflow and the `--locked` lockfile guard for issues #186 and #188,
@@ -731,18 +730,14 @@ shipped payload, and `scripts/release-check` requires any payload change to
 carry a version strictly above the last tag, so `6.0.0-alpha.7` was the only
 number available to it.
 
-One number then covers a whole run of merges because allocation and tagging
-are separate events. A version allocated in lockstep metadata but not yet tagged
-absorbs every further merge until its tag is cut; only a merge landing after
-a tag takes the next unused number. That is how `6.0.0-alpha.7` grew from one
-defect fix into a combined release. This section records allocations and
-never tag state: `git tag --list` is the authority for which alphas have
-actually been tagged.
+Under the allocation rule above, one number covers a whole run of merges:
+`6.0.0-alpha.7` was allocated for that defect fix and then absorbed the merges
+that followed, growing into a combined release. This section records
+allocations and never tag state: `git tag --list` is the authority for which
+alphas have actually been tagged.
 
-Issue #176, item 6, and item 7 remain. Each takes whichever number is current
-when it merges: a fresh one if the previous number has been tagged by then,
-otherwise the untagged number already allocated, shared with everything else
-that merges before that tag.
+Issue #176, item 6, and item 7 remain. Each takes whichever number the
+allocation rule above gives it when it merges.
 
 - After Johan approves and merges each item, a separate operation task with
   exact operator approval creates that alpha's immutable bare tag (no `v`
