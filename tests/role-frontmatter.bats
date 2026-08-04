@@ -111,3 +111,91 @@ CASES
   grep -F '"stage":"plan","result":"escalation"' <<<"$role"
   grep -E '"slices":.*"escalation":.*"fork":.*"options"' <<<"$role"
 }
+
+# ---------------------------------------------------------------------------
+# issue 173: the judgment tool grant, stated once for every host
+#
+# Issue 101 narrowed verify and audit to read-only at the two boundaries it
+# could reach, Claude Code frontmatter and the Pi grant table, and left Codex
+# to inherit whatever the orchestrator holds. The rule then bound two hosts and
+# not the third, and no payload sentence said so, so the divergence was
+# invisible until an operation happened to verify on Codex. Issue 173 widens
+# the grant on all three hosts and states the Codex position instead of leaving
+# a reader to infer it from absent configuration.
+#
+# Seam: §Dispatch of skills/cook/SKILL.md, which every host loads and which
+# already carries the per-host bullets. skills/cook/reference/codex-dispatch.md
+# is read only once the orchestrator is already on Codex, so a statement there
+# cannot reach the reader this contract is for, and a statement in both places
+# is the drifting duplicate that produced the divergence in the first place.
+#
+# The Edit/Write half of the grant is not asserted here: exact frontmatter
+# equality in src/pi/skill-frontmatter.test.js and the exact per-stage maps in
+# src/pi/role-session.test.js already fail on it at both enforcing boundaries.
+# ---------------------------------------------------------------------------
+
+# dispatch_section
+# The `## Dispatch` block of SKILL.md, from its heading to the next heading of
+# the same level, so the stage subsections stay inside it.
+dispatch_section() {
+  awk '/^## /{ if (found) exit; found = ($0 ~ /Dispatch/) } found' "$REPO/skills/cook/SKILL.md"
+}
+
+@test "issue 173: the dispatch contract grants both operation judgment stations command capability" {
+  local section grant
+  section="$(dispatch_section)"
+  [ -n "$section" ] || { echo "SKILL.md has no Dispatch section"; return 1; }
+
+  grant="$(grep -Ei 'verify' <<<"$section" | grep -Ei 'audit' | grep -Ei 'command|bash')" || {
+    echo "SKILL.md Dispatch does not state that verify and audit run commands; without it the only record of the grant is per-host configuration, which is what diverged"
+    return 1
+  }
+  [ -n "$grant" ]
+}
+
+@test "issue 173: the dispatch contract states what Codex grants rather than leaving it to absent configuration" {
+  local section
+  section="$(dispatch_section)"
+
+  grep -Ei 'codex' <<<"$section" | grep -Ei 'inherit' | grep -qEi 'tool|capabilit|grant|command' || {
+    echo "SKILL.md Dispatch does not say that a Codex child inherits the orchestrator's tool capability; a reader cannot tell what Codex grants without inferring it from silence"
+    return 1
+  }
+}
+
+@test "issue 173: the stations that gained command capability state that they never mutate" {
+  local file role
+  for file in cook-verify cook-audit; do
+    role="$(cat "$REPO/agents/$file.md")"
+
+    grep -qEi '(never|not|no|without)[^.]{0,80}mutat' <<<"$role" || {
+      echo "agents/$file.md can now run commands but never states that it does not mutate; prose is the only control left, since jeff declines to add a validator-level one"
+      return 1
+    }
+    grep -qEi 'external state' <<<"$role" || {
+      echo "agents/$file.md does not carry the widened reach of that prohibition: a command reaches external state, not just files"
+      return 1
+    }
+  done
+}
+
+@test "issue 173: the auditor still consumes the supplied scan instead of running its own" {
+  # Green control, not a new contract. Command capability makes "run your own
+  # scan" newly possible for the auditor, so the sentence that forbids it stops
+  # being enforced by the absence of a shell and starts being enforced by this.
+  local role
+  role="$(cat "$REPO/agents/cook-audit.md")"
+
+  grep -qEi 'scanner evidence' <<<"$role" || {
+    echo "agents/cook-audit.md no longer requires the supplied scanner evidence"
+    return 1
+  }
+  grep -qEi 'needs-work[^.]*missing audit input|missing audit input[^.]*needs-work' <<<"$role" || {
+    echo "agents/cook-audit.md no longer returns needs-work for missing audit input"
+    return 1
+  }
+  grep -qEi 'invent[^.]*scan' <<<"$role" || {
+    echo "agents/cook-audit.md no longer forbids substituting a self-run scan for the supplied one"
+    return 1
+  }
+}
