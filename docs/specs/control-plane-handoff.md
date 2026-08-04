@@ -168,8 +168,9 @@ latency problem for an unbounded correctness problem across jeff versions.
   `pull_request` workflow does not run at all on a pull request touching no
   matching path, so it reports no status rather than a passing one, and every
   Node-only pull request would then wait forever on a check that never
-  arrives. Do not tag crate releases initially: the repo's bare-version tag
-  namespace belongs to the npm method releases.
+  arrives.
+- Do not tag crate releases initially: the repo's bare-version tag namespace
+  belongs to the npm method releases.
 - Queue the phases as jeff tasks in this repo's `.jeff/`. That is deliberate:
   building Jeff Control becomes the first real workload for the item 7
   `cook all` drain, so the alpha.7 dogfood gate and this track converge
