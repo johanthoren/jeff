@@ -105,14 +105,32 @@ select_dist_tag() {
   grep -F 'npm publish --provenance --tag "$NPM_DIST_TAG"' "$WORKFLOW"
 }
 
-@test "publish workflow pins every GitHub Action to a full commit SHA" {
-  [ -f "$WORKFLOW" ]
-  run awk '/^[[:space:]]*uses:/ { print $2 }' "$WORKFLOW"
+@test "every GitHub Actions workflow pins its actions to a full commit SHA" {
+  # Supply-chain floor for the whole .github/workflows directory, not just the
+  # publish workflow: a mutable tag or branch ref lets an upstream action owner
+  # change what runs here after review.
+  local workflows=("$REPO"/.github/workflows/*.y*ml)
+  [ "${#workflows[@]}" -gt 0 ]
+  [ -f "${workflows[0]}" ]
+  # Matches both the "- uses: x" and "uses: x" step spellings, so a step
+  # written in either YAML style cannot slip past the pin requirement.
+  run awk '
+    /^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "uses:") { print FILENAME "\t" $(i + 1); break }
+      }
+    }
+  ' "${workflows[@]}"
   [ "$status" -eq 0 ]
   [ -n "$output" ]
-  while IFS= read -r action; do
-    [[ "$action" =~ ^[^@]+@[0-9a-f]{40}$ ]]
+  local failed=0 file ref
+  while IFS=$'\t' read -r file ref; do
+    if ! [[ "$ref" =~ ^[^@]+@[0-9a-f]{40}$ ]]; then
+      printf 'action not pinned to a 40-character commit SHA in %s: %s\n' "$file" "$ref"
+      failed=1
+    fi
   done <<<"$output"
+  [ "$failed" -eq 0 ]
 }
 
 @test "root package manifest provides canonical npm repository links" {

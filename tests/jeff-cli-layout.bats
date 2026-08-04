@@ -51,6 +51,25 @@ setup_file() { cook_hermetic_git; }
     || { echo "control/jeff/Cargo.toml missing assert_cmd under [dev-dependencies]"; return 1; }
 }
 
+@test "#186 AC5: make test invokes no cargo command" {
+  # A contributor working only on the Node side must be able to run the default
+  # suite with no Rust toolchain installed. The Rust suite belongs to the
+  # path-filtered cargo workflow, never to make test.
+  #
+  # Reads the recipe make would run (variables expanded) rather than the
+  # Makefile text, so it survives a behavior-preserving Makefile refactor.
+  # kiss: covers the make recipe only, not a bats case that shells out to
+  # cargo itself; widen the probe if a suite file ever needs the toolchain.
+  run env -u MAKEFLAGS make -C "$REPO" -n test
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+  if grep -Eq '(^|[[:space:]])cargo([[:space:]]|$)' <<<"$output"; then
+    echo "make test invokes cargo; the default suite must stay toolchain-free"
+    grep -En '(^|[[:space:]])cargo([[:space:]]|$)' <<<"$output"
+    return 1
+  fi
+}
+
 @test "#179 AC12: control/jeff crate version matches package.json" {
   # Checked-in lockstep only (no build-script injection). assert_cmd still
   # asserts env!(CARGO_PKG_VERSION); this guards the source string itself.
