@@ -692,13 +692,39 @@ What each alpha actually carried:
 | `6.0.0-alpha.4` | item 4 |
 | `6.0.0-alpha.5` | item 5 |
 | `6.0.0-alpha.6` | item 8, pulled forward ahead of items 6 and 7 to unblock the control plane, per the sequencing note at §Item 8 |
-| `6.0.0-alpha.7` | issue #173, a defect fix and not a slate item; allocated by PR #181 and not yet tagged |
+| `6.0.0-alpha.7` | a combined release of every merge into `main` since the `6.0.0-alpha.6` tag, enumerated below |
+
+`6.0.0-alpha.7` carries five merges into `main`, in merge order:
+
+- PR #177: the standalone TUI client shape locked.
+- PR #180: the minimal `jeff` Rust CLI front door and the `control/`
+  workspace, the work of issue #179.
+- PR #181: command capability for the operation judgment stations, the work
+  of issue #173, a defect fix and not a slate item.
+- PR #183: the alpha version skew recorded in this section, closing issue
+  #182.
+- PR #185: the P1a `jeff graph` design spec.
+
+PR #187, carrying the six-location alpha.7 lockstep, the path-filtered Rust
+CI workflow and the `--locked` lockfile guard for issues #186 and #188,
+merged into PR #180's branch rather than into `main`, and reached `main`
+inside #180. That is why `git log --merges 6.0.0-alpha.6..HEAD` reports six
+merge commits while `main` took five merges; add `--first-parent` to see the
+five.
 
 The sequence skips for two reasons, neither of them a mistake. Item 8 was
 pulled forward under the sequencing note at §Item 8. Issue #173 then changed
 shipped payload, and `scripts/release-check` requires any payload change to
 carry a version strictly above the last tag, so `6.0.0-alpha.7` was the only
 number available to it.
+
+One number then covers five merges because allocation and tagging are
+separate events. A version allocated in lockstep metadata but not yet tagged
+absorbs every further merge until its tag is cut; only a merge landing after
+a tag takes the next unused number. That is how `6.0.0-alpha.7` grew from one
+defect fix into a combined release. This section records allocations and
+never tag state: `git tag --list` is the authority for which alphas have
+actually been tagged.
 
 Issue #176, item 6, and item 7 remain. Each takes the next unused number on
 merge.
