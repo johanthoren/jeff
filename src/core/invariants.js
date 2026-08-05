@@ -497,7 +497,7 @@ export function runInvariants(
     // Fail CLOSED on type-confused containers (mirrors jq abort-on-index),
     // scoped to exactly where the jq pass indexes each field: tests/agents
     // (inv1/2) and convergence (.council) for every task; review/audit only
-    // inside the done block; deps only under full mode (inv5a/inv5b iterate it).
+    // inside the done block; deps only under full mode (inv5a iterates it directly).
     assertContainerType(t.tests, 'object', 'tests');
     assertContainerType(t.agents, 'object', 'agents');
     assertContainerType(t.convergence, 'object', 'convergence');
