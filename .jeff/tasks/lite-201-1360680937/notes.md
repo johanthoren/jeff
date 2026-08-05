@@ -175,3 +175,43 @@ The green checked-JS and Bats cases are deliberate preservation seams for `.clai
 - `node --test src/core/drain.test.js`: exit `0`; 9 tests, 9 passed, 0 failed.
 - `make typecheck`: exit `2`; sole diagnostic is `src/core/drain.js(90,37): error TS7006: Parameter 'id' implicitly has an 'any' type.`
 - `src/core/drain.test.js` has no remaining checked-JS diagnostic. The plan repair changed annotations only; all assertions and runtime behavior are unchanged.
+
+## Plan re-entry: legacy vacant audit archive
+
+### Decision
+
+- Complexity: `complex`.
+- Audit: required. The task still crosses filesystem containment, locking, concurrent mutation, task resolution, and model-owned Git worktree instructions.
+- Refactor opportunity: `null`. The production change is a compatibility correction at the archive boundary, not an additional behavior-preserving cleanup.
+- Approach: preserve all existing recorder assertions and add one public-recorder regression. The fixture starts from the accepted legacy required-audit placeholder without `findings`, records a surviving review blocker routed through `plan`, records the replacement plan, and then records a green implementation. The observable contract is that the implementation return persists, advances to review, and archives a schema-valid canonical audit placeholder with `findings: []`.
+
+### Ordered remaining slices
+
+1. Normalize an accepted vacant legacy audit when `src/core/record.js` archives a code judgment row so the archived placeholder contains `findings: []` and retains its required flag, `na` verdict, null identity, and empty evidence.
+2. Run `node --test --test-name-pattern "required vacant legacy audit" src/cli/record.test.js`, `node --test src/core/drain.test.js`, and `make typecheck`; require both focused contracts and checked-JS to pass. Do not run the full suite in this scoped repair.
+
+### Acceptance-criterion disposition
+
+- AC1-AC6: `reuse`. The ready, claim, release, listing, configuration, operational-state, prose, and lite-refusal consumer behaviors and deterministic seams recorded above are unchanged.
+- AC7: `revise`. The parallel-lane and root-HEAD gate behavior is unchanged; the deterministic completion seam now additionally requires the public recorder to accept a green post-plan repair when the live task carries the historical-compatible vacant required-audit shape, archive it canonically, and advance to review.
+- AC8: `reuse`. The lockstep release behavior and existing release seams are unchanged.
+
+### Focused RED
+
+Command:
+
+```sh
+node --test --test-name-pattern "required vacant legacy audit" src/cli/record.test.js
+```
+
+Result: exit `1`; 1 test, 0 passed, 1 failed.
+
+Decisive output:
+
+```text
+Error: [schema] judgmentHistory[0].audit.findings is invalid
+    at src/core/record.js:1152:34
+    at async TestContext.<anonymous> (src/cli/record.test.js:6545:22)
+```
+
+The failure occurs while recording the green implementation return through the public recorder. `make typecheck` is green at checkpoint `5733792`, and `src/core/drain.js:90` now carries the implemented number annotation. The new regression adds one assertion path and changes no existing assertion.

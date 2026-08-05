@@ -28,8 +28,11 @@
 - `src/core/task-schema.js:95`: `configSchemaViolations`; it currently validates full-mode `prunedTaskIds` only.
 - `src/core/snapshot.js:82`: private tolerant `readClaim` projection for item 8 snapshot state.
 - `src/core/snapshot.js:145`: `buildSnapshot` accepts an injected clock.
-- `skills/cook/SKILL.md:109`: current reserved `cook all` line.
-- `src/core/drain.js:90`: `deps.every` dependency-satisfaction callback.
+- `skills/cook/SKILL.md:109`: bounded full-mode `cook all` drain contract.
+- `src/core/drain.js:90`: `deps.every` dependency-satisfaction callback with a checked-JS `number` annotation.
+- `src/core/record.js:137`: `judgmentHistoryEntry` builds the archived code judgment row from the live outcomes.
+- `src/core/record.js:268`: `archiveAndResetJudgments` appends the history row before resetting live outcomes.
+- `src/core/task-schema.js:655`: archived code judgment validation requires audit findings except for the four-field unaudited legacy shape.
 
 ## Test paths and seams
 
@@ -58,21 +61,24 @@
 - `tests/verify.bats:399`: green, clean, current-HEAD baseline behavior.
 - `src/cli/record.test.js:2843`: named task verification binds gate hash, cleanliness, result, command, and evidence to only the selected task.
 - `src/cli/record.test.js:4571`: verified gate hash equals the current scoped-fix HEAD and is green/clean.
+- `src/cli/record.test.js:6508`: public-recorder regression for a required vacant legacy audit across review-to-plan repair.
 - `tests/release-check.bats`: existing release/version checks.
 - `tests/plugin-manifest.bats`: existing manifest lockstep checks.
 
 ## Focused commands
 
-- Runtime contract: `node --test src/core/drain.test.js`
+- Drain runtime contract: `node --test src/core/drain.test.js`
+- Legacy audit archive contract: `node --test --test-name-pattern "required vacant legacy audit" src/cli/record.test.js`
 - Checked-JS contract: `make typecheck`
-- Current runtime result: 9 tests passed, 0 failed.
-- Current checked-JS result: only `src/core/drain.js(90,37): error TS7006: Parameter 'id' implicitly has an 'any' type.`
+- Current drain runtime result: 9 tests passed, 0 failed.
+- Current legacy audit archive result: 1 test failed with `[schema] judgmentHistory[0].audit.findings is invalid`.
+- Current checked-JS result: `make: ok`.
 ## Mechanical constraints
 
 - Branch: `item-7-cook-all`.
 - Task directory: `.jeff/tasks/lite-201-1360680937`.
 - Plan changes are limited to tests, `notes.md`, and `context.md`.
 - Production, skill prose, documentation, package metadata, lockfiles, and task ledger are unchanged in the plan commit.
-- Full suite, formatter, linter, scanner, and release check are excluded from this plan re-entry; only the focused Node test and `make typecheck` run.
+- Full suite, formatter, linter, scanner, and release check are excluded from this plan re-entry; only focused Node tests and `make typecheck` run.
 - Item 8 snapshot projection, scheduler processes, services, dependencies, compatibility shims, lane orchestration in the CLI, automatic stale-claim breakage, task-stage dispatch, judgment parallelism, store-lock semantics, and suite-gate count are outside item 7 production scope.
 - Version allocation named by the task is `6.0.0-alpha.10`.
