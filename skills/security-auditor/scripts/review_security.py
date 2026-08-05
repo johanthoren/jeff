@@ -871,6 +871,49 @@ def scan_github_actions(lines: list[str], rel: str, in_tests: bool) -> list[Find
                 break
         findings.append(_finding_from_rule(rule, rel, line_no, evidence, in_tests))
 
+    # Block/folded run: bodies (`run: |`, `run: >`, optional chomp) — line regexes
+    # only see the key line, so walk active scalar bodies for ${{ / secrets.
+    run_block_start = re.compile(r"(?i)^\s*-?\s*run\s*:\s*[|>][+-]?\s*(?:#.*)?$")
+    expr_in_body = re.compile(r"\$\{\{")
+    secret_in_body = re.compile(r"(?i)\$\{\{\s*secrets\.")
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if not run_block_start.match(line):
+            idx += 1
+            continue
+        base_indent = len(line) - len(line.lstrip(" \t"))
+        idx += 1
+        while idx < len(lines):
+            body = lines[idx]
+            if body.strip():
+                body_indent = len(body) - len(body.lstrip(" \t"))
+                if body_indent <= base_indent:
+                    break
+                evidence = body.strip()
+                line_no = idx + 1
+                if expr_in_body.search(body):
+                    findings.append(
+                        _finding_from_rule(
+                            RULES_BY_ID["actions-run-expression"],
+                            rel,
+                            line_no,
+                            evidence,
+                            in_tests,
+                        )
+                    )
+                if secret_in_body.search(body):
+                    findings.append(
+                        _finding_from_rule(
+                            RULES_BY_ID["actions-secret-in-log"],
+                            rel,
+                            line_no,
+                            evidence,
+                            in_tests,
+                        )
+                    )
+            idx += 1
+
     return findings
 
 
