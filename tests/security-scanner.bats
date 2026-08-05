@@ -1165,7 +1165,8 @@ EOF
 
 # Import scanner helpers without running main.
 _189_py() {
-  PYTHONPATH="$REPO/skills/security-auditor/scripts" python3 - "$@"
+  # -B: never write skills/**/__pycache__ (payload hygiene forbids /Users/ in .pyc)
+  PYTHONPATH="$REPO/skills/security-auditor/scripts" PYTHONDONTWRITEBYTECODE=1 python3 -B - "$@"
 }
 
 @test "#189 AC1: workflow under .github/workflows/ classifies as github_actions not config" {
