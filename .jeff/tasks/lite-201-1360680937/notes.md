@@ -215,3 +215,121 @@ Error: [schema] judgmentHistory[0].audit.findings is invalid
 ```
 
 The failure occurs while recording the green implementation return through the public recorder. `make typecheck` is green at checkpoint `5733792`, and `src/core/drain.js:90` now carries the implemented number annotation. The new regression adds one assertion path and changes no existing assertion.
+
+
+## Plan re-entry: cycle-1 drain contract repair
+
+### Decision
+
+- Complexity: `complex`.
+- Audit: required. The repair coordinates parallel worktrees, one authoritative task store and lock, a private Git integration checkpoint, the full-suite gate, judgment recording, and the terminal recorder's current-HEAD check.
+- Refactor opportunity: `null`. This repair owes no behavior-preserving deduplication, deletion, or harmonization.
+- Scope: revise only the shipped `cook all` orchestration prose during implementation. Add no scheduler, task state, CLI verb, dependency, schema field, gate, or production state mechanism.
+
+### Coherent lane transition
+
+1. Resolve the absolute main-checkout root once before opening lanes and export it as `COOK_ROOT`. Every drain CLI state read or write inherits that value, including ready/claims, claim/release, journal, record, approval/reverify, named verification, and validation. The existing CLI root resolver then directs every task lookup and mutation to the main `.jeff` store and its single `.record-lock`.
+2. Keep lane work on its task branch and linked worktree. In completion order, reserve the main checkout for one landing lane, create a private integration checkpoint from current trunk, and integrate the lane into that checkpoint without moving trunk.
+3. Run the sole `cook verify --task <id>` gate at the main root on that clean private checkpoint. Keep both the main checkout HEAD and trunk stable while review and required audit judge that exact checkpoint. Later completed lanes wait for the serialized landing slot.
+4. Record every non-terminal judgment return immediately. A blocker is recorded and routed without advancing trunk. When the final required passing return arrives and every sibling judgment already passes, hold only that terminal-causing return during one reversible operation: fast-forward the trunk ref to the exact gated hash while leaving the main checkout HEAD at that same hash. Record the held return immediately afterward. The recorder therefore observes `tests.gate.hash === current main-root HEAD` and transitions the task to `done`.
+5. Release the claim, remove the lane worktree, and perform the existing full-mode terminal prune and Git completion sequence. The exception to immediate recording is limited to the final passing return and only spans the exact-hash trunk fast-forward.
+
+### Ordered slices
+
+1. Add an explicit `cook all` routing-table row before the generic `cook <arg>` task-id fallback. The row selects the bounded drain in full mode and the full-mode-only refusal in lite mode.
+2. Add one scoped root data-flow paragraph to the `cook all` section. It captures and exports the absolute main root through `COOK_ROOT`, names every drain CLI state operation, and binds them to the same `.record-lock`.
+3. Replace the current completion step with the ordered private-checkpoint, one-gate, judgment, exact-hash trunk, terminal-record, release sequence above. State the one-return recording exception explicitly and leave the general Loop, Git, Verification, and terminal mechanics unchanged.
+4. Run `bats tests/cook-all.bats`. The three new regressions must pass with all eleven existing focused contracts still intact.
+
+### Acceptance-criterion ledger
+
+#### AC1: ready set
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: `cook ready` continues to emit the exact ready projection in priority then id order and excludes claimed or dependency-blocked tasks.
+- Deterministic outcome seam: the existing isolated CLI and core ready-set matrices remain unchanged.
+
+#### AC2: claims
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: claims remain atomic, holder-identifying, ISO-dated, and unavailable to blocked or terminal tasks.
+- Deterministic outcome seam: the existing isolated concurrent core test and CLI claim cases remain unchanged.
+
+#### AC3: release and listing
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: release removes one active claim and rejects an unclaimed task; claim listing retains every active claim.
+- Deterministic outcome seam: the existing release and injected-clock listing tests remain unchanged.
+
+#### AC4: configuration
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: `maxParallelTasks` still defaults to 1 and accepts only positive integers.
+- Deterministic outcome seam: the existing pure accessor and validation matrices remain unchanged.
+
+#### AC5: operational claim state
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: `.claim` remains operational state ignored by task collection and validation, and no claim is automatically broken.
+- Deterministic outcome seam: the existing collection comparison and Bats validation case remain unchanged.
+
+#### AC6: reachable full-mode drain and lite refusal
+
+- Disposition: `write`.
+- Consumer-observable behavior: a typed `cook all` reaches the bounded full-mode drain before the generic task-id fallback; in lite it reaches the explicit full-mode-only refusal.
+- Deterministic outcome seam: `tests/cook-all.bats:269` extracts only the closed request-routing table, requires one row containing both outcomes, and proves that row precedes the fallback.
+
+#### AC7: shared-root parallel lanes and one coherent gate
+
+- Disposition: `write`.
+- Consumer-observable behavior: every lane command reads or mutates one authoritative main store under one lock. Each completion uses a private integrated checkpoint while trunk is unchanged, gates that checkpoint once before judgments, advances trunk only to the identical passing hash, and records the terminal return while the main-root HEAD still equals `gate.hash`.
+- Deterministic outcome seam: `tests/cook-all.bats:294` confines all named state operations, `COOK_ROOT`, the main root, and the shared lock to one paragraph. `tests/cook-all.bats:327` extracts completion step 4 and compares the line order of checkpoint, gate, judgments, trunk, final record, and release while requiring the narrowly scoped final-return exception.
+
+#### AC8: lockstep alpha release
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: package, plugin, and lockfile versions remain aligned at the allocated alpha.
+- Deterministic outcome seam: existing release, manifest, and publishing checks remain the sole lockstep contract.
+
+### Focused RED
+
+Command:
+
+```sh
+bats tests/cook-all.bats
+```
+
+Result: exit `1`; 14 tests, 11 passed, 3 failed.
+
+Exact output:
+
+```text
+1..14
+ok 1 ready CLI emits exact task projections in priority then id order
+ok 2 claim CLI accepts --by and persists a complete ISO-dated claim
+ok 3 claim CLI supplies a nonempty holder when --by is omitted
+ok 4 claims CLI emits each holder with a numeric age
+ok 5 release CLI removes an active claim and refuses an unclaimed task
+ok 6 validate and task collection ignore operational claim state
+ok 7 drain primitives refuse lite mode before touching task state
+ok 8 cook all contract replaces the reserved line and keeps orchestration model-owned
+not ok 9 explicit cook all routes to the drain before task-id fallback
+# (from function `require_regex' in file tests/cook-all.bats, line 131,
+#  in test file tests/cook-all.bats, line 276)
+#   `require_regex "$routing" '^\|.*explicit.*cook all.*\|.*pipeline.*\|.*full[- ]mode.*drain.*lite.*full[- ]mode[- ]only.*\|$' 'explicit cook all routing row with full and lite outcomes'' failed
+# missing cook all contract: explicit cook all routing row with full and lite outcomes
+ok 10 cook all contract refreshes capacity and isolates simultaneous lanes
+not ok 11 cook all binds every lane state operation to one main store root
+# (in test file tests/cook-all.bats, line 299)
+#   `return 1' failed
+# missing cook all contract: authoritative COOK_ROOT data flow
+ok 12 cook all contract preserves lane gates and serialized completion-order landing
+not ok 13 cook all orders one integrated checkpoint through terminal recording
+# (from function `require_fixed' in file tests/cook-all.bats, line 123,
+#  in test file tests/cook-all.bats, line 334)
+#   `require_fixed "$completion" 'private integration checkpoint'' failed
+# missing cook all contract marker: private integration checkpoint
+ok 14 cook all contract handles hidden edges, lane-local stops, drain completion, and resume
+```
+
+The three failures map one-to-one to explicit routing, authoritative root propagation, and integrated terminal ordering. The eleven pre-existing focused tests pass unchanged. There is no syntax, fixture, clock, network, or unrelated production failure.

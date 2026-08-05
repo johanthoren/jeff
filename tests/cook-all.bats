@@ -89,6 +89,33 @@ cook_all_section() {
   ' "$SKILL"
 }
 
+request_routing_table() {
+  awk '
+    /^### Request routing$/ { in_section = 1; next }
+    in_section && /^\|/ { found = 1; print; next }
+    in_section && found { exit }
+    END { if (!found) exit 1 }
+  ' "$SKILL"
+}
+
+cook_all_completion_step() {
+  cook_all_section | awk '
+    /^[[:space:]]*4\./ { found = 1 }
+    found && /^[[:space:]]*5\./ { exit }
+    found { print }
+    END { if (!found) exit 1 }
+  '
+}
+
+contract_paragraph() {
+  local content="$1" marker="$2"
+  awk -v marker="$marker" '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    index($0, marker) { found = 1; print }
+    END { if (!found) exit 1 }
+  ' <<<"$content"
+}
+
 require_fixed() {
   local content="$1" marker="$2"
   grep -qF -- "$marker" <<<"$content" || {
@@ -103,6 +130,17 @@ require_regex() {
     printf "missing cook all contract: %s\n" "$label"
     return 1
   }
+}
+
+require_before() {
+  local content="$1" earlier="$2" later="$3" label="$4"
+  local earlier_line later_line
+  earlier_line="$(awk -v marker="$earlier" 'index($0, marker) { print NR; exit }' <<<"$content")"
+  later_line="$(awk -v marker="$later" 'index($0, marker) { print NR; exit }' <<<"$content")"
+  if [ -z "$earlier_line" ] || [ -z "$later_line" ] || [ "$earlier_line" -ge "$later_line" ]; then
+    printf "invalid cook all contract order: %s\n" "$label"
+    return 1
+  fi
 }
 
 require_success() {
@@ -228,6 +266,17 @@ require_success() {
   require_regex "$section" 'no scheduler' 'no scheduler process'
 }
 
+@test "explicit cook all routes to the drain before task-id fallback" {
+  local routing
+  routing="$(request_routing_table)" || {
+    echo "skills/cook/SKILL.md has no request-routing table"
+    return 1
+  }
+
+  require_regex "$routing" '^\|.*explicit.*cook all.*\|.*pipeline.*\|.*full[- ]mode.*drain.*lite.*full[- ]mode[- ]only.*\|$' 'explicit cook all routing row with full and lite outcomes'
+  require_before "$routing" 'cook all' 'unrecognized explicit `cook <arg>`' 'explicit cook all row must precede task-id fallback'
+}
+
 @test "cook all contract refreshes capacity and isolates simultaneous lanes" {
   local section
   section="$(cook_all_section)" || return 1
@@ -240,6 +289,22 @@ require_success() {
   require_regex "$section" 'own task branch|task branch.*own' 'one task branch per lane'
   require_regex "$section" 'single claimed task.*main checkout|main checkout.*single claimed task' 'single-lane main checkout allowance'
   require_regex "$section" 'default.*1.*serial|capacity 1.*serial|1.*preserves serial' 'default capacity one preserves serial behavior'
+}
+
+@test "cook all binds every lane state operation to one main store root" {
+  local section root_contract command
+  section="$(cook_all_section)" || return 1
+  root_contract="$(contract_paragraph "$section" 'COOK_ROOT')" || {
+    echo "missing cook all contract: authoritative COOK_ROOT data flow"
+    return 1
+  }
+
+  require_regex "$root_contract" 'COOK_ROOT.*authoritative.*main.*root|authoritative.*main.*root.*COOK_ROOT' 'one authoritative main store root'
+  require_regex "$root_contract" 'export.*COOK_ROOT|COOK_ROOT.*inherit' 'COOK_ROOT inherited by lane commands'
+  for command in 'cook ready' 'cook claims' 'cook claim' 'cook journal' 'cook record' 'cook approve' 'cook reverify' 'cook verify' 'cook validate' 'cook release'; do
+    require_fixed "$root_contract" "$command"
+  done
+  require_regex "$root_contract" 'same.*record-lock|record-lock.*same' 'one shared store lock'
 }
 
 @test "cook all contract preserves lane gates and serialized completion-order landing" {
@@ -257,6 +322,26 @@ require_success() {
   require_regex "$section" 'HEAD match|HEAD.*match' 'done requires the gated HEAD'
   require_regex "$section" 'clean tree|tree.*clean' 'done requires a clean tree'
   require_regex "$section" 'record done.*release.*remove.*worktree' 'done, release, and worktree cleanup order'
+}
+
+@test "cook all orders one integrated checkpoint through terminal recording" {
+  local completion
+  completion="$(cook_all_completion_step)" || {
+    echo "skills/cook/SKILL.md has no cook all completion step"
+    return 1
+  }
+
+  require_fixed "$completion" 'private integration checkpoint'
+  require_regex "$completion" 'trunk.*unchanged.*judgment|judgment.*trunk.*unchanged' 'trunk stays unchanged during judgments'
+  require_regex "$completion" 'one.*gate|gate.*once' 'one full-suite gate'
+  require_regex "$completion" 'non-terminal.*judgment.*record.*immediate|record.*non-terminal.*judgment.*immediate' 'non-terminal judgment returns are recorded immediately'
+  require_regex "$completion" 'hold only.*final passing|only.*final passing.*unrecorded' 'only the terminal passing return is briefly held'
+  require_regex "$completion" 'gate\.hash.*current.*HEAD|current.*HEAD.*gate\.hash' 'terminal gate hash equals main-root HEAD'
+  require_before "$completion" 'private integration checkpoint' 'cook verify --task <id>' 'checkpoint before its gate'
+  require_before "$completion" 'cook verify --task <id>' 'dispatch review and required audit' 'gate before judgments'
+  require_before "$completion" 'dispatch review and required audit' 'advance trunk to the exact gated hash' 'judgments before trunk'
+  require_before "$completion" 'advance trunk to the exact gated hash' 'record the final passing return' 'trunk before terminal record'
+  require_before "$completion" 'record the final passing return' 'release the claim' 'done before release'
 }
 
 @test "cook all contract handles hidden edges, lane-local stops, drain completion, and resume" {
