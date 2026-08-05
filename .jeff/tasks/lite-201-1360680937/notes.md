@@ -105,3 +105,73 @@ skills/cook/SKILL.md has no scoped cook all section
 ```
 
 The green checked-JS and Bats cases are deliberate preservation seams for `.claim` collection and validation indifference. Every RED is caused by missing item 7 production or prose behavior, not syntax, fixture setup, network, uncontrolled timing, or shared state.
+
+## Plan re-entry: checked-JS contract repair
+
+### Decision
+
+- Complexity: `complex`.
+- Audit: required. The task still crosses filesystem containment, locking, concurrent mutation, task resolution, and model-owned Git worktree instructions.
+- Refactor opportunity: `null`. This repair owes no behavior-preserving deduplication, deletion, or harmonization.
+- Approach: preserve every assertion and runtime fixture, add only conventional JSDoc parameter types to `writeTask`, `writeClaim`, and `exists`, and declare the blocked/terminal fixture table as `Array<[number, string]>`. Leave `src/core/drain.js` unchanged so its dependency callback remains the focused implementation RED.
+
+### Ordered remaining slices
+
+1. Implement the type-only production repair at `src/core/drain.js:90` by explicitly typing the `deps.every` callback input without changing dependency-satisfaction behavior.
+2. Run `node --test src/core/drain.test.js` and `make typecheck`; require all nine focused tests and the checked-JS gate to pass after the production repair.
+
+### Acceptance-criterion disposition
+
+#### AC1: ready set
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: `cook ready` emits exactly the ready task projection ordered by priority then numeric id, with claimed tasks and tasks with unsatisfied dependencies excluded.
+- Deterministic outcome seam: the existing ready-set matrix in `src/core/drain.test.js:64` compares parsed JSON lines exactly; its assertions are unchanged.
+
+#### AC2: claims
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: claiming writes one complete holder/timestamp record, admits one concurrent winner, reports an existing holder, and refuses blocked or terminal tasks without residue.
+- Deterministic outcome seam: the existing fixed-clock and isolated-temp-root tests at `src/core/drain.test.js:95`, `src/core/drain.test.js:117`, and `src/core/drain.test.js:133` remain unchanged.
+
+#### AC3: release and listing
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: release removes an active claim and rejects repetition; claim listing reports every active claim with deterministic age and does not auto-break old claims.
+- Deterministic outcome seam: the existing release and injected-clock listing tests at `src/core/drain.test.js:162` and `src/core/drain.test.js:181` remain unchanged.
+
+#### AC4: configuration
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: absent `maxParallelTasks` resolves to `1`; only positive integers are accepted.
+- Deterministic outcome seam: the existing pure accessor and validation matrices at `src/core/drain.test.js:204` and `src/core/drain.test.js:212` remain unchanged.
+
+#### AC5: operational claim state
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: `.claim` state does not alter task collection or validation and is never auto-broken.
+- Deterministic outcome seam: the existing before/after collection comparison at `src/core/drain.test.js:225` remains unchanged; the existing Bats validation seam remains the public CLI coverage.
+
+#### AC6: full-mode prose and lite refusal
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: the model-owned full-mode drain contract uses only the four atomic primitives, while lite mode refuses them before mutation.
+- Deterministic outcome seam: the existing scoped assertions and isolated lite fixture in `tests/cook-all.bats` remain unchanged.
+
+#### AC7: parallel lanes and unchanged integration gate
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: capacity two uses independent linked worktrees with serialized integration, capacity one remains serial, and each task retains its existing green root-HEAD gate.
+- Deterministic outcome seam: the existing scoped prose assertions in `tests/cook-all.bats`, linked-worktree coverage in `tests/verify.bats`, and named gate assertions in `src/cli/record.test.js` remain unchanged.
+
+#### AC8: lockstep alpha release
+
+- Disposition: `reuse`.
+- Consumer-observable behavior: package, plugin, and lockfile metadata remain aligned at `6.0.0-alpha.10`.
+- Deterministic outcome seam: existing release, manifest, and package publishing checks remain the single lockstep contract.
+
+### Focused RED after plan repair
+
+- `node --test src/core/drain.test.js`: exit `0`; 9 tests, 9 passed, 0 failed.
+- `make typecheck`: exit `2`; sole diagnostic is `src/core/drain.js(90,37): error TS7006: Parameter 'id' implicitly has an 'any' type.`
+- `src/core/drain.test.js` has no remaining checked-JS diagnostic. The plan repair changed annotations only; all assertions and runtime behavior are unchanged.

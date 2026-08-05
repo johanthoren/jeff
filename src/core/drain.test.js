@@ -25,6 +25,7 @@ async function makeRoot(config = {}) {
   return root;
 }
 
+/** @param {string} root @param {Record<string, any>} overrides */
 async function writeTask(root, overrides) {
   const task = {
     schemaVersion: 1,
@@ -43,12 +44,14 @@ async function writeTask(root, overrides) {
   return dir;
 }
 
+/** @param {string} taskDir @param {string} by @param {string} at */
 async function writeClaim(taskDir, by, at) {
   const claimDir = join(taskDir, '.claim');
   await mkdir(claimDir, { recursive: true });
   await writeFile(join(claimDir, 'claim.json'), `${JSON.stringify({ by, at })}\n`, 'utf8');
 }
 
+/** @param {string} path */
 async function exists(path) {
   try {
     await access(path);
@@ -130,6 +133,7 @@ test('claimReport names the existing holder when a task is already claimed', asy
 test('claimReport refuses blocked and terminal tasks without leaving a claim', async () => {
   const root = await makeRoot();
   try {
+    /** @type {Array<[number, string]>} */
     const fixtures = [
       [20, 'blocked'],
       [21, 'done'],
