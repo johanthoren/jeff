@@ -1125,3 +1125,337 @@ EOF
   grep -q 'honored' "$report_path"
   grep -q 'rejected' "$report_path"
 }
+
+# ---------------------------------------------------------------------------
+# task #189: GitHub Actions file class + rules, coverage honesty, nested
+# cargo-audit discovery.
+#
+# Source of truth: .jeff/tasks/lite-189-3051406061/task.md and notes.md.
+#
+# Seams:
+#   - review-security.sh --json over hermetic workflow fixtures (--skip-deps)
+#   - importable helpers file_class / detect_dependency_audits via PYTHONPATH
+#   - jeff's real .github/workflows/{ci,publish,rust}.yml as negative corpus
+#
+# Status against current (pre-#189) code: all RED.
+# ---------------------------------------------------------------------------
+
+# Shared: write a minimal clean workflow that should stay silent once rules land
+# (pinned SHA, permissions, no injection, github-hosted). Used as negative base.
+_189_write_clean_workflow() {
+  local dest="$1"
+  mkdir -p "$(dirname "$dest")"
+  cat >"$dest" <<'EOF'
+name: clean
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Hello
+        run: echo hello
+EOF
+}
+
+# Import scanner helpers without running main.
+_189_py() {
+  PYTHONPATH="$REPO/skills/security-auditor/scripts" python3 - "$@"
+}
+
+@test "#189 AC1: workflow under .github/workflows/ classifies as github_actions not config" {
+  _189_py - <<'PY'
+from pathlib import Path
+import review_security as r
+
+wf = Path(".github/workflows/ci.yml")
+other = Path("deploy/config.yml")
+plain = Path("settings.yaml")
+
+assert r.file_class(wf) == "github_actions", f"workflow class={r.file_class(wf)!r}"
+assert r.file_class(other) == "config", f"non-workflow yml class={r.file_class(other)!r}"
+assert r.file_class(plain) == "config", f"yaml class={r.file_class(plain)!r}"
+print("ok")
+PY
+}
+
+@test "#189 AC2: actions-run-expression fires on \${{ }} interpolated into a run: block" {
+  mkdir -p "$TMP/.github/workflows"
+  cat >"$TMP/.github/workflows/inj.yml" <<'EOF'
+name: inj
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - name: unsafe
+        run: echo "hello ${{ github.event.pull_request.title }}"
+EOF
+
+  run "$SCANNER" "$TMP/.github/workflows/inj.yml" --json --skip-deps --report-dir "$TMP/reports"
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id=="actions-run-expression")] | length >= 1
+  '
+}
+
+@test "#189 AC2: actions-pull-request-target-checkout fires on pull_request_target plus PR head checkout" {
+  mkdir -p "$TMP/.github/workflows"
+  cat >"$TMP/.github/workflows/prt.yml" <<'EOF'
+name: prt
+on: pull_request_target
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+EOF
+
+  run "$SCANNER" "$TMP/.github/workflows/prt.yml" --json --skip-deps --report-dir "$TMP/reports"
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id=="actions-pull-request-target-checkout")] | length >= 1
+  '
+}
+
+@test "#189 AC2: actions-unpinned-action fires on uses: not pinned to a 40-char SHA" {
+  mkdir -p "$TMP/.github/workflows"
+  cat >"$TMP/.github/workflows/unpin.yml" <<'EOF'
+name: unpin
+on: push
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+EOF
+
+  run "$SCANNER" "$TMP/.github/workflows/unpin.yml" --json --skip-deps --report-dir "$TMP/reports"
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id=="actions-unpinned-action")] | length >= 1
+  '
+}
+
+@test "#189 AC2: actions-permissions-missing fires when workflow has no permissions: key" {
+  mkdir -p "$TMP/.github/workflows"
+  cat >"$TMP/.github/workflows/noperm.yml" <<'EOF'
+name: noperm
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+EOF
+
+  run "$SCANNER" "$TMP/.github/workflows/noperm.yml" --json --skip-deps --report-dir "$TMP/reports"
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id=="actions-permissions-missing" or .rule_id=="actions-permissions")] | length >= 1
+  '
+}
+
+@test "#189 AC2: actions-permissions-write-all fires on permissions: write-all" {
+  mkdir -p "$TMP/.github/workflows"
+  cat >"$TMP/.github/workflows/writeall.yml" <<'EOF'
+name: writeall
+on: push
+permissions: write-all
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+EOF
+
+  run "$SCANNER" "$TMP/.github/workflows/writeall.yml" --json --skip-deps --report-dir "$TMP/reports"
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id=="actions-permissions-write-all" or .rule_id=="actions-permissions")] | length >= 1
+  '
+}
+
+@test "#189 AC2: actions-self-hosted-runner fires on runs-on: self-hosted" {
+  mkdir -p "$TMP/.github/workflows"
+  cat >"$TMP/.github/workflows/self.yml" <<'EOF'
+name: self
+on: push
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: self-hosted
+    steps:
+      - run: echo hi
+EOF
+
+  run "$SCANNER" "$TMP/.github/workflows/self.yml" --json --skip-deps --report-dir "$TMP/reports"
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id=="actions-self-hosted-runner")] | length >= 1
+  '
+}
+
+@test "#189 AC2: actions-secret-in-log fires when a run: step echoes a secret" {
+  mkdir -p "$TMP/.github/workflows"
+  cat >"$TMP/.github/workflows/seclog.yml" <<'EOF'
+name: seclog
+on: push
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - name: leak
+        run: echo "token=${{ secrets.NPM_TOKEN }}"
+EOF
+
+  run "$SCANNER" "$TMP/.github/workflows/seclog.yml" --json --skip-deps --report-dir "$TMP/reports"
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id=="actions-secret-in-log")] | length >= 1
+  '
+}
+
+@test "#189 AC2: Actions rules stay silent on jeff real workflows and a clean pinned fixture" {
+  _189_write_clean_workflow "$TMP/.github/workflows/clean.yml"
+
+  run "$SCANNER" \
+    "$REPO/.github/workflows/ci.yml" \
+    "$REPO/.github/workflows/publish.yml" \
+    "$REPO/.github/workflows/rust.yml" \
+    "$TMP/.github/workflows/clean.yml" \
+    --json --skip-deps --report-dir "$TMP/reports"
+  [ "$status" -eq 0 ]
+
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id | startswith("actions-"))] | length == 0
+  '
+}
+
+@test "#189 AC2 negatives: pinned uses, permissions contents:read, no expression in run stay silent" {
+  mkdir -p "$TMP/.github/workflows"
+  cat >"$TMP/.github/workflows/neg.yml" <<'EOF'
+name: neg
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+      - name: safe env
+        env:
+          TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: ./scripts/use-token
+      - name: plain
+        run: echo hello
+EOF
+
+  run "$SCANNER" "$TMP/.github/workflows/neg.yml" --json --skip-deps --report-dir "$TMP/reports"
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '
+    [.findings[] | select(.rule_id | startswith("actions-"))] | length == 0
+  '
+}
+
+@test "#189 AC3: config-only scope reports github_actions as not_covered not covered_no_hits" {
+  # Category present only after Actions rules land. Pure config is outside the
+  # github_actions file class, so the ledger must say not_covered (inapplicable),
+  # never covered_no_hits ("we looked and found nothing").
+  cat >"$TMP/config.toml" <<'EOF'
+[tool]
+name = "example"
+EOF
+
+  run "$SCANNER" "$TMP/config.toml" --json --skip-deps --report-dir "$TMP/reports"
+  [ "$status" -eq 0 ]
+
+  echo "$output" | jq -e '
+    (.coverage | has("github_actions"))
+    and .coverage.github_actions.status == "not_covered"
+    and .coverage.github_actions.status != "covered_no_hits"
+    and .coverage.injection_sql.status == "not_covered"
+  '
+}
+
+@test "#189 AC3: workflow-only scope evaluates github_actions and leaves inapplicable categories not_covered" {
+  _189_write_clean_workflow "$TMP/.github/workflows/clean.yml"
+
+  run "$SCANNER" "$TMP/.github/workflows/clean.yml" --json --skip-deps --report-dir "$TMP/reports"
+
+  echo "$output" | jq -e '
+    (.coverage | has("github_actions"))
+    and (
+      .coverage.github_actions.status == "covered_no_hits"
+      or .coverage.github_actions.status == "covered_with_hits"
+    )
+    and .coverage.xss.status == "not_covered"
+    and .coverage.injection_sql.status == "not_covered"
+    and .coverage.xss.status != "covered_no_hits"
+    and .coverage.injection_sql.status != "covered_no_hits"
+  '
+}
+
+
+@test "#189 AC4: nested control/Cargo.toml schedules cargo-audit when root has no Cargo.toml" {
+  _189_py - <<'PY'
+from pathlib import Path
+import tempfile
+import review_security as r
+
+with tempfile.TemporaryDirectory() as td:
+    root = Path(td)
+    (root / "control").mkdir()
+    (root / "control" / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["jeff"]\nresolver = "2"\n', encoding="utf-8"
+    )
+    (root / "control" / "Cargo.lock").write_text("version = 4\n", encoding="utf-8")
+    assert not (root / "Cargo.toml").exists()
+    checks = r.detect_dependency_audits(root)
+    cargo = [c for c in checks if c[0] == "cargo-audit"]
+    assert cargo, f"expected cargo-audit scheduled, got {checks!r}"
+    _eco, cmd, _desc = cargo[0]
+    joined = " ".join(cmd)
+    assert "cargo" in cmd[0] or cmd[0].endswith("cargo"), cmd
+    assert "audit" in cmd, cmd
+    # Invocation must name the nested workspace (lockfile path, manifest path,
+    # or a cwd/manifest flag). Root-only discovery is the bug under test.
+    assert "control" in joined, f"nested path missing from cmd: {cmd!r}"
+print("ok")
+PY
+}
+
+@test "#189 AC4: root Cargo.toml still schedules cargo-audit (no nested required)" {
+  _189_py - <<'PY'
+from pathlib import Path
+import tempfile
+import review_security as r
+
+with tempfile.TemporaryDirectory() as td:
+    root = Path(td)
+    (root / "Cargo.toml").write_text(
+        '[package]\nname = "x"\nversion = "0.1.0"\nedition = "2021"\n',
+        encoding="utf-8",
+    )
+    checks = r.detect_dependency_audits(root)
+    cargo = [c for c in checks if c[0] == "cargo-audit"]
+    assert cargo, f"expected root cargo-audit, got {checks!r}"
+print("ok")
+PY
+}
+
