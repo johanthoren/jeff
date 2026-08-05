@@ -135,12 +135,13 @@ function haveActiveBlockersSurvivedRefute(task) {
 
 /** @param {MutableRecordTask} task @param {string} at */
 function judgmentHistoryEntry(task, at) {
+  const audit = Object.hasOwn(task.audit, 'findings') ? task.audit : { ...task.audit, findings: [] };
   if (isOperation(task)) {
     return {
       cycle: task.judgmentHistory?.length ?? 0,
       at,
       verification: task.verification,
-      audit: task.audit,
+      audit,
       agents: {
         verifier_agent_id: task.agents.verifier_agent_id,
         audit_agent_id: task.agents.audit_agent_id,
@@ -151,7 +152,7 @@ function judgmentHistoryEntry(task, at) {
     at,
     review: task.review,
     review2: task.review2 ?? null,
-    audit: task.audit,
+    audit,
     agents: {
       reviewer_agent_id: task.agents.reviewer_agent_id,
       reviewer2_agent_id: task.agents.reviewer2_agent_id,
