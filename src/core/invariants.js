@@ -467,7 +467,8 @@ function isResolvedOperationJudgment(outcome, exactCouncilShip) {
  * inv1/inv2, inv4 done-gate, inv5a dep-exists, `[prune]`, the inv7-11
  * convergence block, status-conditional fields, plus the cross-task duplicate-id
  * and inv5b dependency-cycle (Kahn) checks. `lite` drops the registry-only
- * checks (id-type, inv5, duplicate-id, `[prune]`).
+ * checks (id-type, inv5 provenance, duplicate-id, `[prune]`) while retaining
+ * dependency cycles over local edges.
  *
  * @param {any[]} tasks
  * @returns {string[]}
@@ -715,13 +716,16 @@ export function runInvariants(
       }
     }
 
-    // inv5a: deps name live tasks or terminally pruned predecessors
-    // (registry invariant, full only)
+    // inv5a: deps and discoveredFrom name live tasks or terminally pruned
+    // predecessors (registry invariant, full only)
     if (dependencyIds !== null) {
       for (const d of jqOr(t.deps, [])) {
         if (!dependencyIds.has(d)) {
           out.push(`task ${id}: dep ${jqStr(d)} is neither live nor terminally pruned [inv5]`);
         }
+      }
+      if (Object.hasOwn(t, 'discoveredFrom') && !dependencyIds.has(t.discoveredFrom)) {
+        out.push(`task ${id}: discoveredFrom ${jqStr(t.discoveredFrom)} is neither live nor terminally pruned [inv5]`);
       }
     }
 
@@ -754,28 +758,26 @@ export function runInvariants(
     }
   }
 
-  // inv5b: dependency cycle via Kahn over live edges only (registry invariant,
-  // full only). Terminally pruned ids are satisfied predecessors.
-  if (!lite) {
-    let remaining = tasks.map((t) => ({
-      id: t.id,
-      deps: jqOr(t.deps, []).filter((/** @type {any} */ d) => ids.includes(d)),
-    }));
-    /** @type {any[]} */
-    let removed = [];
-    for (;;) {
-      const ready = remaining
-        .filter((n) => n.deps.every((/** @type {any} */ d) => removed.includes(d)))
-        .map((n) => n.id);
-      if (ready.length === 0) {
-        if (remaining.length > 0) {
-          out.push(`dependency cycle among tasks ${JSON.stringify(remaining.map((n) => n.id))} [inv5]`);
-        }
-        break;
+  // inv5b: dependency cycle via Kahn over local edges only. Terminally pruned
+  // and unresolved external ids are not local edges.
+  let remaining = tasks.map((t) => ({
+    id: t.id,
+    deps: (Array.isArray(t.deps) ? t.deps : []).filter((/** @type {any} */ d) => ids.includes(d)),
+  }));
+  /** @type {any[]} */
+  let removed = [];
+  for (;;) {
+    const ready = remaining
+      .filter((n) => n.deps.every((/** @type {any} */ d) => removed.includes(d)))
+      .map((n) => n.id);
+    if (ready.length === 0) {
+      if (remaining.length > 0) {
+        out.push(`dependency cycle among tasks ${JSON.stringify(remaining.map((n) => n.id))} [inv5]`);
       }
-      remaining = remaining.filter((n) => !ready.includes(n.id));
-      removed = removed.concat(ready);
+      break;
     }
+    remaining = remaining.filter((n) => !ready.includes(n.id));
+    removed = removed.concat(ready);
   }
 
   return out;

@@ -811,6 +811,7 @@ export function taskSchemaViolations(task, { lite }) {
   const categoryStages = operation ? OPERATION_STAGES : CODE_STAGES;
   if (!categoryStages.includes(task.stage)) out.push(`[category-stage] ${operation ? 'operation' : 'code'} task cannot use stage ${String(task.stage)}`);
   requireField(out, 'deps', Array.isArray(task.deps) && task.deps.every(isId));
+  if (Object.hasOwn(task, 'discoveredFrom')) requireField(out, 'discoveredFrom', isId(task.discoveredFrom));
   requireField(out, 'createdAt', isIsoDateTime(task.createdAt));
   requireField(out, 'updatedAt', isIsoDateTime(task.updatedAt));
   if (task.complexity !== undefined) requireField(out, 'complexity', isOneOf(task.complexity, ['simple', 'complex']));
