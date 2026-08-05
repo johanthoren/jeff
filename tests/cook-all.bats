@@ -66,6 +66,62 @@ write_task() {
   printf '%s\n' "$dir"
 }
 
+write_operation_task() {
+  local id="$1" slug="$2" title="$3"
+  local dir="$TMP/.jeff/tasks/$(printf '%04d' "$id")-$slug"
+  mkdir -p "$dir"
+  jq -n --argjson id "$id" --arg slug "$slug" --arg title "$title" '{
+    schemaVersion: 1,
+    operationStateVersion: 1,
+    id: $id,
+    slug: $slug,
+    title: $title,
+    category: "operation",
+    status: "in_progress",
+    stage: "verify",
+    priority: "p2",
+    deps: [],
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    complexity: "complex",
+    agents: {executor_agent_id:"executor", verifier_agent_id:"verifier", audit_agent_id:null},
+    plan: {
+      result: "plan",
+      slices: ["Move the bounded registry entry."],
+      runbook: ["Confirm the source entry, then move it to the destination."],
+      preconditions: ["The source entry exists exactly once."],
+      recoveryBoundary: "Before the shared registry write, restore the captured source entry.",
+      approvalBoundary: "Rewrite the shared release registry entry from source to destination.",
+      requiresApproval: false,
+      postconditions: ["The registry has exactly one destination entry."],
+      verificationSeams: ["Read the source and destination entries independently."],
+      escalation: null
+    },
+    execution: {
+      result: "executed",
+      executor_agent_id: "executor",
+      cycle: 0,
+      recordedAt: "2026-08-01T00:20:00Z",
+      actions: ["Moved the bounded registry entry."],
+      evidence: [{command:"inspect registry", output:"entry moved"}],
+      approvalRequired: null
+    },
+    verification: {
+      verdict: "pass",
+      verifier_agent_id: "verifier",
+      postconditions: [{postcondition:"The registry has exactly one destination entry.", ok:true, evidence:"destination present once"}],
+      findings: [],
+      evidence: [{command:"inspect registry", output:"postconditions satisfied"}]
+    },
+    audit: {required:false, verdict:"na", audit_agent_id:null, evidence:[]},
+    commits: [],
+    kickbacks: [],
+    blockedReason: null,
+    abandonReason: null
+  }' > "$dir/task.json"
+  printf '%s\n' "$dir"
+}
+
 write_claim() {
   local task_dir="$1" by="$2" at="$3"
   mkdir -p "$task_dir/.claim"
@@ -234,6 +290,22 @@ require_success() {
   ' "$task_dir/task.json" >/dev/null
 }
 
+@test "rebuild CLI resets an operation lane to a fresh verification" {
+  local task_dir
+  task_dir="$(write_operation_task 2 op-stale "Operation stale checkpoint")"
+
+  run cook rebuild 2
+
+  require_success
+  jq -e '
+    .stage == "verify"
+    and (has("tests") | not)
+    and .verification.verdict == null
+    and .agents.verifier_agent_id == null
+    and (.judgmentHistory | length == 1)
+  ' "$task_dir/task.json" >/dev/null
+}
+
 @test "rebuild CLI refuses a task that is not in progress" {
   write_task 1 pending-task "Pending" >/dev/null
 
@@ -241,6 +313,33 @@ require_success() {
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"in-progress"* ]]
+}
+
+@test "rebuild CLI refuses to archive a live needs-work verdict" {
+  local task_dir
+  task_dir="$(write_task 1 kicked "Kicked back" p2 in_progress)"
+  jq '
+    .stage = "review"
+    | .tests = {authored_by_agent_id:"agent-t", green:true, evidence:[], gate:{green:true, clean:true, hash:"deadbeef"}}
+    | .agents.reviewer_agent_id = "agent-r"
+    | .review = {verdict:"needs-work", reviewer_agent_id:"agent-r", findings:[], evidence:[]}
+  ' "$task_dir/task.json" > "$task_dir/task.json.tmp"
+  mv "$task_dir/task.json.tmp" "$task_dir/task.json"
+
+  run cook rebuild 1
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"needs-work"* ]]
+  jq -e '.review.verdict == "needs-work" and .stage == "review"' "$task_dir/task.json" >/dev/null
+}
+
+@test "rebuild CLI refuses a task that never reached a checkpoint" {
+  write_task 1 early "Early stage" p2 in_progress >/dev/null
+
+  run cook rebuild 1
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"checkpoint"* ]]
 }
 
 @test "claims CLI reads the store under the shared record lock" {
@@ -390,9 +489,13 @@ require_success() {
   require_regex "$completion" 'mismatch.*trunk.*unchanged.*recovery|mismatch.*recovery.*trunk.*unchanged' 'CAS mismatch leaves trunk untouched and routes recovery'
   require_regex "$completion" 'mismatch.*(do not|without).*record.*final|mismatch.*final.*(not|unrecorded)' 'CAS mismatch does not record the terminal return'
   require_fixed "$completion" 'cook rebuild <id>'
-  require_regex "$completion" 'archives the gate and every review and audit judgment' 'rebuild archives the stale gate and its judgments'
+  require_regex "$completion" 'archives every judgment earned against the stale checkpoint' 'rebuild archives the stale checkpoint judgments'
+  require_regex "$completion" 'gate, review, and audit' 'code lane judgment set'
+  require_regex "$completion" "verification and audit" 'operation lane judgment set'
   require_regex "$completion" 'fresh identities' 'a rebuilt checkpoint re-dispatches with fresh identities'
   require_regex "$completion" 'never satisfy its successor|can never satisfy its successor' 'a discarded checkpoint judgment cannot satisfy the rebuilt one'
+  require_regex "$completion" 'refuses.*live needs-work|live needs-work.*refuse' 'rebuild refuses an ordinary kickback'
+  require_regex "$completion" 'never reached a checkpoint' 'rebuild refuses a lane with no checkpoint'
   require_before "$completion" 'capture the old trunk OID as O' 'private integration checkpoint' 'capture old trunk before integration'
   require_before "$completion" 'private integration checkpoint' 'cook verify --task <id>' 'checkpoint before its gate'
   require_before "$completion" 'cook verify --task <id>' 'dispatch review and required audit' 'gate before judgments'
