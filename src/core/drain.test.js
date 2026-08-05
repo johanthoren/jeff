@@ -76,6 +76,7 @@ test('readyReport returns the dependency matrix in priority then numeric id orde
     await writeTask(root, { id: 9, slug: 'in-progress', title: 'In progress', status: 'in_progress', priority: 'p1' });
     await writeTask(root, { id: 10, slug: 'abandoned', title: 'Abandoned', status: 'abandoned', stage: 'done', priority: 'p0' });
     await writeTask(root, { id: 11, slug: 'first', title: 'First', priority: 'p0' });
+    await writeTask(root, { id: 12, slug: 'abandoned-ready', title: 'Abandoned ready', priority: 'p0', deps: [10] });
 
     const { readyReport } = await loadDrain();
     const report = await readyReport(root);
@@ -83,6 +84,7 @@ test('readyReport returns the dependency matrix in priority then numeric id orde
     assert.equal(report.code, 0, report.stderr.join('\n'));
     assert.deepEqual(report.stdout.map((line) => JSON.parse(line)), [
       { id: 11, slug: 'first', title: 'First', priority: 'p0', deps: [] },
+      { id: 12, slug: 'abandoned-ready', title: 'Abandoned ready', priority: 'p0', deps: [10] },
       { id: 3, slug: 'pruned-ready', title: 'Pruned ready', priority: 'p1', deps: [90] },
       { id: 9, slug: 'in-progress', title: 'In progress', priority: 'p1', deps: [] },
       { id: 2, slug: 'done-ready', title: 'Done ready', priority: 'p2', deps: [1] },
