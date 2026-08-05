@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+# Prevent __pycache__ under the shipped skills/ tree.
+import sys
+sys.dont_write_bytecode = True
+
 import argparse
 import hashlib
 import json
 import os
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
