@@ -1192,40 +1192,135 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
     why: 'The verification station lacks the command capability required by the recorded seam.',
   });
 
+  const recordFailure = (
+    root,
+    finding,
+    { agentId = 'verifier-old', cycle = 0 } = {},
+  ) => recordSpecialistReturn(root, 'verify', '18', verifyReturn(agentId, {
+    cycle,
+    verdict: 'needs-work',
+    postconditions: [{
+      postcondition: 'The source is absent and the destination exists exactly once.',
+      ok: false,
+      evidence: 'the verification command was unavailable',
+    }],
+    findings: [finding],
+    evidence: [{
+      command: 'inspect registry postconditions',
+      output: 'command unavailable in the verification station',
+    }],
+  }));
+
   const prepareFailure = async ({
     auditRequired = false,
     finding = nonOperationFinding(),
+    taskOverrides = {},
   } = {}) => {
-    const prepared = await makeRoot(readyOperation(auditRequired));
+    const prepared = await makeRoot(readyOperation(auditRequired, taskOverrides));
     if (auditRequired) {
       await recordSpecialistReturn(prepared.root, 'audit', '18', auditReturn('auditor-old'));
     }
-    await recordSpecialistReturn(prepared.root, 'verify', '18', verifyReturn('verifier-old', {
-      verdict: 'needs-work',
-      postconditions: [{
-        postcondition: 'The source is absent and the destination exists exactly once.',
-        ok: false,
-        evidence: 'the verification command was unavailable',
-      }],
-      findings: [finding],
-      evidence: [{
-        command: 'inspect registry postconditions',
-        output: 'command unavailable in the verification station',
-      }],
-    }));
+    await recordFailure(prepared.root, finding);
     return { ...prepared, finding };
   };
 
-  await t.test('archives the #170-shaped station failure and clears only verification', async () => {
-    const { root, taskDir } = await prepareFailure({ auditRequired: true });
+  const prepareApprovalFailure = async () => {
+    const approvalBoundary = operationPlanReturn().approvalBoundary;
+    const prepared = await makeRoot(operationTask());
+    await recordSpecialistReturn(
+      prepared.root,
+      'plan',
+      '18',
+      operationPlanReturn({ auditRequired: true, requiresApproval: true, approvalBoundary }),
+    );
+    await recordSpecialistReturn(prepared.root, 'execute', '18', executeReturn('requester', {
+      result: 'approval-required',
+      actions: ['Captured the recoverable pre-mutation state.'],
+      evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
+      approvalRequired: approvalBoundary,
+    }));
+    await recordCore.recordApproval(prepared.root, '18', 'Chef');
+    await recordSpecialistReturn(prepared.root, 'execute', '18', executeReturn('executor-approved'));
+    await recordSpecialistReturn(prepared.root, 'audit', '18', auditReturn('auditor-old'));
+    const finding = nonOperationFinding();
+    await recordFailure(prepared.root, finding);
+    return { ...prepared, finding };
+  };
+
+  const preparePendingCouncil = async () => {
+    const prepared = await prepareFailure({
+      taskOverrides: {
+        convergence: {
+          cap: 1,
+          stages: { verify: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
+          council: {
+            convened: false,
+            stage: null,
+            members: [],
+            findings: [],
+            verdict: null,
+            outcome: null,
+          },
+        },
+      },
+    });
+    await recordSpecialistReturn(
+      prepared.root,
+      'refute',
+      '18',
+      refuteReturn('refuter-0', prepared.finding, { source: 'verify' }),
+    );
+    await recordSpecialistReturn(
+      prepared.root,
+      'plan',
+      '18',
+      operationPlanReturn({}, 'recovery-plan'),
+    );
+    await recordSpecialistReturn(prepared.root, 'execute', '18', executeReturn('executor-1'));
+    await recordFailure(prepared.root, prepared.finding, { agentId: 'verifier-1', cycle: 1 });
+    await recordSpecialistReturn(
+      prepared.root,
+      'refute',
+      '18',
+      refuteReturn('refuter-1', prepared.finding, { source: 'verify', cycle: 1 }),
+    );
+    return prepared;
+  };
+
+  const blockingCouncilReturn = (finding) => ({
+    stage: 'council',
+    council: {
+      convened: true,
+      stage: 'verify',
+      members: [
+        { agent_id: 'reverify-integrity', lens: 'integrity', temperature: 0.3 },
+        { agent_id: 'reverify-security', lens: 'security', temperature: 0.7 },
+        { agent_id: 'reverify-pragmatist', lens: 'pragmatist', temperature: 1 },
+      ],
+      findings: [{
+        id: 'F1',
+        summary: finding.what,
+        source: 'verify',
+        blockingVotes: 2,
+        survived: true,
+        followupTaskId: null,
+      }],
+      verdict: 'block',
+      outcome: null,
+    },
+  });
+
+  await t.test('preserves approval-gated provenance through reverify and fresh completion', async () => {
+    const { root, taskDir } = await prepareApprovalFailure();
     try {
       const before = await readTask(taskDir);
       const result = runCook(root, ['reverify', '18']);
       const reset = await readTask(taskDir);
 
       assert.equal(result.code, 0, result.stderr);
-      assert.deepEqual(reset.execution, before.execution);
-      assert.deepEqual(reset.audit, before.audit);
+      for (const field of ['execution', 'approvalRequests', 'approvals', 'audit']) {
+        assert.deepEqual(reset[field], before[field], `${field} changed during reverify`);
+      }
       assert.equal(reset.agents.executor_agent_id, before.agents.executor_agent_id);
       assert.equal(reset.agents.audit_agent_id, before.agents.audit_agent_id);
       assert.equal(reset.agents.verifier_agent_id, null);
@@ -1245,6 +1340,16 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
         verifier_agent_id: 'verifier-old',
         audit_agent_id: 'auditor-old',
       });
+
+      const returnFile = await writeReturn(root, verifyReturn(), 'approval-reverify.json');
+      const verified = runCook(root, ['record', 'verify', '18', 'verifier-fresh', returnFile]);
+      const completed = await readTask(taskDir);
+      assert.equal(verified.code, 0, verified.stderr);
+      assert.deepEqual([completed.status, completed.stage], ['done', 'done']);
+      for (const field of ['execution', 'approvalRequests', 'approvals', 'audit']) {
+        assert.deepEqual(completed[field], before[field], `${field} changed during fresh completion`);
+      }
+      assert.deepEqual(completed.judgmentHistory, reset.judgmentHistory);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1358,7 +1463,84 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
     }
   });
 
-  await t.test('publishes one host-neutral CLI and workflow contract', async () => {
+  await t.test('rejects post-refute and council recovery states atomically', async (recovery) => {
+    const scenarios = [
+      {
+        name: 'surviving refute routed to plan',
+        prepare: async () => {
+          const prepared = await prepareFailure();
+          await recordSpecialistReturn(
+            prepared.root,
+            'refute',
+            '18',
+            refuteReturn('refuter-plan', prepared.finding, { source: 'verify' }),
+          );
+          return prepared;
+        },
+        assertState: (task) => {
+          assert.equal(task.stage, 'plan');
+          assert.equal(task.verification.findings[0].refute.verdict, 'survives');
+          assert.deepEqual(
+            [task.kickbacks.at(-1).from, task.kickbacks.at(-1).to],
+            ['verify', 'plan'],
+          );
+        },
+      },
+      {
+        name: 'awaiting pending council',
+        prepare: preparePendingCouncil,
+        assertState: (task) => {
+          assert.equal(task.stage, 'verify');
+          assert.deepEqual(
+            [task.convergence.council.convened, task.convergence.council.stage],
+            [false, 'verify'],
+          );
+        },
+      },
+      {
+        name: 'convened blocking council',
+        prepare: async () => {
+          const prepared = await preparePendingCouncil();
+          await recordSpecialistReturn(
+            prepared.root,
+            'council',
+            '18',
+            blockingCouncilReturn(prepared.finding),
+          );
+          return prepared;
+        },
+        assertState: (task) => {
+          assert.equal(task.stage, 'execute');
+          assert.deepEqual(
+            [
+              task.convergence.council.convened,
+              task.convergence.council.verdict,
+              task.convergence.council.outcome,
+            ],
+            [true, 'block', null],
+          );
+        },
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      await recovery.test(scenario.name, async () => {
+        const { root, taskDir } = await scenario.prepare();
+        try {
+          scenario.assertState(await readTask(taskDir));
+          const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+          const rejected = runCook(root, ['reverify', '18']);
+          assert.notEqual(rejected.code, 0);
+          assert.match(rejected.stderr, /\[record-reverify\].*(?:refute|kickback|council)/i);
+          assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  await t.test('publishes one host-neutral CLI and workflow contract', async (workflow) => {
     const { root } = await makeRoot();
     try {
       const help = runCook(root, ['help']);
@@ -1385,17 +1567,25 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
         ],
       ];
       for (const [name, path] of documents) {
-        const text = await readFile(path, 'utf8');
-        const contract = text
-          .split(/\n\s*\n/)
-          .filter((paragraph) => paragraph.includes('cook reverify <id>'))
-          .join('\n');
-        assert.notEqual(contract, '', `${name} has no cook reverify contract`);
-        assert.match(contract, /needs-work/i, `${name} does not constrain the failed verdict`);
-        assert.match(contract, /judgmentHistory/, `${name} does not retain the superseded judgment`);
-        assert.match(contract, /verification/i, `${name} does not identify the cleared slot`);
-        assert.match(contract, /execution/i, `${name} does not preserve execution`);
-        assert.match(contract, /fresh/i, `${name} does not require a fresh verifier`);
+        await workflow.test(name, async () => {
+          const text = await readFile(path, 'utf8');
+          const contract = text
+            .split(/\n\s*\n/)
+            .filter((paragraph) => paragraph.includes('cook reverify <id>'))
+            .join('\n');
+          assert.notEqual(contract, '', `${name} has no cook reverify contract`);
+          assert.match(contract, /needs-work/i, `${name} does not constrain the failed verdict`);
+          assert.match(contract, /judgmentHistory/, `${name} does not retain the superseded judgment`);
+          assert.match(contract, /verification/i, `${name} does not identify the cleared slot`);
+          assert.match(contract, /execution/i, `${name} does not preserve execution`);
+          assert.match(contract, /fresh/i, `${name} does not require a fresh verifier`);
+          assert.match(contract, /untouched/i, `${name} does not require untouched recovery state`);
+          assert.match(
+            contract,
+            /(?:before[^.\n]*refute[^.\n]*kickback[^.\n]*council|pre-refute[^.\n]*pre-kickback[^.\n]*pre-council)/i,
+            `${name} does not state pre-refute, pre-kickback, pre-council timing`,
+          );
+        });
       }
     } finally {
       await rm(root, { recursive: true, force: true });
