@@ -101,6 +101,11 @@ export function configSchemaViolations(config, { lite }) {
         typeof id === 'number' && Number.isInteger(id) && id > 0
       )));
   }
+  if (!lite && config !== null && Object.hasOwn(config, 'maxParallelTasks')) {
+    requireField(out, 'maxParallelTasks', typeof config.maxParallelTasks === 'number'
+      && Number.isInteger(config.maxParallelTasks)
+      && config.maxParallelTasks >= 1);
+  }
   return out;
 }
 

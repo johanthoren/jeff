@@ -106,7 +106,21 @@ Explicit `cook` invocations and named task/ref requests are governed by the rout
 | **C. Record + start capture** | Pending ledger, then begin capture (capture lock still confirms the task definition) |
 
 **Hold all durable writes until the Chef picks.** Recommendation bias (not a veto): small reversible product fix → **A**; method/system/release-shaped or unsure → **C** (or **B** if only backlog). If the Chef explicitly picks **A** for skill/brand/method prose, honor it; method weight biases the recommendation toward **C**/**B**, it does not block **A**. Version cuts and other Chef-owned calls in `docs/maintaining-jeff.md` use this same gate; never silent-bump on path **A** without an explicit yes. Paths **B**/**C** keep the existing Record/Start/capture-lock contracts; recording ≠ starting.
-- `cook all`: drain every unblocked task. *(v1.1: reserved; not yet a control verb.)*
+### `cook all`: bounded full-mode drain
+
+`cook all` is full-mode-only. In lite mode, `cook all` reports that it is full-mode-only and stops. The default `maxParallelTasks` value of 1 preserves serial behavior.
+
+The orchestrating model is the runtime. There is no scheduler process and no CLI lane orchestrator. The CLI provides only the `cook ready`, `cook claim`, `cook release`, and `cook claims` primitives.
+
+1. Read `cook ready` and `cook claims` fresh from disk. Never trust context. While unclaimed ready tasks exist and active claims are fewer than `maxParallelTasks`, claim the next task, journal a drain intent, and open its lane.
+2. Whenever two or more tasks are claimed simultaneously, every claimed task gets its own linked git worktree on its own task branch. A single claimed task may use the main checkout.
+3. Run each lane through The Loop independently. Dispatch stages of different lanes concurrently when the host supports it; otherwise interleave them. The `.record-lock` serializes store writes, and lanes share no checkout.
+4. Integration is serialized at the main checkout, in completion order. When a lane's judgments pass, merge or rebase its task branch onto trunk in the main checkout. Then run `cook verify --task <id>` at the main root against the integrated tree. This keeps the root HEAD gate unchanged: done requires a HEAD match and a clean tree, and the gate catches cross-task interference. Then record done, release the claim, and remove the worktree, in that order.
+5. A merge conflict while landing a later lane is a discovered hidden edge. Route the conflict as an ordinary scoped kickback to implement for that lane, in its worktree. Tasks that obviously touch the same area run in sequence, not in parallel.
+6. A capture lock, approval stop, escalation, or blocked-to-operator condition stops only its own lane. The drain continues the rest and includes each stopped lane with its Chef-facing grounder in the final report.
+7. Refresh ready tasks and claims after every completion because completed tasks can unblock successors. Stop when no ready unclaimed tasks remain and every claim is resolved. Report a drain summary with each task's terminal state, cycles, and kickbacks.
+8. Never automatically break a claim. Report a claim older than 24h with no subsequent journal record, and ask the operator.
+9. To resume after interruption, reconstruct lanes from claims and journals, then resume every claimed task at its recorded stage. Dangling intents keep their existing resume semantics.
 
 Read the task dirs (`cook ls`) **fresh from disk** at the start of every loop. Never trust your own context for task state.
 
