@@ -176,7 +176,7 @@ The `plan` specialist leaves one durable record in `notes.md`: approach, slices,
 
 When capture locks `category: "operation"`, **read `skills/cook/reference/operations.md`** before dispatching plan: it owns the operation plan and escalation return shapes, the execute/approve/re-fire sequence, and the boundary that keeps verification independent of the executor.
 
-For an operation verification failure unrelated to execution, `cook reverify <id>` is eligible only while the recorded verification is `needs-work` and no blocking finding requires execute recovery. The atomic transition retains the superseded judgment in `judgmentHistory`, clears only the live verification slot, leaves execution unchanged, and returns the task to `verify`; dispatch a fresh verifier distinct from both the executor and every archived verifier.
+`cook reverify <id>` is available only for an in-progress operation with completed execution, a current `needs-work` verification-only failure, and an untouched recovery state before any refute, kickback, or council recovery; no blocking finding may be routed to `execute`. The atomic transition appends the whole superseded judgment and its evidence to `judgmentHistory`, clears only the live verification slot, leaves recorded execution and approvals unchanged, and returns the task to `verify`; dispatch a fresh verifier distinct from both the executor and every archived verifier.
 
 ### Gate model: capture-lock + escape-by-return
 
