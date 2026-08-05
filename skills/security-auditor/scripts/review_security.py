@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+# Prevent __pycache__ under the shipped skills/ tree.
+import sys
+sys.dont_write_bytecode = True
+
 import argparse
 import hashlib
 import json
 import os
 import re
 import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -361,10 +364,86 @@ RULES: list[Rule] = [
         risk="Without a `--` separator, a value beginning with `-` is parsed as an option.",
         fix="Insert `--` before path operands: `rm -- \"$file\"`.",
     ),
+    # --- GitHub Actions pack (task #189). Applied only to paths classified as
+    # github_actions (see file_class + scan_file). Line regexes cover single-line
+    # signals; scan_github_actions adds structural multi-line checks.
+    Rule(
+        id="actions-run-expression",
+        category="github_actions",
+        severity="critical",
+        cwe="CWE-94",
+        title="GitHub Actions expression interpolated into run script",
+        regex=r"(?i)^\s*-?\s*run\s*:.*\$\{\{",
+        risk="Interpolating ${{ }} into run: lets untrusted workflow data become shell.",
+        fix="Pass values via env: and read $ENV_VAR in the script; never ${{ }} inside run:.",
+    ),
+    Rule(
+        id="actions-pull-request-target-checkout",
+        category="github_actions",
+        severity="critical",
+        cwe="CWE-829",
+        title="pull_request_target with checkout of PR head",
+        # Structural only (post-pass); never matches line-by-line alone.
+        regex=r"(?!)",
+        risk="pull_request_target secrets plus PR-head checkout enables malicious PR code execution.",
+        fix="Avoid PR-head checkout on pull_request_target, or use pull_request with least privilege.",
+    ),
+    Rule(
+        id="actions-unpinned-action",
+        category="github_actions",
+        severity="high",
+        cwe="CWE-829",
+        title="GitHub Action not pinned to a commit SHA",
+        regex=r"(?i)^\s*-?\s*uses\s*:\s*(?!\./)[^\s@]+@(?![0-9a-fA-F]{40}(?:\s|#|$))\S*",
+        risk="Tag or branch refs are movable; a compromised action can change under you.",
+        fix="Pin uses: to a full 40-character commit SHA (and comment the version tag).",
+    ),
+    Rule(
+        id="actions-permissions-missing",
+        category="github_actions",
+        severity="medium",
+        cwe="CWE-250",
+        title="Workflow declares no permissions key",
+        regex=r"(?!)",
+        risk="Without explicit permissions, workflows inherit the default broad token scope.",
+        fix="Add top-level or job-level permissions: with least privilege (e.g. contents: read).",
+    ),
+    Rule(
+        id="actions-permissions-write-all",
+        category="github_actions",
+        severity="high",
+        cwe="CWE-250",
+        title="Workflow grants permissions: write-all",
+        regex=r"(?i)^\s*permissions\s*:\s*write-all\b",
+        risk="write-all grants every scope on the GITHUB_TOKEN, maximizing blast radius.",
+        fix="Replace write-all with explicit least-privilege permission keys.",
+    ),
+    Rule(
+        id="actions-self-hosted-runner",
+        category="github_actions",
+        severity="high",
+        cwe="CWE-1188",
+        title="Workflow runs on a self-hosted runner",
+        regex=r"(?i)^\s*runs-on\s*:.*\bself-hosted\b",
+        risk="Self-hosted runners on public repos can be compromised by untrusted jobs.",
+        fix="Use GitHub-hosted runners, or isolate self-hosted runners to trusted private workflows.",
+    ),
+    Rule(
+        id="actions-secret-in-log",
+        category="github_actions",
+        severity="critical",
+        cwe="CWE-532",
+        title="Secret value written to workflow logs from run step",
+        regex=r"(?i)^\s*-?\s*run\s*:.*\$\{\{\s*secrets\.",
+        risk="Echoing secrets into logs exposes them to anyone who can read the workflow run.",
+        fix="Never print secrets; pass them via env: to commands that consume them privately.",
+    ),
+
 ]
 
 CATEGORIES = sorted({rule.category for rule in RULES})
 RULES_BY_CATEGORY = {category: [r for r in RULES if r.category == category] for category in CATEGORIES}
+RULES_BY_ID = {rule.id: rule for rule in RULES}
 
 # Coverage engines available under task #24 (external engines are #25/#26).
 COVERAGE_ENGINES = ["builtin"]
@@ -414,13 +493,20 @@ CATEGORY_APPLICABILITY: dict[str, set[str]] = {
     "xss": {"js"},
     "sensitive_logging": {"python", "js", "compiled"},
     "insecure_permissions": {"python", "js", "shell", "compiled", "config"},
+    "github_actions": {"github_actions"},
 }
-
 
 def file_class(path: Path) -> str:
     if path.name in {"Dockerfile", "Containerfile"}:
         return "shell"
-    return FILE_CLASSES.get(path.suffix.lower(), "compiled")
+    suffix = path.suffix.lower()
+    if suffix in {".yml", ".yaml"}:
+        parts_lower = [part.lower() for part in path.parts]
+        for idx in range(len(parts_lower) - 1):
+            if parts_lower[idx] == ".github" and parts_lower[idx + 1] == "workflows":
+                return "github_actions"
+    return FILE_CLASSES.get(suffix, "compiled")
+
 
 
 def is_test_path(rel_path: str) -> bool:
@@ -748,6 +834,92 @@ def resolve_suppression(
     )
 
 
+def _finding_from_rule(rule: Rule, rel: str, line: int, evidence: str, in_tests: bool) -> Finding:
+    return Finding(
+        severity=rule.severity,
+        category=rule.category,
+        title=rule.title,
+        cwe=rule.cwe,
+        file=rel,
+        line=line,
+        evidence=evidence[:220],
+        risk=rule.risk,
+        fix=rule.fix,
+        confidence=rule.confidence,
+        rule_id=rule.id,
+        in_tests=in_tests,
+    )
+
+
+def scan_github_actions(lines: list[str], rel: str, in_tests: bool) -> list[Finding]:
+    """File-level GitHub Actions checks that a single-line regex cannot express safely."""
+    text = "\n".join(lines)
+    findings: list[Finding] = []
+
+    if not re.search(r"(?m)^\s*permissions\s*:", text):
+        rule = RULES_BY_ID["actions-permissions-missing"]
+        evidence = lines[0].strip() if lines else rel
+        findings.append(_finding_from_rule(rule, rel, 1, evidence, in_tests))
+
+    if re.search(r"(?i)\bpull_request_target\b", text) and re.search(
+        r"(?i)pull_request\.head\b", text
+    ):
+        rule = RULES_BY_ID["actions-pull-request-target-checkout"]
+        line_no = 1
+        evidence = "pull_request_target with PR head checkout"
+        for idx, line in enumerate(lines, start=1):
+            if re.search(r"(?i)pull_request\.head\b", line):
+                line_no = idx
+                evidence = line.strip()
+                break
+        findings.append(_finding_from_rule(rule, rel, line_no, evidence, in_tests))
+
+    # Block/folded run: bodies (`run: |`, `run: >`, optional chomp) — line regexes
+    # only see the key line, so walk active scalar bodies for ${{ / secrets.
+    run_block_start = re.compile(r"(?i)^\s*-?\s*run\s*:\s*[|>][+-]?\s*(?:#.*)?$")
+    expr_in_body = re.compile(r"\$\{\{")
+    secret_in_body = re.compile(r"(?i)\$\{\{\s*secrets\.")
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if not run_block_start.match(line):
+            idx += 1
+            continue
+        base_indent = len(line) - len(line.lstrip(" \t"))
+        idx += 1
+        while idx < len(lines):
+            body = lines[idx]
+            if body.strip():
+                body_indent = len(body) - len(body.lstrip(" \t"))
+                if body_indent <= base_indent:
+                    break
+                evidence = body.strip()
+                line_no = idx + 1
+                if expr_in_body.search(body):
+                    findings.append(
+                        _finding_from_rule(
+                            RULES_BY_ID["actions-run-expression"],
+                            rel,
+                            line_no,
+                            evidence,
+                            in_tests,
+                        )
+                    )
+                if secret_in_body.search(body):
+                    findings.append(
+                        _finding_from_rule(
+                            RULES_BY_ID["actions-secret-in-log"],
+                            rel,
+                            line_no,
+                            evidence,
+                            in_tests,
+                        )
+                    )
+            idx += 1
+
+    return findings
+
+
 def scan_file(
     path: Path, compiled_rules: list[tuple[Rule, re.Pattern[str]]], repo_root: Path
 ) -> tuple[list[Finding], list[Suppression]]:
@@ -763,32 +935,20 @@ def scan_file(
     rel = str(path.relative_to(repo_root)) if path.is_relative_to(repo_root) else str(path)
     in_tests = is_test_path(rel)
     lines = text.splitlines()
+    cls = file_class(path)
 
     for idx, line in enumerate(lines, start=1):
         line_findings: list[Finding] = []
         for rule, pattern in compiled_rules:
+            if rule.category == "github_actions" and cls != "github_actions":
+                continue
             if not pattern.search(line):
                 continue
             key = (rule.id, idx, line.strip())
             if key in seen:
                 continue
             seen.add(key)
-            line_findings.append(
-                Finding(
-                    severity=rule.severity,
-                    category=rule.category,
-                    title=rule.title,
-                    cwe=rule.cwe,
-                    file=rel,
-                    line=idx,
-                    evidence=line.strip()[:220],
-                    risk=rule.risk,
-                    fix=rule.fix,
-                    confidence=rule.confidence,
-                    rule_id=rule.id,
-                    in_tests=in_tests,
-                )
-            )
+            line_findings.append(_finding_from_rule(rule, rel, idx, line.strip(), in_tests))
 
         marker = parse_suppression(line)
         if marker is not None:
@@ -797,7 +957,16 @@ def scan_file(
 
         findings.extend(line_findings)
 
+    if cls == "github_actions":
+        for extra in scan_github_actions(lines, rel, in_tests):
+            key = (extra.rule_id, extra.line, extra.evidence)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append(extra)
+
     return findings, suppressions
+
 
 
 def parse_npm_vulns(stdout: str) -> dict[str, int]:
@@ -899,8 +1068,41 @@ def detect_dependency_audits(repo_root: Path) -> list[tuple[str, list[str], str]
     if (repo_root / "requirements.txt").exists() or (repo_root / "pyproject.toml").exists():
         checks.append(("pip-audit", ["pip-audit", "--format", "json"], "Python dependency audit"))
 
+    cargo_roots: list[Path] = []
     if (repo_root / "Cargo.toml").exists():
-        checks.append(("cargo-audit", ["cargo", "audit", "--json"], "Rust dependency audit"))
+        cargo_roots.append(repo_root)
+    else:
+        for manifest in sorted(repo_root.rglob("Cargo.toml")):
+            if any(part in IGNORE_DIRS for part in manifest.parts):
+                continue
+            cargo_roots.append(manifest.parent)
+            break  # one nested workspace is enough; avoid double-scheduling
+
+    seen_locks: set[Path] = set()
+    for cargo_root in cargo_roots:
+        lock = cargo_root / "Cargo.lock"
+        if lock.exists():
+            lock_key = lock.resolve()
+            if lock_key in seen_locks:
+                continue
+            seen_locks.add(lock_key)
+            rel_lock = lock.relative_to(repo_root).as_posix()
+            checks.append(
+                (
+                    "cargo-audit",
+                    ["cargo", "audit", "--json", "--file", rel_lock],
+                    "Rust dependency audit",
+                )
+            )
+        else:
+            rel_manifest = (cargo_root / "Cargo.toml").relative_to(repo_root).as_posix()
+            checks.append(
+                (
+                    "cargo-audit",
+                    ["cargo", "audit", "--json", "--manifest-path", rel_manifest],
+                    "Rust dependency audit",
+                )
+            )
 
     if (repo_root / "Gemfile").exists():
         checks.append(("bundle-audit", ["bundle", "exec", "bundle-audit", "check", "--format", "json"], "Ruby dependency audit"))
