@@ -3645,11 +3645,11 @@ test('Item 5 bonusGranted is an optional boolean on each convergence counter', a
 });
 
 test('Item 6 discoveredFrom preserves historical ledgers and validates lite id shapes', async (t) => {
-  for (const [name, task] of [
-    ['historical absence', canonicalTask()],
-    ['string id', canonicalTask({ discoveredFrom: '#18' })],
-    ['number id', canonicalTask({ discoveredFrom: 18 })],
-  ]) {
+  for (const [name, task] of Object.entries({
+    'historical absence': canonicalTask(),
+    'string id': canonicalTask({ discoveredFrom: '#18' }),
+    'number id': canonicalTask({ discoveredFrom: 18 }),
+  })) {
     await t.test(`accepts ${name}`, async () => {
       const result = await verdictFor(task);
       assert.equal(result.ok, true, result.stderr.join('\n'));
