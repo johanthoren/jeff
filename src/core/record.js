@@ -115,8 +115,8 @@ function isOperationReverifyEligible(task) {
     && isAgentId(task.agents?.verifier_agent_id)
     && task.verification.verifier_agent_id === task.agents.verifier_agent_id
     && !findings.some((/** @type {any} */ finding) => finding.refute != null)
-    && task.convergence?.council?.stage === null
-    && task.convergence.council.convened === false
+    && !isAwaitingCouncil(task)
+    && !isPendingCouncilRecovery(task)
     && !findings.some((/** @type {any} */ finding) => (
       finding.class === 'blocking' && finding.kickTo === 'execute'
     ));
