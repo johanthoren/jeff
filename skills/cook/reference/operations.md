@@ -13,3 +13,5 @@ Jeff then re-fires a fresh execute specialist with ordinary host-native tools. T
 ## Cooperative operation boundary
 
 Execute and verify use ordinary host-native stage dispatch. Role instructions narrow the expected behavior of cooperative agents; they do not sandbox tools available from the host. Verification methods may differ by host, and unavailable methods produce a `needs-work` finding rather than a confinement adapter. Never substitute executor or execution evidence for independent verification.
+
+`cook reverify <id>` is available only for an in-progress operation with completed execution, a current `needs-work` verification-only failure, and an untouched recovery state before any refute, kickback, or council recovery; no blocking finding may be routed to `execute`. The atomic transition appends the whole superseded judgment and its evidence to `judgmentHistory`, clears only the live verification slot, leaves recorded execution and approvals unchanged, and returns the task to `verify`; the next verifier must be fresh and distinct from both the executor and every archived verifier.

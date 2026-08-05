@@ -16,7 +16,12 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { isType } from './validate.js';
-import { archivedJudgeAgentIds, forbiddenCouncilAgentIds, isAgentId } from './identity-policy.js';
+import {
+  archivedJudgeAgentIds,
+  forbiddenCouncilAgentIds,
+  isAgentId,
+  isArchivedVerifierAgentForbidden,
+} from './identity-policy.js';
 import {
   hasCompletedApprovalProvenance,
   isAuthoritativeOperation,
@@ -581,6 +586,12 @@ export function runInvariants(
         || (vr !== null && outcomeVerifier !== null && vr !== outcomeVerifier)
         || (ex !== null && outcomeVerifier === ex)) {
         out.push(`task ${id}: verification outcome identity does not match its separated verifier [inv2]`);
+      }
+      if (isArchivedVerifierAgentForbidden(t, vr)
+        || isArchivedVerifierAgentForbidden(t, outcomeVerifier)) {
+        out.push(
+          `task ${id}: fresh verifier must not reuse an archived verifier identity [operation-reverify-identity]`,
+        );
       }
     }
     if (t.category === 'operation' && isType(t.audit, 'object')) {

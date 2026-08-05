@@ -23,7 +23,7 @@ import { adoptPlan, planSection, planCheck, planAppend, isIssueRef, planIssueOp 
 import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
 import { git, indiffReport } from '../core/git.js';
-import { recordApproval, recordSpecialistFile } from '../core/record.js';
+import { recordApproval, recordReverify, recordSpecialistFile } from '../core/record.js';
 import { appendTaskJournal, isJournalIntentStage } from '../core/journal.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
@@ -73,6 +73,7 @@ function usageReport() {
       '  verify       Run a standalone baseline; use `cook verify --task <id>` to bind a task gate.',
       '  record       Record a specialist or council result.',
       '  approve <id> <operator>  Grant the exact pending operation request.',
+      '  reverify <id>  Archive an eligible failed operation verification and request a fresh verifier.',
       '  journal <id> <intent|external>  Append an operator journal event.',
       '  baseline check [<hash>]  Check the green, clean baseline log.',
       '  ls           List tasks.',
@@ -220,6 +221,22 @@ async function main() {
     try {
       await recordApproval(root, rest[0], rest[1]);
       return emit({ code: 0, stdout: [`cook: recorded approval for task ${rest[0]}`], stderr: [] });
+    } catch (error) {
+      process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
+      return process.exit(1);
+    }
+  }
+
+
+  if (sub === 'reverify') {
+    if (rest.length === 0 || rest[0] === '') {
+      process.stderr.write('cook: usage: cook reverify <id>\n');
+      return process.exit(1);
+    }
+    if (rejectUnknownArgs('reverify', rest.slice(1))) return process.exit(1);
+    try {
+      await recordReverify(root, rest[0]);
+      return emit({ code: 0, stdout: [`cook: requested fresh verification for task ${rest[0]}`], stderr: [] });
     } catch (error) {
       process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
       return process.exit(1);
