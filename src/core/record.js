@@ -106,6 +106,7 @@ function isOperationReverifyEligible(task) {
   const findings = task.verification?.findings;
   return isOperation(task)
     && task.status === 'in_progress'
+    && task.stage === 'verify'
     && task.execution?.result === 'executed'
     && isAgentId(task.agents?.executor_agent_id)
     && task.execution.executor_agent_id === task.agents.executor_agent_id
@@ -113,6 +114,9 @@ function isOperationReverifyEligible(task) {
     && isFailingJudgment(task.verification)
     && isAgentId(task.agents?.verifier_agent_id)
     && task.verification.verifier_agent_id === task.agents.verifier_agent_id
+    && !findings.some((/** @type {any} */ finding) => finding.refute != null)
+    && task.convergence?.council?.stage === null
+    && task.convergence.council.convened === false
     && !findings.some((/** @type {any} */ finding) => (
       finding.class === 'blocking' && finding.kickTo === 'execute'
     ));
@@ -1161,7 +1165,7 @@ export async function recordReverify(root, id) {
   return updateTask(root, id, (task) => {
     if (!isOperationReverifyEligible(task)) {
       throw new Error(
-        '[record-reverify] requires an in-progress operation with completed execution and a needs-work verification that does not require execute recovery',
+        '[record-reverify] requires an untouched in-progress operation with completed execution and a needs-work verification before refute, kickback, council, or execute recovery',
       );
     }
     const next = /** @type {any} */ (structuredClone(task));
