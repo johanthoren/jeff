@@ -1447,6 +1447,33 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
     }
   });
 
+  await t.test('supports a schema-valid failed operation without convergence state', async () => {
+    const { root, taskDir } = await prepareFailure();
+    try {
+      const before = await readTask(taskDir);
+      delete before.convergence;
+      await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(before, null, 2)}\n`, 'utf8');
+
+      const result = runCook(root, ['reverify', '18']);
+      const reset = await readTask(taskDir);
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(reset.execution, before.execution);
+      assert.equal(reset.judgmentHistory.length, 1);
+      assert.deepEqual(reset.judgmentHistory[0].verification, before.verification);
+      assert.equal(reset.verification.verifier_agent_id, null);
+
+      const returnFile = await writeReturn(root, verifyReturn(), 'no-convergence-verify.json');
+      const verified = runCook(root, ['record', 'verify', '18', 'verifier-fresh', returnFile]);
+      const completed = await readTask(taskDir);
+      assert.equal(verified.code, 0, verified.stderr);
+      assert.deepEqual([completed.status, completed.stage], ['done', 'done']);
+      assert.equal(completed.verification.verifier_agent_id, 'verifier-fresh');
+      assert.deepEqual(completed.execution, before.execution);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });
 
 test('issue 101 surviving blocker: complex operation completes without code-review identities in either judgment order', async (t) => {
