@@ -13,6 +13,8 @@ import {
   activeRefuterAgentIds,
   archivedJudgeAgentIds,
   forbiddenCouncilAgentIds,
+  isAgentId,
+  isArchivedVerifierAgentForbidden,
   isRefuteAgentForbidden,
 } from './identity-policy.js';
 import {
@@ -97,6 +99,23 @@ function isPassingJudgment(outcome) {
 /** @param {any} outcome */
 function isFailingJudgment(outcome) {
   return outcome?.verdict === 'needs-work' && isConsistentJudgment(outcome);
+}
+
+/** @param {MutableRecordTask} task */
+function isOperationReverifyEligible(task) {
+  const findings = task.verification?.findings;
+  return isOperation(task)
+    && task.status === 'in_progress'
+    && task.execution?.result === 'executed'
+    && isAgentId(task.agents?.executor_agent_id)
+    && task.execution.executor_agent_id === task.agents.executor_agent_id
+    && Array.isArray(findings)
+    && isFailingJudgment(task.verification)
+    && isAgentId(task.agents?.verifier_agent_id)
+    && task.verification.verifier_agent_id === task.agents.verifier_agent_id
+    && !findings.some((/** @type {any} */ finding) => (
+      finding.class === 'blocking' && finding.kickTo === 'execute'
+    ));
 }
 
 /** @param {MutableRecordTask} task */
@@ -458,6 +477,11 @@ function recordVerify(task, result) {
   }
   if (task.agents.executor_agent_id === result.agent_id) {
     throw new Error('[inv2] executor == verifier');
+  }
+  if (isArchivedVerifierAgentForbidden(task, result.agent_id)) {
+    throw new Error(
+      `[record-identity] verifier ${result.agent_id} must use a fresh identity, not an archived verifier`,
+    );
   }
   const planned = task.plan?.postconditions;
   if (!Array.isArray(planned)
@@ -1128,6 +1152,25 @@ export async function updateTask(root, id, update, options = {}) {
     }
     await writeTask(taskDir, candidate);
     return candidate;
+  });
+}
+
+
+/** @param {string} root @param {string} id */
+export async function recordReverify(root, id) {
+  return updateTask(root, id, (task) => {
+    if (!isOperationReverifyEligible(task)) {
+      throw new Error(
+        '[record-reverify] requires an in-progress operation with completed execution and a needs-work verification that does not require execute recovery',
+      );
+    }
+    const next = /** @type {any} */ (structuredClone(task));
+    const at = now();
+    archiveAndResetJudgments(next, at, new Set(['verification']));
+    next.status = 'in_progress';
+    next.stage = 'verify';
+    next.updatedAt = at;
+    return /** @type {TaskJson} */ (next);
   });
 }
 

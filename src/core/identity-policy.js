@@ -34,6 +34,20 @@ export function archivedJudgeAgentIds(task) {
 }
 
 /** @param {Record<string, any>} task */
+export function archivedVerifierAgentIds(task) {
+  return Array.isArray(task.judgmentHistory)
+    ? task.judgmentHistory.flatMap((/** @type {any} */ entry) => agentIds([
+      entry?.agents?.verifier_agent_id,
+    ]))
+    : [];
+}
+
+/** @param {Record<string, any>} task @param {unknown} agentId */
+export function isArchivedVerifierAgentForbidden(task, agentId) {
+  return isAgentId(agentId) && archivedVerifierAgentIds(task).includes(agentId);
+}
+
+/** @param {Record<string, any>} task */
 export function activeRefuterAgentIds(task) {
   return [task.review, task.review2, task.verification, task.audit]
     .flatMap((/** @type {any} */ outcome) => outcome?.findings ?? [])

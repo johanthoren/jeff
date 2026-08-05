@@ -73,6 +73,7 @@ Handle explicit natural-language activation requests through the activation map 
 | explicit bare `cook` invocation | pipeline | work the single next *ready* task, then stop |
 | explicit **control verb**: `lite`, `init`, `deinit`, `profile` | activation / CLI | run the matching `cook` subcommand (see the activation map above), **not** the pipeline |
 | explicit `cook approve <id> <operator>` | approval / CLI | after the Chef grants the active request, record it through the matching host-neutral CLI transition |
+| explicit `cook reverify <id>` | operation recovery / CLI | for an eligible `needs-work` operation verification that has no blocking execute-recovery finding, archive the superseded judgment in `judgmentHistory`, clear only the live verification slot without changing execution, and dispatch a fresh verifier distinct from the executor and archived verifier |
 | explicit `cook <id>` or `cook on <ref>` | pipeline | start or resume that named task at its recorded current stage |
 | explicitly named numeric id(s): `1`, `31`, with or **without a leading `#`** | pipeline | start or resume those tasks at each local ledger's recorded current stage, in dependency order |
 | unrecognized explicit `cook <arg>` or explicit named task / external ref | pipeline | treat it as a task id; if no such local or configured external task exists, say so |
@@ -174,6 +175,8 @@ The `plan` specialist leaves one durable record in `notes.md`: approach, slices,
 ### Operation tasks
 
 When capture locks `category: "operation"`, **read `skills/cook/reference/operations.md`** before dispatching plan: it owns the operation plan and escalation return shapes, the execute/approve/re-fire sequence, and the boundary that keeps verification independent of the executor.
+
+For an operation verification failure unrelated to execution, `cook reverify <id>` is eligible only while the recorded verification is `needs-work` and no blocking finding requires execute recovery. The atomic transition retains the superseded judgment in `judgmentHistory`, clears only the live verification slot, leaves execution unchanged, and returns the task to `verify`; dispatch a fresh verifier distinct from both the executor and every archived verifier.
 
 ### Gate model: capture-lock + escape-by-return
 
