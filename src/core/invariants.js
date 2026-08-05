@@ -758,11 +758,21 @@ export function runInvariants(
     }
   }
 
-  // inv5b: dependency cycle via Kahn over local edges only. Terminally pruned
-  // and unresolved external ids are not local edges.
-  let remaining = tasks.map((t) => ({
-    id: t.id,
-    deps: (Array.isArray(t.deps) ? t.deps : []).filter((/** @type {any} */ d) => ids.includes(d)),
+  // inv5b: dependency cycle via Kahn over the union of local edges for each
+  // local id. Terminally pruned and unresolved external ids are not local edges.
+  const localIds = new Set(ids);
+  /** @type {Map<any, Set<any>>} */
+  const dependenciesById = new Map();
+  for (const task of tasks) {
+    const dependencies = dependenciesById.get(task.id) ?? new Set();
+    for (const dependency of Array.isArray(task.deps) ? task.deps : []) {
+      if (localIds.has(dependency)) dependencies.add(dependency);
+    }
+    dependenciesById.set(task.id, dependencies);
+  }
+  let remaining = [...dependenciesById].map(([id, dependencies]) => ({
+    id,
+    deps: [...dependencies],
   }));
   /** @type {any[]} */
   let removed = [];
