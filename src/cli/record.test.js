@@ -1183,6 +1183,272 @@ test('issue 157 scoped operation council recovery accepts divergent execution an
   }
 });
 
+test('issue 176 explicit operation reverify preserves execution and fails closed', async (t) => {
+  const nonOperationFinding = () => blockingFinding({
+    file: 'agents/cook-verify.md',
+    line: 17,
+    kickTo: 'plan',
+    what: 'The verifier cannot run the plan verification command.',
+    why: 'The verification station lacks the command capability required by the recorded seam.',
+  });
+
+  const prepareFailure = async ({
+    auditRequired = false,
+    finding = nonOperationFinding(),
+  } = {}) => {
+    const prepared = await makeRoot(readyOperation(auditRequired));
+    if (auditRequired) {
+      await recordSpecialistReturn(prepared.root, 'audit', '18', auditReturn('auditor-old'));
+    }
+    await recordSpecialistReturn(prepared.root, 'verify', '18', verifyReturn('verifier-old', {
+      verdict: 'needs-work',
+      postconditions: [{
+        postcondition: 'The source is absent and the destination exists exactly once.',
+        ok: false,
+        evidence: 'the verification command was unavailable',
+      }],
+      findings: [finding],
+      evidence: [{
+        command: 'inspect registry postconditions',
+        output: 'command unavailable in the verification station',
+      }],
+    }));
+    return { ...prepared, finding };
+  };
+
+  await t.test('archives the #170-shaped station failure and clears only verification', async () => {
+    const { root, taskDir } = await prepareFailure({ auditRequired: true });
+    try {
+      const before = await readTask(taskDir);
+      const result = runCook(root, ['reverify', '18']);
+      const reset = await readTask(taskDir);
+
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(reset.execution, before.execution);
+      assert.deepEqual(reset.audit, before.audit);
+      assert.equal(reset.agents.executor_agent_id, before.agents.executor_agent_id);
+      assert.equal(reset.agents.audit_agent_id, before.agents.audit_agent_id);
+      assert.equal(reset.agents.verifier_agent_id, null);
+      assert.deepEqual(reset.verification, {
+        verdict: null,
+        verifier_agent_id: null,
+        postconditions: [],
+        findings: [],
+        evidence: [],
+      });
+      assert.deepEqual([reset.status, reset.stage], ['in_progress', 'verify']);
+      assert.equal(reset.judgmentHistory.length, 1);
+      assert.equal(reset.judgmentHistory[0].cycle, 0);
+      assert.deepEqual(reset.judgmentHistory[0].verification, before.verification);
+      assert.deepEqual(reset.judgmentHistory[0].audit, before.audit);
+      assert.deepEqual(reset.judgmentHistory[0].agents, {
+        verifier_agent_id: 'verifier-old',
+        audit_agent_id: 'auditor-old',
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('requires the next verifier to differ from the executor and archived verifier', async () => {
+    const { root, taskDir } = await prepareFailure();
+    try {
+      assert.equal(runCook(root, ['reverify', '18']).code, 0);
+      const returnFile = await writeReturn(root, verifyReturn(), 'fresh-verify.json');
+
+      for (const [agentId, error] of [
+        ['verifier-old', /\[record-identity\].*(?:archived|fresh|previous)/i],
+        ['executor', /\[inv2\]/],
+      ]) {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        const rejected = runCook(root, ['record', 'verify', '18', agentId, returnFile]);
+        assert.notEqual(rejected.code, 0);
+        assert.match(rejected.stderr, error);
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      }
+
+      const accepted = runCook(root, ['record', 'verify', '18', 'verifier-fresh', returnFile]);
+      const completed = await readTask(taskDir);
+      assert.equal(accepted.code, 0, accepted.stderr);
+      assert.deepEqual([completed.status, completed.stage], ['done', 'done']);
+      assert.equal(completed.execution.executor_agent_id, 'executor');
+      assert.equal(completed.verification.verifier_agent_id, 'verifier-fresh');
+      assert.equal(completed.judgmentHistory[0].verification.verifier_agent_id, 'verifier-old');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('keeps the occupied-slot and false-postcondition guards intact', async () => {
+    const { root, taskDir, finding } = await prepareFailure();
+    try {
+      const occupied = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'verify', '18', verifyReturn('verifier-fresh')),
+        /verification slot is already occupied/,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), occupied);
+
+      await recordSpecialistReturn(root, 'refute', '18', refuteReturn('refuter', finding, {
+        source: 'verify',
+        verdict: 'refuted',
+      }));
+      const kicked = await readTask(taskDir);
+      assert.deepEqual([kicked.status, kicked.stage], ['in_progress', 'execute']);
+      assert.equal(kicked.verification.verdict, 'pass');
+      assert.equal(kicked.verification.postconditions[0].ok, false);
+      assert.match(kicked.kickbacks.at(-1).reason, /postcondition/i);
+
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      const rejected = runCook(root, ['reverify', '18']);
+      assert.notEqual(rejected.code, 0);
+      assert.match(rejected.stderr, /\[record-reverify\].*(?:passing|needs-work)/i);
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('rejects invalid task states atomically', async (invalid) => {
+    const operationDefect = blockingFinding({
+      kickTo: 'execute',
+      what: 'The operation produced two destination entries.',
+      why: 'The independently observed duplicate requires execute recovery.',
+    });
+    const scenarios = [
+      {
+        name: 'code task',
+        prepare: () => makeRoot(canonicalTask()),
+        error: /\[record-reverify\].*operation/i,
+      },
+      {
+        name: 'operation without a recorded verification',
+        prepare: () => makeRoot(readyOperation()),
+        error: /\[record-reverify\].*(?:absent|missing|needs-work)/i,
+      },
+      {
+        name: 'operation with passing verification',
+        prepare: async () => {
+          const prepared = await makeRoot(readyOperation(true));
+          await recordSpecialistReturn(prepared.root, 'verify', '18', verifyReturn('verifier-old'));
+          return prepared;
+        },
+        error: /\[record-reverify\].*(?:passing|needs-work)/i,
+      },
+      {
+        name: 'operation defect requiring execute recovery',
+        prepare: () => prepareFailure({ finding: operationDefect }),
+        error: /\[record-reverify\].*(?:execute|operation defect|recovery)/i,
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      await invalid.test(scenario.name, async () => {
+        const { root, taskDir } = await scenario.prepare();
+        try {
+          const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+          const rejected = runCook(root, ['reverify', '18']);
+          assert.notEqual(rejected.code, 0);
+          assert.match(rejected.stderr, scenario.error);
+          assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
+
+  await t.test('publishes one host-neutral CLI and workflow contract', async () => {
+    const { root } = await makeRoot();
+    try {
+      const help = runCook(root, ['help']);
+      assert.equal(help.code, 0, help.stderr);
+      assert.match(help.stdout, /reverify <id>/);
+
+      const missingId = runCook(root, ['reverify']);
+      assert.notEqual(missingId.code, 0);
+      assert.match(missingId.stderr, /usage: cook reverify <id>/i);
+
+      const extraArgument = runCook(root, ['reverify', '18', 'extra']);
+      assert.notEqual(extraArgument.code, 0);
+      assert.match(extraArgument.stderr, /reverify: unexpected argument 'extra'/i);
+
+      const documents = [
+        ['skills/cook/SKILL.md', join(HERE, '..', '..', 'skills', 'cook', 'SKILL.md')],
+        [
+          'skills/cook/reference/operations.md',
+          join(HERE, '..', '..', 'skills', 'cook', 'reference', 'operations.md'),
+        ],
+        [
+          'skills/cook/reference/jeff-state-schema.md',
+          join(HERE, '..', '..', 'skills', 'cook', 'reference', 'jeff-state-schema.md'),
+        ],
+      ];
+      for (const [name, path] of documents) {
+        const text = await readFile(path, 'utf8');
+        const contract = text
+          .split(/\n\s*\n/)
+          .filter((paragraph) => paragraph.includes('cook reverify <id>'))
+          .join('\n');
+        assert.notEqual(contract, '', `${name} has no cook reverify contract`);
+        assert.match(contract, /needs-work/i, `${name} does not constrain the failed verdict`);
+        assert.match(contract, /judgmentHistory/, `${name} does not retain the superseded judgment`);
+        assert.match(contract, /verification/i, `${name} does not identify the cleared slot`);
+        assert.match(contract, /execution/i, `${name} does not preserve execution`);
+        assert.match(contract, /fresh/i, `${name} does not require a fresh verifier`);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  await t.test('validator rejects a live verifier identity retained in judgment history', async () => {
+    const { root, taskDir } = await prepareFailure({ auditRequired: true });
+    try {
+      const task = await readTask(taskDir);
+      task.judgmentHistory = [{
+        cycle: 0,
+        at: '2026-07-12T00:30:00Z',
+        verification: structuredClone(task.verification),
+        audit: structuredClone(task.audit),
+        agents: {
+          verifier_agent_id: task.agents.verifier_agent_id,
+          audit_agent_id: task.agents.audit_agent_id,
+        },
+      }];
+      task.verification = {
+        verdict: 'pass',
+        reportedVerdict: 'pass',
+        verifier_agent_id: 'verifier-old',
+        postconditions: [{
+          postcondition: 'The source is absent and the destination exists exactly once.',
+          ok: true,
+          evidence: 'independent read found one destination and no source',
+        }],
+        findings: [],
+        evidence: [{
+          command: 'inspect registry postconditions',
+          output: 'all postconditions satisfied',
+        }],
+      };
+      task.status = 'done';
+      task.stage = 'done';
+      await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      const result = runCook(root, ['validate']);
+      assert.notEqual(result.code, 0);
+      assert.match(
+        result.stderr,
+        /\[operation-reverify-identity\]|(?:archived|historical) verifier.*fresh|fresh verifier.*(?:archived|historical)/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+});
+
 test('issue 101 surviving blocker: complex operation completes without code-review identities in either judgment order', async (t) => {
   for (const order of [['verify', 'audit'], ['audit', 'verify']]) {
     await t.test(order.join(' then '), async () => {
