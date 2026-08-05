@@ -3763,6 +3763,29 @@ test('Item 6 lite dependency cycles use local edges and ignore unresolved refs',
     }
   });
 
+  await t.test('rejects a duplicate-id self-cycle beside an acyclic sibling', async () => {
+    const root = await makeStore('lite');
+    try {
+      await writeTask(root, canonicalTask({
+        id: '#duplicate',
+        externalRef: '#duplicate',
+        slug: 'acyclic-sibling',
+      }), 'acyclic-sibling');
+      await writeTask(root, canonicalTask({
+        id: '#duplicate',
+        externalRef: '#duplicate',
+        slug: 'cyclic-sibling',
+        deps: ['#duplicate'],
+      }), 'cyclic-sibling');
+
+      const result = await validateStore(root);
+      assertNamedFailure(result, '[inv5]');
+      assert.ok(result.stderr.some((line) => line.includes('dependency cycle')));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   await t.test('accepts an acyclic local edge beside unresolved external refs', async () => {
     const root = await makeStore('lite');
     try {

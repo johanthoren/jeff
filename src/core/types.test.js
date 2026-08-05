@@ -10,6 +10,7 @@ const canonicalTask = {
   stage: 'plan',
   priority: 'p2',
   deps: [],
+  discoveredFrom: /** @type {number | string} */ ('#18'),
   createdAt: '2026-07-12T00:00:00.000Z',
   updatedAt: '2026-07-12T00:00:00.000Z',
   complexity: 'complex',

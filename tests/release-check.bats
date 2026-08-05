@@ -14,7 +14,7 @@
 #     (bin/ dropped by task 0034; skills/ covers the shell CLI; control/ is the Rust plane)
 #   - Payload files: AGENTS.md package.json
 #   - Version lockstep (when present): package.json, package-lock.json,
-#     .codex-plugin/plugin.json, control/jeff/Cargo.toml
+#     .codex-plugin/plugin.json, control/jeff/Cargo.toml, control/Cargo.lock
 #   - Excluded: .jeff/ tests/ .github/ docs/ README.md Makefile dotfiles
 #   - Exit 0 = pass; non-zero = fail; reason on stderr
 #
@@ -236,6 +236,22 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"version mismatch"* ]]
   [[ "$output" == *"control/jeff/Cargo.toml"* ]]
+}
+
+@test "version mismatch: control/Cargo.lock jeff version differs from plugin version" {
+  init_fixture_repo "$FIX" "1.0.0"
+  bump_version "$FIX" "1.0.1"
+  write_jeff_cargo_toml "$FIX" "1.0.1"
+  printf 'version = 4\n\n[[package]]\nname = "jeff"\nversion = "1.0.0"\n' \
+    > "$FIX/control/Cargo.lock"
+  git -C "$FIX" add control/jeff/Cargo.toml control/Cargo.lock
+  git -C "$FIX" commit -q -m "add stale jeff lock version"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"version mismatch"* ]]
+  [[ "$output" == *"control/Cargo.lock"* ]]
 }
 
 @test "payload/control: change under control/ requires a version bump" {
