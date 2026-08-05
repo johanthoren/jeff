@@ -87,7 +87,7 @@ export async function readyReport(root) {
     for (const task of tasks) {
       if (!['pending', 'in_progress'].includes(task.status) || await hasClaim(root, task)) continue;
       const deps = Array.isArray(task.deps) ? task.deps : [];
-      const satisfied = deps.every((id) => {
+      const satisfied = deps.every((/** @type {number} */ id) => {
         const dependency = byId.get(id);
         return pruned.has(id) || (dependency !== undefined && TERMINAL_STATUSES.has(dependency.status));
       });
