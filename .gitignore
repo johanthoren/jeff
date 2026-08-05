@@ -1,3 +1,6 @@
 node_modules/
 .omp/
 control/target/
+
+__pycache__/
+*.py[cod]
