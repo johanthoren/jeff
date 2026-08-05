@@ -1216,3 +1216,78 @@ section_paragraphs() {
     }
   done
 }
+
+# ---------------------------------------------------------------------------
+# Graph slate Item 6: capture and plan decomposition guidance
+# ---------------------------------------------------------------------------
+
+@test "Item 6: capture applies the fake-edge decomposition test" {
+  local row rule required
+  row="$(awk '$0 ~ /^\| `capture` \|/ { print; exit }' "$REPO/skills/cook/SKILL.md")"
+  [ -n "$row" ] || {
+    echo "cook SKILL.md has no capture stage row"
+    return 1
+  }
+  grep -qiE 'fake[- ]edge' <<<"$row" || {
+    echo "the capture stage row does not name the fake-edge test"
+    return 1
+  }
+
+  rule="$(awk '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    tolower($0) ~ /fake[- ]edge/ && $0 !~ /^\|/ { print }
+  ' "$REPO/skills/cook/SKILL.md")"
+  [ -n "$rule" ] || {
+    echo "cook SKILL.md has no capture decomposition paragraph"
+    return 1
+  }
+
+  for required in \
+    'two or more|multiple' \
+    'independently shippable' \
+    'separate tasks' \
+    'deps?[^.]{0,100}genuine(ly)?[^.]{0,80}consum' \
+    'several simple tasks|multiple simple tasks' \
+    'acceptance criteria' \
+    'independent seams' \
+    'guidance[^.]{0,60}not a gate|not a gate'; do
+    grep -qiE "$required" <<<"$rule" || {
+      echo "capture decomposition guidance is missing binding behavior: $required"
+      return 1
+    }
+  done
+}
+
+@test "Item 6: plan escalates independently shippable splits through the existing shape" {
+  local role rule
+  role="$REPO/agents/cook-plan.md"
+  rule="$(awk '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    tolower($0) ~ /independently shippable/ { print }
+  ' "$role")"
+  [ -n "$rule" ] || {
+    echo "cook-plan.md has no independently shippable split rule"
+    return 1
+  }
+
+  grep -qiE 'planning|plan' <<<"$rule" || {
+    echo "the split rule is not bound to planning"
+    return 1
+  }
+  grep -qiE 'existing[^.]{0,80}escalation|escalation[^.]{0,80}existing' <<<"$rule" || {
+    echo "the split rule does not reuse the existing escalation shape"
+    return 1
+  }
+  grep -qiE 'fork[^.]{0,100}(proposed split|split proposal)|(proposed split|split proposal)[^.]{0,100}fork' <<<"$rule" || {
+    echo "the escalation fork does not name the proposed split"
+    return 1
+  }
+  grep -qF '"stage":"plan","result":"escalation"' "$role" || {
+    echo "cook-plan.md no longer carries the existing plan escalation result"
+    return 1
+  }
+  grep -qE '"slices":.*"escalation":.*"fork":.*"options"' "$role" || {
+    echo "cook-plan.md no longer carries the existing escalation fields"
+    return 1
+  }
+}
