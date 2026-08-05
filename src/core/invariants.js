@@ -467,7 +467,8 @@ function isResolvedOperationJudgment(outcome, exactCouncilShip) {
  * inv1/inv2, inv4 done-gate, inv5a dep-exists, `[prune]`, the inv7-11
  * convergence block, status-conditional fields, plus the cross-task duplicate-id
  * and inv5b dependency-cycle (Kahn) checks. `lite` drops the registry-only
- * checks (id-type, inv5, duplicate-id, `[prune]`).
+ * checks (id-type, inv5 provenance, duplicate-id, `[prune]`) while retaining
+ * dependency cycles over local edges.
  *
  * @param {any[]} tasks
  * @returns {string[]}
@@ -496,7 +497,7 @@ export function runInvariants(
     // Fail CLOSED on type-confused containers (mirrors jq abort-on-index),
     // scoped to exactly where the jq pass indexes each field: tests/agents
     // (inv1/2) and convergence (.council) for every task; review/audit only
-    // inside the done block; deps only under full mode (inv5a/inv5b iterate it).
+    // inside the done block; deps only under full mode (inv5a iterates it directly).
     assertContainerType(t.tests, 'object', 'tests');
     assertContainerType(t.agents, 'object', 'agents');
     assertContainerType(t.convergence, 'object', 'convergence');
@@ -715,13 +716,16 @@ export function runInvariants(
       }
     }
 
-    // inv5a: deps name live tasks or terminally pruned predecessors
-    // (registry invariant, full only)
+    // inv5a: deps and discoveredFrom name live tasks or terminally pruned
+    // predecessors (registry invariant, full only)
     if (dependencyIds !== null) {
       for (const d of jqOr(t.deps, [])) {
         if (!dependencyIds.has(d)) {
           out.push(`task ${id}: dep ${jqStr(d)} is neither live nor terminally pruned [inv5]`);
         }
+      }
+      if (Object.hasOwn(t, 'discoveredFrom') && !dependencyIds.has(t.discoveredFrom)) {
+        out.push(`task ${id}: discoveredFrom ${jqStr(t.discoveredFrom)} is neither live nor terminally pruned [inv5]`);
       }
     }
 
@@ -754,28 +758,36 @@ export function runInvariants(
     }
   }
 
-  // inv5b: dependency cycle via Kahn over live edges only (registry invariant,
-  // full only). Terminally pruned ids are satisfied predecessors.
-  if (!lite) {
-    let remaining = tasks.map((t) => ({
-      id: t.id,
-      deps: jqOr(t.deps, []).filter((/** @type {any} */ d) => ids.includes(d)),
-    }));
-    /** @type {any[]} */
-    let removed = [];
-    for (;;) {
-      const ready = remaining
-        .filter((n) => n.deps.every((/** @type {any} */ d) => removed.includes(d)))
-        .map((n) => n.id);
-      if (ready.length === 0) {
-        if (remaining.length > 0) {
-          out.push(`dependency cycle among tasks ${JSON.stringify(remaining.map((n) => n.id))} [inv5]`);
-        }
-        break;
-      }
-      remaining = remaining.filter((n) => !ready.includes(n.id));
-      removed = removed.concat(ready);
+  // inv5b: dependency cycle via Kahn over the union of local edges for each
+  // local id. Terminally pruned and unresolved external ids are not local edges.
+  const localIds = new Set(ids);
+  /** @type {Map<any, Set<any>>} */
+  const dependenciesById = new Map();
+  for (const task of tasks) {
+    const dependencies = dependenciesById.get(task.id) ?? new Set();
+    for (const dependency of Array.isArray(task.deps) ? task.deps : []) {
+      if (localIds.has(dependency)) dependencies.add(dependency);
     }
+    dependenciesById.set(task.id, dependencies);
+  }
+  let remaining = [...dependenciesById].map(([id, dependencies]) => ({
+    id,
+    deps: [...dependencies],
+  }));
+  /** @type {any[]} */
+  let removed = [];
+  for (;;) {
+    const ready = remaining
+      .filter((n) => n.deps.every((/** @type {any} */ d) => removed.includes(d)))
+      .map((n) => n.id);
+    if (ready.length === 0) {
+      if (remaining.length > 0) {
+        out.push(`dependency cycle among tasks ${JSON.stringify(remaining.map((n) => n.id))} [inv5]`);
+      }
+      break;
+    }
+    remaining = remaining.filter((n) => !ready.includes(n.id));
+    removed = removed.concat(ready);
   }
 
   return out;

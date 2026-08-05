@@ -33,6 +33,7 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
   "stage": "capture",
   "priority": "p2",
   "deps": [],
+  "discoveredFrom": 7,
   "createdAt": "2026-06-13T12:00:00.000Z",
   "updatedAt": "2026-06-13T12:00:00.000Z",
   "complexity": "complex",
@@ -68,6 +69,7 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 - `priority` ∈ `p0 | p1 | p2 | p3 | p4`.
 - `createdAt` / `updatedAt`: calendar-valid ISO-8601 datetimes. The same strict timestamp contract applies to `tests.gate.at`, every `kickbacks[*].at`, approval request and grant times, execution `recordedAt`, and judgment-history times.
 - `deps`: array of predecessor task ids. Without config provenance, every id must name a live task. In full mode, every id must name either a live task or an id in `prunedTaskIds`; terminally pruned predecessors remain recorded but do not block scheduling or participate in cycles. Cycles among live tasks remain invalid.
+- `discoveredFrom` (optional): one task id recording which task surfaced this task. It is provenance only and never schedules; scheduling remains exclusively in `deps`. Full mode requires a live task id or an id in `prunedTaskIds`. Lite mode checks only that the value is a string or number. Omission preserves historical behavior.
 - `complexity`: `"simple" | "complex"` (absent ⇒ `"complex"`). Set or refine it at plan by whether the change complects or carries risk: braids concerns, couples previously separate things, crosses subsystem boundaries, or has non-local side effects. Classify by complecting, not difficulty; deployment or other non-local side effects ⇒ `"complex"`; default `"complex"` when unsure. It does not select Git topology.
 - Code `plan.refactorOpportunity` carries a nonempty named behavior-preserving opportunity or `null`; historical code plans may omit it. A completed operation plan requires `runbook`, `preconditions`, `recoveryBoundary`, exact operator-facing `approvalBoundary`, boolean `requiresApproval`, `postconditions`, and deterministic `verificationSeams`, and omits code test/refactor fields. An unresolved operation fork instead persists only `result:"escalation"`, nonempty `slices`, and nonnull `{fork, options}` while remaining at `plan`; the answered plan replaces it.
 - `branch` (optional, deprecated): ignored legacy state. New records omit it; validators continue to accept old records containing it without migration.
@@ -230,8 +232,8 @@ The `.jeff/tasks/<NNNN>-<slug>/` dirs are the live registry. `cook ls` / `cook s
 
 `cook validate` branches on `config.mode`:
 
-- **full / absent.** Empty `tasks/` (no task dirs) ⇒ "nothing to validate", exit 0; otherwise runs the **full** invariant set over the on-disk task dirs: the schema/done-gate quality invariants (INV-1, INV-2, INV-4), the convergence block (INV-7..11), **and** the registry invariants: numeric-`id` requirement, dependency provenance + live-task cycles (INV-5), duplicate-id, and `[prune]`. When `prunedTaskIds` is absent, dependency provenance falls back to the legacy live-task rule.
-- **lite: quality subset only.** Runs INV-1 (test author ≠ implementer), INV-2 (category-specific persisted identity binding and builder/judge separation), INV-4 (done-gate), and the INV-7..11 convergence block over each run-ledger `task.json`. **Drops** the registry invariants: a string `id` (an external tracker ref, e.g. `"JIRA-42"`) is accepted, INV-5 (dep DAG), duplicate-id, and `[prune]` are **skipped** (a lite run-ledger legitimately retains a local `done` record). Config provenance is ignored.
+- **full / absent.** Empty `tasks/` (no task dirs) ⇒ "nothing to validate", exit 0; otherwise runs the **full** invariant set over the on-disk task dirs: the schema/done-gate quality invariants (INV-1, INV-2, INV-4), the convergence block (INV-7..11), **and** the registry invariants: numeric-`id` requirement, dependency and discovery provenance + live-task cycles (INV-5), duplicate-id, and `[prune]`. When `prunedTaskIds` is absent, dependency and discovery provenance fall back to the legacy live-task rule.
+- **lite: quality subset plus local cycle safety.** Runs INV-1 (test author ≠ implementer), INV-2 (category-specific persisted identity binding and builder/judge separation), INV-4 (done-gate), and the INV-7..11 convergence block over each run-ledger `task.json`. The existing INV-5 Kahn pass rejects cycles using only dependency edges whose endpoints both exist in the local ledger set; unresolvable ids, including external tracker refs, are ignored. Lite drops full-mode dependency and discovery provenance, duplicate-id, and `[prune]` checks (a lite run-ledger legitimately retains a local `done` record), and accepts string task ids. Config provenance is ignored.
 
 Before either mode's semantic checks, the core validates the persisted shape and
 reports field-named `[schema]` failures. Full validation and task updates treat a

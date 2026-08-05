@@ -287,6 +287,7 @@
  * @property {TaskStage} stage
  * @property {TaskPriority} priority
  * @property {Array<number | string>} deps
+ * @property {number | string} [discoveredFrom]
  * @property {string} createdAt
  * @property {string} updatedAt
  * @property {TaskComplexity} [complexity]

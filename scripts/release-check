@@ -108,6 +108,25 @@ if [ -f "$jeff_cargo" ]; then
   fi
 fi
 
+cargo_lock="$root/control/Cargo.lock"
+if [ -f "$cargo_lock" ]; then
+  cargo_lock_version="$(awk '
+    /^\[\[package\]\]$/ { is_jeff = 0 }
+    /^name = "jeff"$/ { is_jeff = 1 }
+    is_jeff && /^version = "/ {
+      split($0, fields, "\"")
+      print fields[2]
+      exit
+    }
+  ' "$cargo_lock")"
+  if [ -z "$cargo_lock_version" ]; then
+    die "jeff package version missing in $cargo_lock"
+  fi
+  if [ "$cargo_lock_version" != "$version" ]; then
+    die "version mismatch: .claude-plugin/plugin.json=$version but control/Cargo.lock jeff=$cargo_lock_version"
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # Regression check: version must not go backwards
 # ---------------------------------------------------------------------------

@@ -3643,3 +3643,169 @@ test('Item 5 bonusGranted is an optional boolean on each convergence counter', a
     assertNamedFailure(result, `convergence.stages.${stage}.bonusGranted`);
   });
 });
+
+test('Item 6 discoveredFrom preserves historical ledgers and validates lite id shapes', async (t) => {
+  for (const [name, task] of Object.entries({
+    'historical absence': canonicalTask(),
+    'string id': canonicalTask({ discoveredFrom: '#18' }),
+    'number id': canonicalTask({ discoveredFrom: 18 }),
+  })) {
+    await t.test(`accepts ${name}`, async () => {
+      const result = await verdictFor(task);
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+    });
+  }
+
+  for (const discoveredFrom of [null, true, {}, []]) {
+    await t.test(`rejects ${JSON.stringify(discoveredFrom)}`, async () => {
+      const result = await verdictFor(canonicalTask({ discoveredFrom }));
+      assertNamedFailure(result, '[schema] discoveredFrom');
+    });
+  }
+});
+
+test('Item 6 full mode requires discoveredFrom to name live or pruned provenance', async (t) => {
+  await t.test('historical absence remains valid', async () => {
+    const result = await verdictFor(
+      canonicalTask({ id: 1, externalRef: undefined }),
+      'full',
+    );
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
+  await t.test('reciprocal live provenance is not a scheduling cycle', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeTask(root, canonicalTask({
+        id: 1,
+        externalRef: undefined,
+        slug: 'first',
+        discoveredFrom: 2,
+      }), '0001-first');
+      await writeTask(root, canonicalTask({
+        id: 2,
+        externalRef: undefined,
+        slug: 'second',
+        discoveredFrom: 1,
+      }), '0002-second');
+
+      const result = await validateStore(root);
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('terminally pruned provenance remains valid', async () => {
+    const root = await makeStore('full');
+    try {
+      await writeFile(
+        join(root, '.jeff', 'config.json'),
+        JSON.stringify({ prunedTaskIds: [1] }),
+        'utf8',
+      );
+      await writeTask(root, canonicalTask({
+        id: 2,
+        externalRef: undefined,
+        discoveredFrom: 1,
+      }), '0002-task-two');
+
+      const result = await validateStore(root);
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const discoveredFrom of [999, '#999']) {
+    await t.test(`rejects unresolved provenance ${JSON.stringify(discoveredFrom)}`, async () => {
+      const result = await verdictFor(
+        canonicalTask({ id: 1, externalRef: undefined, discoveredFrom }),
+        'full',
+      );
+      assertNamedFailure(result, 'discoveredFrom');
+    });
+  }
+
+  for (const discoveredFrom of [null, true, {}, []]) {
+    await t.test(`rejects malformed provenance ${JSON.stringify(discoveredFrom)}`, async () => {
+      const result = await verdictFor(
+        canonicalTask({ id: 1, externalRef: undefined, discoveredFrom }),
+        'full',
+      );
+      assertNamedFailure(result, '[schema] discoveredFrom');
+    });
+  }
+});
+
+test('Item 6 lite dependency cycles use local edges and ignore unresolved refs', async (t) => {
+  await t.test('rejects a cycle whose endpoints are both local', async () => {
+    const root = await makeStore('lite');
+    try {
+      await writeTask(root, canonicalTask({
+        id: '#first',
+        externalRef: '#first',
+        slug: 'first',
+        deps: ['#second'],
+      }), 'first');
+      await writeTask(root, canonicalTask({
+        id: '#second',
+        externalRef: '#second',
+        slug: 'second',
+        deps: ['#first'],
+      }), 'second');
+
+      const result = await validateStore(root);
+      assertNamedFailure(result, '[inv5]');
+      assert.ok(result.stderr.some((line) => line.includes('dependency cycle')));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('rejects a duplicate-id self-cycle beside an acyclic sibling', async () => {
+    const root = await makeStore('lite');
+    try {
+      await writeTask(root, canonicalTask({
+        id: '#duplicate',
+        externalRef: '#duplicate',
+        slug: 'acyclic-sibling',
+      }), 'acyclic-sibling');
+      await writeTask(root, canonicalTask({
+        id: '#duplicate',
+        externalRef: '#duplicate',
+        slug: 'cyclic-sibling',
+        deps: ['#duplicate'],
+      }), 'cyclic-sibling');
+
+      const result = await validateStore(root);
+      assertNamedFailure(result, '[inv5]');
+      assert.ok(result.stderr.some((line) => line.includes('dependency cycle')));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('accepts an acyclic local edge beside unresolved external refs', async () => {
+    const root = await makeStore('lite');
+    try {
+      await writeTask(root, canonicalTask({
+        id: '#first',
+        externalRef: '#first',
+        slug: 'first',
+        deps: ['github:team/repo#200'],
+      }), 'first');
+      await writeTask(root, canonicalTask({
+        id: '#second',
+        externalRef: '#second',
+        slug: 'second',
+        deps: ['#first', 999],
+      }), 'second');
+
+      const result = await validateStore(root);
+      assert.equal(result.ok, true, result.stderr.join('\n'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

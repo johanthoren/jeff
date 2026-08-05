@@ -34,6 +34,8 @@ Hard rules:
 
 Escape by return: if the criteria contain a genuine unresolved fork, return an escalation rather than guessing. For an operation unresolved fork, use the operation-specific strict shape below; it persists at `plan` without creating execution state.
 
+**Planning decomposition.** If planning reveals independently shippable slices, return the existing escalation shape rather than inventing a new return shape. Set the `escalation` fork to the proposed split.
+
 ## Return
 
 End your final message with exactly this strict JSON object, filled in, followed by nothing:

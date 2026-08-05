@@ -126,7 +126,7 @@ Jeff may not override a `needs-work` verdict. Code `review`/`audit` and operatio
 
 | stage | what the specialist does |
 |---|---|
-| `capture` | interrogate intent one question at a time until confident + aligned; **push back on scope: does this need to exist, is the request sound or speculative, does the bug actually impact users or risk a security/data-loss incident, and is this a knowledge/instruction gap (clarify the docs/instructions or reuse an existing mechanism) rather than a build?**; produce `task.md` (goal, acceptance criteria, non-goals). Jeff-run, at the orchestrator's own setting |
+| `capture` | interrogate intent one question at a time until confident + aligned; **push back on scope: does this need to exist, is the request sound or speculative, does the bug actually impact users or risk a security/data-loss incident, and is this a knowledge/instruction gap (clarify the docs/instructions or reuse an existing mechanism) rather than a build?**; apply the fake-edge decomposition test; produce `task.md` (goal, acceptance criteria, non-goals). Jeff-run, at the orchestrator's own setting |
 | `plan` | category-specific design: code owns tests and targeted RED; operation owns runbook, preconditions, recovery and approval boundaries, explicit `requiresApproval`, deterministic postconditions, and verification seams |
 | `implement` | code only: make tests green; must NOT author/weaken tests |
 | `refactor` | code only: behavior-preserving simplification when owed; keep tests green |
@@ -135,6 +135,8 @@ Jeff may not override a `needs-work` verdict. Code `review`/`audit` and operatio
 | `verify` | operation only: independently check every planned postcondition in exact order through the plan's deterministic verification methods; one verifier even for complex operations |
 | `audit` | conditional independent security judgment for either category |
 | `done` | terminal; category-specific gate enforced by `cook validate` |
+
+**Capture decomposition.** Apply the fake-edge test as guidance, not a gate. When an order contains two or more independently shippable outcomes, capture them as separate tasks. Add a `deps` edge only when one task genuinely consumes another task's output. Prefer several simple tasks when acceptance criteria cluster into independent seams.
 
 Every specialist inherits the orchestrator provider/model unchanged. Per-stage effort is owned by `agents/cook-*.md` frontmatter, which Pi and Claude Code apply; Codex children inherit orchestrator effort.
 
