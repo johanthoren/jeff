@@ -1192,6 +1192,7 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
     why: 'The verification station lacks the command capability required by the recorded seam.',
   });
 
+  /** @param {string} root @param {any} finding */
   const recordFailure = (
     root,
     finding,
@@ -1287,6 +1288,7 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
     return prepared;
   };
 
+  /** @param {any} finding */
   const blockingCouncilReturn = (finding) => ({
     stage: 'council',
     council: {
@@ -1361,10 +1363,10 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
       assert.equal(runCook(root, ['reverify', '18']).code, 0);
       const returnFile = await writeReturn(root, verifyReturn(), 'fresh-verify.json');
 
-      for (const [agentId, error] of [
+      for (const [agentId, error] of /** @type {[string, RegExp][]} */ ([
         ['verifier-old', /\[record-identity\].*(?:archived|fresh|previous)/i],
         ['executor', /\[inv2\]/],
-      ]) {
+      ])) {
         const before = await readFile(join(taskDir, 'task.json'), 'utf8');
         const rejected = runCook(root, ['record', 'verify', '18', agentId, returnFile]);
         assert.notEqual(rejected.code, 0);
@@ -1477,6 +1479,7 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
           );
           return prepared;
         },
+        /** @param {any} task */
         assertState: (task) => {
           assert.equal(task.stage, 'plan');
           assert.equal(task.verification.findings[0].refute.verdict, 'survives');
@@ -1489,6 +1492,7 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
       {
         name: 'awaiting pending council',
         prepare: preparePendingCouncil,
+        /** @param {any} task */
         assertState: (task) => {
           assert.equal(task.stage, 'verify');
           assert.deepEqual(
@@ -1509,6 +1513,7 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
           );
           return prepared;
         },
+        /** @param {any} task */
         assertState: (task) => {
           assert.equal(task.stage, 'execute');
           assert.deepEqual(
