@@ -71,6 +71,7 @@ Handle explicit natural-language activation requests through the activation map 
 | Request | Path | Action |
 | --- | --- | --- |
 | explicit bare `cook` invocation | pipeline | work the single next *ready* task, then stop |
+| explicit `cook all` invocation | pipeline | run the bounded full-mode drain; in lite mode, report that it is full-mode-only and stop |
 | explicit **control verb**: `lite`, `init`, `deinit`, `profile` | activation / CLI | run the matching `cook` subcommand (see the activation map above), **not** the pipeline |
 | explicit `cook approve <id> <operator>` | approval / CLI | after the Chef grants the active request, record it through the matching host-neutral CLI transition |
 | explicit `cook reverify <id>` | operation recovery / CLI | for an eligible `needs-work` operation verification that has no blocking execute-recovery finding, archive the superseded judgment in `judgmentHistory`, clear only the live verification slot without changing execution, and dispatch a fresh verifier distinct from the executor and archived verifier |
@@ -111,11 +112,20 @@ Explicit `cook` invocations and named task/ref requests are governed by the rout
 `cook all` is full-mode-only. In lite mode, `cook all` reports that it is full-mode-only and stops. The default `maxParallelTasks` value of 1 preserves serial behavior.
 
 The orchestrating model is the runtime. There is no scheduler process and no CLI lane orchestrator. The CLI provides only the `cook ready`, `cook claim`, `cook release`, and `cook claims` primitives.
+Before opening lanes, resolve the absolute main-checkout root once and `export COOK_ROOT=<absolute-main-root>`. `COOK_ROOT` is the authoritative main store root inherited by every drain CLI state command: `cook ready`, `cook claims`, `cook claim`, `cook journal`, `cook record`, `cook approve`, `cook reverify`, `cook verify`, `cook validate`, and `cook release`. They therefore use one main `.jeff` store and the same `.record-lock`. A lane's worktree cwd is only for code, tests, and task-branch Git operations, never task state.
 
 1. Read `cook ready` and `cook claims` fresh from disk. Never trust context. While unclaimed ready tasks exist and active claims are fewer than `maxParallelTasks`, claim the next task, journal a drain intent, and open its lane.
 2. Whenever two or more tasks are claimed simultaneously, every claimed task gets its own linked git worktree on its own task branch. A single claimed task may use the main checkout.
 3. Run each lane through The Loop independently. Dispatch stages of different lanes concurrently when the host supports it; otherwise interleave them. The `.record-lock` serializes store writes, and lanes share no checkout.
-4. Integration is serialized at the main checkout, in completion order. When a lane's judgments pass, merge or rebase its task branch onto trunk in the main checkout. Then run `cook verify --task <id>` at the main root against the integrated tree. This keeps the root HEAD gate unchanged: done requires a HEAD match and a clean tree, and the gate catches cross-task interference. Then record done, release the claim, and remove the worktree, in that order.
+4. **Integration is serialized at the main checkout, in completion order.**
+   - Reserve one landing slot. Create a private integration checkpoint from current trunk, then merge or rebase the task branch onto that trunk-based checkpoint without moving trunk.
+   - At the clean private checkpoint in the main root, run the one full-suite gate, `cook verify --task <id>`, exactly once. It records the checkpoint's root HEAD and clean tree.
+   - With trunk unchanged, dispatch review and required audit against that exact gated checkpoint. Record every non-terminal judgment return immediately.
+   - A gate failure or needs-work judgment never advances trunk and returns the lane to its normal recovery path. A merge conflict follows step 5.
+   - When the final required passing return would cause the terminal transition, hold only that final passing return unrecorded. If trunk changed since the checkpoint was created, do not advance it; return the lane to its normal recovery path.
+   - With that return held and trunk unchanged, advance trunk to the exact gated hash without changing the private checkpoint's content or the main checkout's current HEAD.
+   - Immediately record the final passing return. The recorder now sees `gate.hash` equal to the current main-root HEAD; done still requires that HEAD match and a clean tree.
+   - The final return must record done; release the claim, remove the lane worktree, then clean up the private integration checkpoint, in that order.
 5. A merge conflict while landing a later lane is a discovered hidden edge. Route the conflict as an ordinary scoped kickback to implement for that lane, in its worktree. Tasks that obviously touch the same area run in sequence, not in parallel.
 6. A capture lock, approval stop, escalation, or blocked-to-operator condition stops only its own lane. The drain continues the rest and includes each stopped lane with its Chef-facing grounder in the final report.
 7. Refresh ready tasks and claims after every completion because completed tasks can unblock successors. Stop when no ready unclaimed tasks remain and every claim is resolved. Report a drain summary with each task's terminal state, cycles, and kickbacks.
