@@ -118,13 +118,16 @@ Before opening lanes, resolve the absolute main-checkout root once and `export C
 2. Whenever two or more tasks are claimed simultaneously, every claimed task gets its own linked git worktree on its own task branch. A single claimed task may use the main checkout.
 3. Run each lane through The Loop independently. Dispatch stages of different lanes concurrently when the host supports it; otherwise interleave them. The `.record-lock` serializes store writes, and lanes share no checkout.
 4. **Integration is serialized at the main checkout, in completion order.**
-   - Reserve one landing slot. Create a private integration checkpoint from current trunk, then merge or rebase the task branch onto that trunk-based checkpoint without moving trunk.
+   - Reserve one landing slot and capture the old trunk OID as O.
+   - Create a private integration checkpoint from O, then merge or rebase the task branch onto that trunk-based checkpoint without moving trunk.
    - At the clean private checkpoint in the main root, run the one full-suite gate, `cook verify --task <id>`, exactly once. It records the checkpoint's root HEAD and clean tree.
    - With trunk unchanged, dispatch review and required audit against that exact gated checkpoint. Record every non-terminal judgment return immediately.
    - A gate failure or needs-work judgment never advances trunk and returns the lane to its normal recovery path. A merge conflict follows step 5.
-   - When the final required passing return would cause the terminal transition, hold only that final passing return unrecorded. If trunk changed since the checkpoint was created, do not advance it; return the lane to its normal recovery path.
-   - With that return held and trunk unchanged, advance trunk to the exact gated hash without changing the private checkpoint's content or the main checkout's current HEAD.
-   - Immediately record the final passing return. The recorder now sees `gate.hash` equal to the current main-root HEAD; done still requires that HEAD match and a clean tree.
+   - When the final required passing return would cause the terminal transition, hold only that final passing return unrecorded and record the gated hash as G.
+   - With that return held, verify `git merge-base --is-ancestor O G`.
+   - Only after the ancestry check succeeds, atomically advance trunk to the exact gated hash with the native Git ref primitive and expected-old O→G compare-and-swap `git update-ref <trunk-ref> G O`. This leaves the private checkpoint's content and the main checkout's current HEAD unchanged.
+   - If the ancestry check fails or an expected-old mismatch occurs, leave trunk unchanged, do not record the final passing return, and discard and rebuild the stale checkpoint from current trunk through the lane's existing normal recovery path.
+   - After the compare-and-swap succeeds, immediately record the final passing return. The recorder now sees `gate.hash` equal to the current main-root HEAD; done still requires that HEAD match and a clean tree.
    - The final return must record done; release the claim, remove the lane worktree, then clean up the private integration checkpoint, in that order.
 5. A merge conflict while landing a later lane is a discovered hidden edge. Route the conflict as an ordinary scoped kickback to implement for that lane, in its worktree. Tasks that obviously touch the same area run in sequence, not in parallel.
 6. A capture lock, approval stop, escalation, or blocked-to-operator condition stops only its own lane. The drain continues the rest and includes each stopped lane with its Chef-facing grounder in the final report.
