@@ -180,16 +180,18 @@ export async function claimsReport(root, options = {}) {
   const modeError = await fullModeError(root, 'claims');
   if (modeError) return modeError;
   try {
-    const tasks = [...await collectTasks(root)].sort((left, right) => left.id - right.id);
-    const now = (options.now ?? (() => new Date()))().getTime();
-    const stdout = [];
-    for (const task of tasks) {
-      if (!await hasClaim(root, task)) continue;
-      const claim = await readClaim(root, task);
-      const ageSeconds = Math.max(0, Math.floor((now - Date.parse(claim.at)) / 1000));
-      stdout.push(JSON.stringify({ id: task.id, ...claim, ageSeconds }));
-    }
-    return { code: 0, stdout, stderr: [] };
+    return await withStoreLock(root, async () => {
+      const tasks = [...await collectTasks(root)].sort((left, right) => left.id - right.id);
+      const now = (options.now ?? (() => new Date()))().getTime();
+      const stdout = [];
+      for (const task of tasks) {
+        if (!await hasClaim(root, task)) continue;
+        const claim = await readClaim(root, task);
+        const ageSeconds = Math.max(0, Math.floor((now - Date.parse(claim.at)) / 1000));
+        stdout.push(JSON.stringify({ id: task.id, ...claim, ageSeconds }));
+      }
+      return { code: 0, stdout, stderr: [] };
+    });
   } catch (error) {
     return failure(`claims: ${/** @type {Error} */ (error).message}`);
   }

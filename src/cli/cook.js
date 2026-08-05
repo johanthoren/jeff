@@ -23,7 +23,7 @@ import { adoptPlan, planSection, planCheck, planAppend, isIssueRef, planIssueOp 
 import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
 import { git, indiffReport } from '../core/git.js';
-import { recordApproval, recordReverify, recordSpecialistFile } from '../core/record.js';
+import { recordApproval, recordRebuild, recordReverify, recordSpecialistFile } from '../core/record.js';
 import { appendTaskJournal, isJournalIntentStage } from '../core/journal.js';
 import { claimReport, claimsReport, readyReport, releaseReport } from '../core/drain.js';
 
@@ -74,6 +74,7 @@ function usageReport() {
       '  verify       Run a standalone baseline; use `cook verify --task <id>` to bind a task gate.',
       '  record       Record a specialist or council result.',
       '  approve <id> <operator>  Grant the exact pending operation request.',
+      '  rebuild <id>   Archive judgments earned against a stale integration checkpoint and re-gate.',
       '  reverify <id>  Archive an eligible failed operation verification and request a fresh verifier.',
       '  journal <id> <intent|external>  Append an operator journal event.',
       '  baseline check [<hash>]  Check the green, clean baseline log.',
@@ -264,6 +265,21 @@ async function main() {
     }
   }
 
+
+  if (sub === 'rebuild') {
+    if (rest.length === 0 || rest[0] === '') {
+      process.stderr.write('cook: usage: cook rebuild <id>\n');
+      return process.exit(1);
+    }
+    if (rejectUnknownArgs('rebuild', rest.slice(1))) return process.exit(1);
+    try {
+      await recordRebuild(root, rest[0]);
+      return emit({ code: 0, stdout: [`cook: archived stale checkpoint judgments for task ${rest[0]}`], stderr: [] });
+    } catch (error) {
+      process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
+      return process.exit(1);
+    }
+  }
 
   if (sub === 'reverify') {
     if (rest.length === 0 || rest[0] === '') {

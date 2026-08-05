@@ -1180,6 +1180,28 @@ export async function recordReverify(root, id) {
 }
 
 
+/**
+ * Discard the judgments a lane earned against an integration checkpoint that a
+ * failed ancestry check or expected-old mismatch has invalidated. Archiving
+ * forces fresh identities, so the rebuilt checkpoint cannot inherit a stale gate.
+ * @param {string} root @param {string} id
+ */
+export async function recordRebuild(root, id) {
+  return updateTask(root, id, (task) => {
+    if (task.status !== 'in_progress') {
+      throw new Error('[record-rebuild] requires an in-progress task');
+    }
+    const next = /** @type {any} */ (structuredClone(task));
+    const at = now();
+    archiveAndResetJudgments(next, at);
+    invalidateVerification(next);
+    next.stage = isOperation(next) ? 'verify' : 'refactor';
+    next.updatedAt = at;
+    return /** @type {TaskJson} */ (next);
+  });
+}
+
+
 /** @param {string} root @param {string} id @param {string} grantedBy */
 export async function recordApproval(root, id, grantedBy) {
   if (typeof grantedBy !== 'string' || grantedBy.trim().length === 0) {

@@ -210,6 +210,51 @@ require_success() {
   [ -f "$task_dir/.claim/claim.json" ]
 }
 
+@test "rebuild CLI archives stale checkpoint judgments and re-gates" {
+  local task_dir
+  task_dir="$(write_task 1 stale "Stale checkpoint" p2 in_progress)"
+  jq '
+    .stage = "review"
+    | .tests = {authored_by_agent_id:"agent-t", green:true, evidence:[], gate:{green:true, clean:true, hash:"deadbeef"}}
+    | .agents.reviewer_agent_id = "agent-r"
+    | .review = {verdict:"pass", reviewer_agent_id:"agent-r", findings:[], evidence:[]}
+  ' "$task_dir/task.json" > "$task_dir/task.json.tmp"
+  mv "$task_dir/task.json.tmp" "$task_dir/task.json"
+
+  run cook rebuild 1
+
+  require_success
+  jq -e '
+    .stage == "refactor"
+    and .tests.green == false
+    and (.tests | has("gate") | not)
+    and .review.verdict == null
+    and .agents.reviewer_agent_id == null
+    and (.judgmentHistory | length == 1)
+  ' "$task_dir/task.json" >/dev/null
+}
+
+@test "rebuild CLI refuses a task that is not in progress" {
+  write_task 1 pending-task "Pending" >/dev/null
+
+  run cook rebuild 1
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"in-progress"* ]]
+}
+
+@test "claims CLI reads the store under the shared record lock" {
+  local task_dir
+  task_dir="$(write_task 1 held "Held")"
+  write_claim "$task_dir" lane-a "2000-01-01T00:00:00.000Z"
+  mkdir "$TMP/.jeff/.record-lock"
+
+  run cook claims
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"record-lock"* ]]
+}
+
 @test "release CLI removes an active claim and refuses an unclaimed task" {
   local task_dir
   task_dir="$(write_task 1 releasable "Releasable")"
@@ -344,6 +389,10 @@ require_success() {
   require_regex "$completion" 'expected[- ]old.*O|compare-and-swap.*O.*G|CAS.*O.*G' 'expected-old ref CAS from O to G'
   require_regex "$completion" 'mismatch.*trunk.*unchanged.*recovery|mismatch.*recovery.*trunk.*unchanged' 'CAS mismatch leaves trunk untouched and routes recovery'
   require_regex "$completion" 'mismatch.*(do not|without).*record.*final|mismatch.*final.*(not|unrecorded)' 'CAS mismatch does not record the terminal return'
+  require_fixed "$completion" 'cook rebuild <id>'
+  require_regex "$completion" 'archives the gate and every review and audit judgment' 'rebuild archives the stale gate and its judgments'
+  require_regex "$completion" 'fresh identities' 'a rebuilt checkpoint re-dispatches with fresh identities'
+  require_regex "$completion" 'never satisfy its successor|can never satisfy its successor' 'a discarded checkpoint judgment cannot satisfy the rebuilt one'
   require_before "$completion" 'capture the old trunk OID as O' 'private integration checkpoint' 'capture old trunk before integration'
   require_before "$completion" 'private integration checkpoint' 'cook verify --task <id>' 'checkpoint before its gate'
   require_before "$completion" 'cook verify --task <id>' 'dispatch review and required audit' 'gate before judgments'
@@ -367,6 +416,7 @@ require_success() {
   require_regex "$section" 'stops only.*own lane|only its own lane' 'a stop affects only its lane'
   require_regex "$section" 'continues.*rest|rest.*continues' 'other lanes continue'
   require_regex "$section" 'no ready.*claim.*resolved|claim.*resolved.*no ready' 'drain completion condition'
+  require_regex "$section" 'resolved or retained' 'a stopped lane retains its claim without blocking drain completion'
   require_regex "$section" 'summary.*terminal.*cycles.*kickbacks|terminal.*cycles.*kickbacks' 'drain summary fields'
   require_regex "$section" 'never.*break.*claim.*automatic|never.*automatically.*break.*claim' 'claims are never auto-broken'
   require_regex "$section" 'older than 24h.*journal|24h.*journal' 'stale claim journal check'
