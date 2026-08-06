@@ -547,13 +547,24 @@ it, and `collectTasks` must be confirmed unaffected by its presence.
    dispatch; otherwise interleave. Any serialization is legal: the store lock
    serializes `.jeff` writes and lanes share no checkout.
 4. **Integration is serialized at the main checkout, in completion order.**
-   When a lane's judgments pass: merge or rebase its task branch onto trunk in
-   the main checkout; then run `cook verify --task <id>` at the main root
-   against the integrated tree (this preserves the existing gate semantics
-   unchanged: `gate.hash` is root HEAD, done requires HEAD match and a clean
-   tree, and it deterministically catches cross-task interference at the only
-   place it can exist); then record done, release the claim, remove the
-   worktree.
+   Reserve one landing slot, capture the old trunk OID as O, and create a
+   private integration checkpoint from O. Merge or rebase the lane there
+   without moving trunk, then run the sole `cook verify --task <id>` gate at
+   the clean main-root checkpoint. Keep trunk unchanged while review and
+   required audit judge that exact hash, recording every non-terminal return
+   immediately. If the gate or a judgment fails, do not advance trunk and
+   return the lane to its normal recovery path. Hold only the final passing
+   judgment that would cause the terminal transition and record the gated hash
+   as G. Before advancing trunk, require `git merge-base --is-ancestor O G`,
+   then atomically advance the trunk ref with the native expected-old O→G
+   compare-and-swap `git update-ref <trunk-ref> G O`. An ancestry failure or
+   expected-old mismatch leaves trunk untouched: do not record the held
+   terminal-causing return; discard and rebuild the stale checkpoint from
+   current trunk through the lane's existing recovery path. After the
+   compare-and-swap succeeds, record the held return so `gate.hash` still
+   equals the current main-root HEAD. Finally, release the claim, remove the
+   lane worktree, and clean up the private checkpoint. No unverified task code
+   reaches trunk.
 5. A merge conflict when landing lane B after lane A is a discovered hidden
    edge: route it as an ordinary scoped kickback to implement for B, with the
    conflict as the finding, in B's worktree. Soft prevention guidance: two

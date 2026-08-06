@@ -23,8 +23,9 @@ import { adoptPlan, planSection, planCheck, planAppend, isIssueRef, planIssueOp 
 import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
 import { git, indiffReport } from '../core/git.js';
-import { recordApproval, recordReverify, recordSpecialistFile } from '../core/record.js';
+import { recordApproval, recordRebuild, recordReverify, recordSpecialistFile } from '../core/record.js';
 import { appendTaskJournal, isJournalIntentStage } from '../core/journal.js';
+import { claimReport, claimsReport, readyReport, releaseReport } from '../core/drain.js';
 
 /** @returns {string} the git top-level of cwd, or '' if not a git repo */
 function gitTopLevel() {
@@ -73,9 +74,14 @@ function usageReport() {
       '  verify       Run a standalone baseline; use `cook verify --task <id>` to bind a task gate.',
       '  record       Record a specialist or council result.',
       '  approve <id> <operator>  Grant the exact pending operation request.',
+      '  rebuild <id>   Archive judgments earned against a stale integration checkpoint and re-gate.',
       '  reverify <id>  Archive an eligible failed operation verification and request a fresh verifier.',
       '  journal <id> <intent|external>  Append an operator journal event.',
       '  baseline check [<hash>]  Check the green, clean baseline log.',
+      '  ready        List full-mode tasks ready to run as JSON lines.',
+      '  claim <id> [--by <label>]  Atomically claim a full-mode task.',
+      '  release <id> Release a full-mode task claim.',
+      '  claims       List active full-mode task claims as JSON lines.',
       '  ls           List tasks.',
       '  status       Report in-flight tasks and backlog health.',
       '  show <id>    Print one task ledger.',
@@ -103,6 +109,8 @@ function usageReport() {
  */
 const VERBS = {
   validate: validateStore,
+  ready: readyReport,
+  claims: claimsReport,
   ls: lsReport,
   status: statusReport,
   doctor: doctorReport,
@@ -174,6 +182,36 @@ async function main() {
     if (rejectUnknownArgs(sub, rest)) return process.exit(1);
     return emit(await VERBS[sub](root));
   }
+  if (sub === 'claim') {
+    const id = rest[0];
+    if (!id) {
+      process.stderr.write('cook: usage: cook claim <id> [--by <label>]\n');
+      return process.exit(1);
+    }
+    const options = rest.slice(1);
+    if (options.length === 0) return emit(await claimReport(root, id, { by: 'cook' }));
+    if (options[0] !== '--by') {
+      if (rejectUnknownArgs('claim', options)) return process.exit(1);
+    }
+    const by = options[1];
+    if (!by || by.startsWith('-')) {
+      process.stderr.write("cook: claim: option '--by' requires a value\n");
+      return process.exit(1);
+    }
+    if (rejectUnknownArgs('claim', options.slice(2))) return process.exit(1);
+    return emit(await claimReport(root, id, { by }));
+  }
+
+  if (sub === 'release') {
+    const id = rest[0];
+    if (!id) {
+      process.stderr.write('cook: usage: cook release <id>\n');
+      return process.exit(1);
+    }
+    if (rejectUnknownArgs('release', rest.slice(1))) return process.exit(1);
+    return emit(await releaseReport(root, id));
+  }
+
 
   if (sub === 'on') return emit(await adoptPlan(root, ...rest));
   if (sub === 'indiff') return emit(await indiffReport(root, ...rest));
@@ -227,6 +265,21 @@ async function main() {
     }
   }
 
+
+  if (sub === 'rebuild') {
+    if (rest.length === 0 || rest[0] === '') {
+      process.stderr.write('cook: usage: cook rebuild <id>\n');
+      return process.exit(1);
+    }
+    if (rejectUnknownArgs('rebuild', rest.slice(1))) return process.exit(1);
+    try {
+      await recordRebuild(root, rest[0]);
+      return emit({ code: 0, stdout: [`cook: archived stale checkpoint judgments for task ${rest[0]}`], stderr: [] });
+    } catch (error) {
+      process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
+      return process.exit(1);
+    }
+  }
 
   if (sub === 'reverify') {
     if (rest.length === 0 || rest[0] === '') {

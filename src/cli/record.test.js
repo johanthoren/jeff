@@ -6504,3 +6504,61 @@ test('Item 5 a capped source spends one bonus cycle on shrinking confined eviden
     );
   });
 });
+
+test('required vacant legacy audit is canonicalized when a plan repair archives judgments', async (t) => {
+  t.mock.timers.enable({
+    apis: ['Date'],
+    now: new Date('2026-08-05T15:00:00Z'),
+  });
+  const finding = blockingFinding({
+    kickTo: 'plan',
+    what: 'The plan-owned checked-JS contract remains invalid.',
+  });
+  const task = canonicalTask({
+    stage: 'review',
+    agents: {
+      implementer_agent_id: 'implementer-old',
+      reviewer_agent_id: 'reviewer-old',
+      reviewer2_agent_id: null,
+      audit_agent_id: null,
+    },
+    tests: { authored_by_agent_id: 'plan-agent-old', green: true, evidence: ['gate'] },
+    review: {
+      verdict: 'needs-work',
+      reviewer_agent_id: 'reviewer-old',
+      findings: [finding],
+      evidence: ['checked-JS failure'],
+    },
+    audit: { required: true, verdict: 'na', audit_agent_id: null, evidence: [] },
+  });
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    const refuted = await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('review-refuter', finding, { source: 'review' }),
+    );
+    assert.equal(refuted.stage, 'plan');
+    await recordSpecialistReturn(root, 'plan', '18', planReturn({}, 'repair-plan-agent'));
+
+    const repaired = await recordSpecialistReturn(
+      root,
+      'implement',
+      '18',
+      implementReturn('repair-implementer'),
+    );
+
+    assert.equal(repaired.stage, 'review');
+    assert.deepEqual(repaired.judgmentHistory[0].audit, {
+      required: true,
+      verdict: 'na',
+      audit_agent_id: null,
+      findings: [],
+      evidence: [],
+    });
+    assert.equal((await readTask(taskDir)).stage, 'review');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

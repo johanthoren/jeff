@@ -135,12 +135,13 @@ function haveActiveBlockersSurvivedRefute(task) {
 
 /** @param {MutableRecordTask} task @param {string} at */
 function judgmentHistoryEntry(task, at) {
+  const audit = Object.hasOwn(task.audit, 'findings') ? task.audit : { ...task.audit, findings: [] };
   if (isOperation(task)) {
     return {
       cycle: task.judgmentHistory?.length ?? 0,
       at,
       verification: task.verification,
-      audit: task.audit,
+      audit,
       agents: {
         verifier_agent_id: task.agents.verifier_agent_id,
         audit_agent_id: task.agents.audit_agent_id,
@@ -151,7 +152,7 @@ function judgmentHistoryEntry(task, at) {
     at,
     review: task.review,
     review2: task.review2 ?? null,
-    audit: task.audit,
+    audit,
     agents: {
       reviewer_agent_id: task.agents.reviewer_agent_id,
       reviewer2_agent_id: task.agents.reviewer2_agent_id,
@@ -1173,6 +1174,47 @@ export async function recordReverify(root, id) {
     archiveAndResetJudgments(next, at, new Set(['verification']));
     next.status = 'in_progress';
     next.stage = 'verify';
+    next.updatedAt = at;
+    return /** @type {TaskJson} */ (next);
+  });
+}
+
+
+/**
+ * Discard the judgments a lane earned against an integration checkpoint that a
+ * failed ancestry check or expected-old mismatch has invalidated.
+ *
+ * Eligibility is deliberately narrow. A live needs-work verdict is an ordinary
+ * kickback, not a stale checkpoint, and archiving it here would retire a real
+ * blocker: forcing fresh identities only bars the same agent from re-judging,
+ * it does not stop an unrelated reviewer from passing still-unfixed work.
+ * Requiring an existing checkpoint also keeps the stage reset off tasks that
+ * never reached a gate.
+ * @param {string} root @param {string} id
+ */
+export async function recordRebuild(root, id) {
+  return updateTask(root, id, (task) => {
+    const operation = isOperation(task);
+    const checkpointed = operation
+      ? task.verification?.verdict != null
+      : task.tests?.gate != null;
+    /** @type {Array<{ verdict?: string | null } | null | undefined>} */
+    const outcomes = [task.review, task.review2, task.audit];
+    if (operation) outcomes.push(task.verification);
+    // Raw verdict, not isFailingJudgment: an inconsistent needs-work is malformed
+    // state, and rebuild must not launder it into a clean slate either.
+    const kickedBack = outcomes.some((outcome) => outcome?.verdict === 'needs-work');
+    if (task.status !== 'in_progress' || !checkpointed || kickedBack) {
+      throw new Error(
+        '[record-rebuild] requires an in-progress task holding judgments against a recorded checkpoint with no live needs-work verdict',
+      );
+    }
+    const next = /** @type {any} */ (structuredClone(task));
+    const at = now();
+    archiveAndResetJudgments(next, at);
+    // Operations carry no `tests`; their verification is already reset above.
+    if (!operation) invalidateVerification(next);
+    next.stage = operation ? 'verify' : 'refactor';
     next.updatedAt = at;
     return /** @type {TaskJson} */ (next);
   });
