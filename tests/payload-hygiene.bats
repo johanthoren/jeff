@@ -1315,7 +1315,11 @@ section_paragraphs() {
 # A member silently dropped from it routes security-sensitive, user-data, or
 # irreversible work down the ad-hoc path with no specialist and no audit, which
 # is the one failure mode of this change that costs more than the friction it
-# removes.
+# removes. Each member is therefore bound to the floor sentence by the same
+# `floor[^.]{0,240}` proximity idiom the rest of this block uses, never grepped
+# loose over the whole gate: several members are common words that also occur in
+# unrelated Entry prose (the recommendation bias carries "release-shaped"), so a
+# loose stem would keep passing after the member was deleted from the floor set.
 # ===========================================================================
 
 entry_gate() {
@@ -1374,16 +1378,16 @@ entry_gate_prose() {
 }
 
 @test "#199 AC3: a named risk floor overrides a lighter classification and restores the ordinary pause" {
-  local gate floor label
+  local gate member label
   gate="$(entry_gate)"
   [ -n "$gate" ] || {
     echo "cook SKILL.md has no Entry section"
     return 1
   }
 
-  while IFS='|' read -r floor label; do
-    grep -qiE -- "$floor" <<<"$gate" || {
-      echo "the Entry gate names no risk floor for $label; work on that boundary would route by classification alone, with no restored pause and no specialist"
+  while IFS='|' read -r member label; do
+    grep -qiE -- "floor[^.]{0,240}$member|$member[^.]{0,240}floor" <<<"$gate" || {
+      echo "the Entry gate's floor sentence does not name $label; work on that boundary would route by classification alone, with no restored pause and no specialist"
       return 1
     }
   done <<'FLOORS'
