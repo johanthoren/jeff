@@ -70,7 +70,7 @@ security_audit_result:
   report_path: "scratchpads/security-audit-<timestamp>.md"
 ```
 
-`dropped_targets` names each explicitly supplied file argument the scanner rejected as unscannable (unknown extension, extensionless); it never silently discards a target the caller named directly. Directory-walk drops are not explicit targets and are not listed.
+`dropped_targets` names each explicitly supplied file argument the scanner rejected as unscannable (unknown extension, extensionless, oversized); it never silently discards a target the caller named directly. Directory-walk drops are not explicit targets and are not listed.
 
 ## Gate Defaults
 

@@ -1841,11 +1841,12 @@ def main(argv: list[str]) -> int:
                 "EMPTY-SCAN: the explicitly supplied scope resolved zero scannable "
                 "files. Use --force to still write a report."
             )
-            print(notice, file=sys.stderr if args.json else sys.stdout)
-            return exit_code("EMPTY-SCAN")
-        notice = "No scannable files resolved for security review. Use --force to emit an empty audit report."
+            code = exit_code("EMPTY-SCAN")
+        else:
+            notice = "No scannable files resolved for security review. Use --force to emit an empty audit report."
+            code = 0
         print(notice, file=sys.stderr if args.json else sys.stdout)
-        return 0
+        return code
 
     compiled_rules = [(rule, re.compile(rule.regex)) for rule in RULES]
 
