@@ -1291,3 +1291,246 @@ section_paragraphs() {
     return 1
   }
 }
+
+# ===========================================================================
+# issue #199: the assess→fork gate routes by consequence and expected lifetime
+#
+# Seam: unchanged from the #117 block above. The payload prose IS the product.
+# skills/cook/SKILL.md loads in full on every invocation, and the checked-JS CLI
+# deliberately owns no entry gate (tests/command-routing.bats covers what the CLI
+# does route), so the rule a consuming host obeys when it decides whether work
+# enters the tracked pipeline is observable in exactly one place: this shipped
+# file. There is no second seam these assertions shadow.
+#
+# Marker discipline, per the #117 block above: every marker below is a route
+# identifier the rest of the payload already references (`A. Ad-hoc minimal
+# ship`, `B.`, `C.`), a classification axis this gate introduces as vocabulary
+# (`consequence`, `lifetime`), a named member of the risk-floor set, or a
+# worked-example class noun. None pins a sentence a maintainer may legitimately
+# rephrase: every proximity assertion is bounded by `[^.]`, so it holds within
+# one sentence in any wording, and every enumeration is matched case-insensitively
+# on its stem.
+#
+# The floor set is asserted member by member because it is the safety carve-out.
+# A member silently dropped from it routes security-sensitive, user-data, or
+# irreversible work down the ad-hoc path with no specialist and no audit, which
+# is the one failure mode of this change that costs more than the friction it
+# removes. Each member is therefore bound to the floor sentence by the same
+# `floor[^.]{0,240}` proximity idiom the rest of this block uses, never grepped
+# loose over the whole gate: several members are common words that also occur in
+# unrelated Entry prose (the recommendation bias carries "release-shaped"), so a
+# loose stem would keep passing after the member was deleted from the floor set.
+# ===========================================================================
+
+entry_gate() {
+  skill_section '^## Entry$' | tr '\n' ' '
+}
+
+# The gate minus its A/B/C option rows. Those rows already carry "Ad-hoc minimal
+# ship" and "no fake pipeline", so an assertion about what the routing prose
+# states must not be satisfiable by a table that disposable work no longer sees.
+entry_gate_prose() {
+  skill_section '^## Entry$' | grep -v '^|' | tr '\n' ' '
+}
+
+@test "#199 AC1: the Entry gate classifies on consequence and expected lifetime before the first durable write" {
+  local gate
+  gate="$(entry_gate)"
+  [ -n "$gate" ] || {
+    echo "cook SKILL.md has no Entry section"
+    return 1
+  }
+
+  grep -qiE 'consequence[^.]{0,240}lifetime|lifetime[^.]{0,240}consequence' <<<"$gate" || {
+    echo "the Entry gate does not classify work on both axes together; a route picked from consequence alone or lifetime alone is not the classification this gate owes"
+    return 1
+  }
+  grep -qiE '(classif|classification)[^.]{0,200}before[^.]{0,140}durable write|before[^.]{0,140}durable write[^.]{0,200}(classif|classification)' <<<"$gate" || {
+    echo "the Entry gate does not place the classification before the first durable write, so the route is chosen after the write it was meant to govern"
+    return 1
+  }
+  grep -qiE '(state|stated|states|announce|say|report)[^.]{0,200}reason|reason[^.]{0,200}(state|stated|states|announce|say|report)' <<<"$gate" || {
+    echo "the Entry gate does not surface the classification and its reason at the routing moment; an implicit classification is one the operator cannot correct"
+    return 1
+  }
+}
+
+@test "#199 AC2: disposable work takes route A with no blocking stop, ahead of the structural signals" {
+  local gate
+  gate="$(entry_gate)"
+  [ -n "$gate" ] || {
+    echo "cook SKILL.md has no Entry section"
+    return 1
+  }
+
+  grep -qiE 'disposable[^.]{0,240}(\*\*A\*\*|route A|option A|path A|ad-?hoc minimal ship)|(\*\*A\*\*|route A|option A|path A|ad-?hoc minimal ship)[^.]{0,240}disposable' <<<"$gate" || {
+    echo "the Entry gate does not route disposable work to the existing A. Ad-hoc minimal ship treatment"
+    return 1
+  }
+  grep -qiE 'disposable[^.]{0,240}(does not|do not|never|without|no)[^.]{0,160}(stop|pause|ask|question|interrupt)|(does not|do not|never|without|no)[^.]{0,160}(stop|pause|ask|question|interrupt)[^.]{0,240}disposable' <<<"$gate" || {
+    echo "the Entry gate still opens the A/B/C question for disposable work; an interrupt per disposable artifact is the friction this change exists to remove"
+    return 1
+  }
+  grep -qiE '(even (when|if|where)|regardless of|overrid|takes precedence)[^.]{0,240}(structural|multi[- ]file|cross[- ]cutting|pause signal)|(structural|multi[- ]file|cross[- ]cutting|pause signal)[^.]{0,240}(even (when|if|where)|regardless of|overrid|takes precedence)' <<<"$gate" || {
+    echo "the Entry gate does not hold the disposable classification when a structural pause signal fires, so a multi-file throwaway collector still routes like shipped payload"
+    return 1
+  }
+}
+
+@test "#199 AC3: a named risk floor overrides a lighter classification and restores the ordinary pause" {
+  local gate member label
+  gate="$(entry_gate)"
+  [ -n "$gate" ] || {
+    echo "cook SKILL.md has no Entry section"
+    return 1
+  }
+
+  while IFS='|' read -r member label; do
+    grep -qiE -- "floor[^.]{0,240}$member|$member[^.]{0,240}floor" <<<"$gate" || {
+      echo "the Entry gate's floor sentence does not name $label; work on that boundary would route by classification alone, with no restored pause and no specialist"
+      return 1
+    }
+  done <<'FLOORS'
+production behavio|production behavior
+user data|user data
+security boundar|security boundaries
+accessibilit|accessibility basics
+irreversible|irreversible state
+shared state|shared state
+release|releases
+build|durable build infrastructure
+deploy|durable deploy infrastructure
+FLOORS
+
+  grep -qiE 'floor[^.]{0,240}(overrid|always|beats?|wins?|trumps?)|(overrid|always)[^.]{0,240}floor' <<<"$gate" || {
+    echo "the Entry gate does not make a risk floor override a lighter classification; a floor that only advises is not a floor"
+    return 1
+  }
+  grep -qiE 'floor[^.]{0,240}(restore|ordinary pause|pause|stop|full)|(restore|ordinary pause)[^.]{0,240}floor' <<<"$gate" || {
+    echo "the Entry gate does not restore the ordinary pause on a floor hit"
+    return 1
+  }
+}
+
+@test "#199 AC4: the assess-to-fork options table still offers exactly the three existing routes" {
+  local rows count option
+  rows="$(skill_section '^## Entry$' | grep '^| \*\*' || true)"
+  count="$(printf '%s\n' "$rows" | grep -c . || true)"
+
+  [ "$count" -eq 3 ] || {
+    printf 'the assess-to-fork options table must keep its three-route shape; a fourth route is one every downstream validator, kickback and done-gate path would have to learn. Found %s option row(s):\n%s\n' \
+      "$count" "$rows"
+    return 1
+  }
+  for option in 'A. Ad-hoc minimal ship' 'B. Record pending' 'C. Record + start capture'; do
+    printf '%s\n' "$rows" | grep -qF -- "$option" || {
+      printf 'the assess-to-fork options table no longer offers "%s":\n%s\n' "$option" "$rows"
+      return 1
+    }
+  done
+}
+
+@test "#199 AC5: work promotes on growth, and the no-downgrade rule lives where recovery is governed" {
+  local gate kickbacks
+  local downgrade='(re-?classif|downgrad|downward|demot)[^.]{0,240}(failed check|blocking finding)|(failed check|blocking finding)[^.]{0,240}(re-?classif|downgrad|downward|demot)'
+  gate="$(entry_gate)"
+  kickbacks="$(skill_section '^## Kickbacks$' | tr '\n' ' ')"
+  [ -n "$gate" ] || {
+    echo "cook SKILL.md has no Entry section"
+    return 1
+  }
+  [ -n "$kickbacks" ] || {
+    echo "cook SKILL.md has no Kickbacks section"
+    return 1
+  }
+
+  grep -qiE '(promot|escalat|graduat|move up)[^.]{0,240}(lifetime|blast radius)|(lifetime|blast radius)[^.]{0,240}(promot|escalat|graduat|move up)' <<<"$gate" || {
+    echo "the Entry gate does not promote work to the full path as its lifetime or blast radius grows; classification with no upward path is a one-way discount"
+    return 1
+  }
+  grep -qiE "$downgrade" <<<"$kickbacks" || {
+    echo "SKILL.md Kickbacks does not forbid re-classifying tracked work downward to escape a failed check or a blocking finding; recovery is the branch where that rule has to be reachable"
+    return 1
+  }
+  if grep -qiE "$downgrade" <<<"$gate"; then
+    echo "the no-downgrade rule has a second home in the Entry gate; it governs work already inside the pipeline, and a duplicate is a line every invocation pays to load"
+    return 1
+  fi
+}
+
+@test "#199 AC6: worked examples pin routing in both directions" {
+  local gate token label
+  gate="$(entry_gate)"
+  [ -n "$gate" ] || {
+    echo "cook SKILL.md has no Entry section"
+    return 1
+  }
+
+  while IFS='|' read -r token label; do
+    grep -qiE "disposable[^.]{0,240}$token|$token[^.]{0,240}disposable" <<<"$gate" || {
+      echo "the Entry gate does not pin $label to the disposable side of the routing decision"
+      return 1
+    }
+  done <<'LIGHT'
+experiment|a throwaway experiment
+comparison|a comparison
+evidence[- ]collector|a local evidence collector
+one-off|a one-off helper
+LIGHT
+
+  grep -qiE 'floor[^.]{0,240}migration|migration[^.]{0,240}floor' <<<"$gate" || {
+    echo "the Entry gate does not pin data migration to the risk-floor side; the floor-side examples are what keep a lighter classification away from user data"
+    return 1
+  }
+}
+
+@test "#199 AC7: auto-routed work is named ad-hoc and never presented as pipeline-verified" {
+  local prose
+  prose="$(entry_gate_prose)"
+  [ -n "$prose" ] || {
+    echo "cook SKILL.md has no Entry section"
+    return 1
+  }
+
+  grep -qiE 'ad-?hoc' <<<"$prose" || {
+    echo "the Entry gate's routing prose never names the lighter route as ad-hoc; disposable work no longer sees the options table, so the table is not where the operator learns what they got"
+    return 1
+  }
+  grep -qiE 'ad-?hoc[^.]{0,240}(not|never|no)[^.]{0,160}(verif|pipeline|tracked|specialist|review)|(not|never|no)[^.]{0,160}(verif|pipeline|tracked|specialist)[^.]{0,240}ad-?hoc' <<<"$prose" || {
+    echo "the Entry gate does not disclaim ad-hoc work as unverified by the pipeline; silently skipping the brigade and calling the result checked is the dishonest failure mode"
+    return 1
+  }
+}
+
+@test "#199 AC8: the always-loaded cook SKILL.md stays inside its budget, with no new section or reference file" {
+  # Budget derivation (plan, issue #199): 281 lines at task entry, plus the ~12
+  # lines of gate prose the eight criteria require, plus 2 lines of slack = 295.
+  # A new `##` section or a new reference file costs several times that and is
+  # what the budget exists to refuse, so both are bounded at their entry counts.
+  #
+  # This is a bound, not a restated literal: skills/cook/SKILL.md loads in full
+  # on every invocation, so its size is a cost every consuming host pays.
+  #
+  # kiss: a file-wide line bound couples this assertion to every other task that
+  # edits SKILL.md, which is the intent while #118, #125 and #130 are open on
+  # trimming this same payload. If that coupling outlives them, re-express the
+  # bound over the Entry section alone.
+  local budget=295 max_sections=11 max_references=6 lines sections references
+  lines="$(grep -c '' "$REPO/skills/cook/SKILL.md")"
+  [ "$lines" -le "$budget" ] || {
+    echo "skills/cook/SKILL.md is $lines lines, over its $budget-line budget; it loads in full on every invocation"
+    return 1
+  }
+
+  sections="$(grep -c '^## ' "$REPO/skills/cook/SKILL.md")"
+  [ "$sections" -le "$max_sections" ] || {
+    echo "skills/cook/SKILL.md grew to $sections top-level sections from $max_sections; this change is prose inside the existing gate, not a new section"
+    return 1
+  }
+
+  references="$(ls -1 "$REPO"/skills/cook/reference/*.md | grep -c .)"
+  [ "$references" -le "$max_references" ] || {
+    echo "skills/cook/reference/ grew to $references files from $max_references; this change is prose inside the existing gate, not a new reference file"
+    return 1
+  }
+}
