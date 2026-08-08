@@ -55,6 +55,7 @@ Do not filesystem-search for the script; resolve it from the announced base dire
 security_audit_result:
   scope: "<resolved-scope>"
   files_scanned: <n>
+  dropped_targets: [<explicitly supplied unscannable path>, ...]
   findings:
     total: <n>
     critical: <n>
@@ -65,15 +66,18 @@ security_audit_result:
     categories: <n>
     uncovered: <n>
     audit_tool_failures: <n>
-  recommendation: "PASS|REVIEW|BLOCK"
+  recommendation: "PASS|REVIEW|BLOCK|EMPTY-SCAN"
   report_path: "scratchpads/security-audit-<timestamp>.md"
 ```
+
+`dropped_targets` names each explicitly supplied file argument the scanner rejected as unscannable (unknown extension, extensionless); it never silently discards a target the caller named directly. Directory-walk drops are not explicit targets and are not listed.
 
 ## Gate Defaults
 
 - `BLOCK`: any `critical` finding
 - `REVIEW`: any `high/medium` finding, category coverage gaps, or dependency audit execution failures
 - `PASS`: only when no findings and no coverage gaps/tool failures
+- `EMPTY-SCAN`: an explicitly supplied, non-empty scope resolved zero scannable files. This is never an ordinary clean scan: without `--force` the run exits nonzero with no report; with `--force` a report is still written but the recommendation and exit code both carry `EMPTY-SCAN`, never `PASS`. (`--changes`/`--staged` and full-codebase scans that resolve zero files are unaffected: a genuinely empty diff still reads as ordinary.)
 
 ## Common Flags
 
