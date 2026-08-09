@@ -705,10 +705,12 @@ def resolve_files(args: argparse.Namespace, cwd: Path, repo_root: Path) -> tuple
     """Resolve the scan scope.
 
     Returns (files, dropped_targets). `dropped_targets` names explicitly
-    supplied file arguments `is_scannable_file` rejected (unknown extension,
-    extensionless, oversized); dir-walk drops are not explicit targets and
-    are not named. Directory args and `--changes`/`--staged`/full-codebase
-    scans never populate `dropped_targets`.
+    supplied scope items that did not resolve to a scanned file: unscannable
+    files (unknown extension, extensionless, oversized) and items that are
+    neither a file nor a directory (typo'd, deleted, broken symlink);
+    dir-walk drops are not explicit targets and are not named. Directory
+    args and `--changes`/`--staged`/full-codebase scans never populate
+    `dropped_targets`.
     """
     if args.staged or args.changes:
         return resolve_changed_files(repo_root, args.staged, args.changes, args.max_file_kb), []
@@ -726,6 +728,8 @@ def resolve_files(args: argparse.Namespace, cwd: Path, repo_root: Path) -> tuple
                 continue
             if path.is_dir():
                 files.extend(walk_scope(path, args.max_file_kb))
+                continue
+            dropped_targets.append(item)
         return sorted(set(files)), dropped_targets
 
     return sorted(set(walk_scope(repo_root, args.max_file_kb))), []
