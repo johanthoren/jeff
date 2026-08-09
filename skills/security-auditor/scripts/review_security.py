@@ -720,16 +720,12 @@ def resolve_files(args: argparse.Namespace, cwd: Path, repo_root: Path) -> tuple
         dropped_targets: list[str] = []
         for item in args.scope:
             path = (cwd / item).resolve()
-            if path.is_file():
-                if is_scannable_file(path, args.max_file_kb):
-                    files.append(path)
-                else:
-                    dropped_targets.append(item)
-                continue
-            if path.is_dir():
+            if path.is_file() and is_scannable_file(path, args.max_file_kb):
+                files.append(path)
+            elif path.is_dir():
                 files.extend(walk_scope(path, args.max_file_kb))
-                continue
-            dropped_targets.append(item)
+            else:
+                dropped_targets.append(item)
         return sorted(set(files)), dropped_targets
 
     return sorted(set(walk_scope(repo_root, args.max_file_kb))), []
