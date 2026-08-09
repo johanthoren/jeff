@@ -168,7 +168,7 @@ Jeff may not override a `needs-work` verdict. Code `review`/`audit` and operatio
 
 **Capture decomposition.** Apply the fake-edge test as guidance, not a gate. When an order contains two or more independently shippable outcomes, capture them as separate tasks. Add a `deps` edge only when one task genuinely consumes another task's output. Prefer several simple tasks when acceptance criteria cluster into independent seams.
 
-Every specialist inherits the orchestrator provider/model unchanged. Per-stage effort is owned by `agents/cook-*.md` frontmatter, which Pi and Claude Code apply; Codex children inherit orchestrator effort.
+Each specialist's model follows the dispatch rules (§Dispatch). Per-stage effort is owned by `agents/cook-*.md` frontmatter, which Pi and Claude Code apply; Codex children inherit orchestrator effort.
 
 **Who runs each stage.** `capture` is Jeff-run and Chef-in-the-loop. Every later active stage is a fresh dispatched specialist. Code mechanically separates test author, implementer, and reviewers. Operation mechanically separates executor and verifier; complexity never adds a second verifier.
 
@@ -192,7 +192,7 @@ For each dispatched stage (`plan`, `implement`, `refactor`, `execute`, `review`,
 - **Claude Code:** use the native Agent/Task tool with `subagent_type: cook-<stage>` and record the host-observed id separately; the specialist JSON omits it.
 - **Pi:** use `cook_dispatch` with `stage`, `brief`, and `taskId` when recording. Execute receives its ordinary editing tools; verify and audit receive read tools plus commands; review and refute receive read tools only. Pi projects an execute `approvalRequired` string exactly to the parent.
 - **Codex (native v2 agent tools):** read `skills/cook/reference/codex-dispatch.md` and follow it; it owns the spawn call, the parallel-judgment order, and the native lifecycle correlation. A Codex child inherits the orchestrator's tool capability and nothing narrows it per child, so the grant above binds by role contract rather than by configuration.
-- **One host-independent rule:** every specialist inherits the orchestrator provider/model unchanged. Do not add model or effort overrides. New ledgers omit `brains`.
+- **One host-independent rule:** the orchestrator picks each dispatched specialist's model; the default is inheriting the orchestrator provider/model, and when unsure, inherit. Builder/judge identity separation stays unchanged regardless of tier. Justify any non-default tier choice against total cost per task including rework, never per-token price. New ledgers omit `brains`.
 - For code, record plan authorship, implementer, and reviewer identities. For operations, record `executor_agent_id` and `verifier_agent_id`; they must differ.
 
 ### Code plan + test authorship
