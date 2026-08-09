@@ -1460,3 +1460,114 @@ print("ok")
 PY
 }
 
+# ---------------------------------------------------------------------------
+# task #204: bats files scan as shell; empty scans are loud; dropped explicit
+# targets are named.
+#
+# Source of truth: .jeff/tasks/lite-204-3324491676/task.md and notes.md.
+#
+# Contract pinned here (the implementation writes to it):
+#   - EMPTY-SCAN: a run whose explicitly supplied, non-empty scope resolves
+#     zero scannable files exits nonzero and names EMPTY-SCAN in the
+#     caller-visible result. With --force the report is still written and both
+#     the JSON recommendation and the report carry EMPTY-SCAN.
+#   - dropped_targets: an explicitly supplied file path dropped as unscannable
+#     (unknown extension, extensionless) is listed in the --json result under
+#     dropped_targets and named as dropped in the report. Scanned targets
+#     never appear there, and naming a drop does not downgrade an otherwise
+#     clean recommendation.
+#
+# Status against current (pre-#204) code:
+#   AC1 (bats scanned by shell rules)  RED - .bats is not in SCAN_EXTENSIONS,
+#     the run resolves zero files, prints a notice, and exits 0 with no JSON
+#   AC1 (bats classes as shell)        RED - same zero-file early exit
+#   AC2 (empty scan loud, no --force)  RED - one-line notice, exit 0
+#   AC2 (empty scan loud, --force)     RED - ordinary PASS recommendation
+#   AC3 (dropped targets named)        RED - no dropped_targets key
+# ---------------------------------------------------------------------------
+
+@test "#204 AC1: a bats file under tests/ is scanned by the shell rule pack" {
+  mkdir -p "$TMP/tests"
+  cat >"$TMP/tests/smoke.bats" <<'EOF'
+@test "runs a dynamic command" {
+  CMD="ls"
+  eval $CMD
+}
+EOF
+
+  run "$SCANNER" "$TMP/tests/smoke.bats" --json --skip-deps --report-dir "$TMP/reports"
+  [ "$status" -eq 1 ]
+  echo "$output" | jq -e '
+    .files_scanned == 1 and
+    ([.findings[] | select(
+      .rule_id == "shell-eval" and
+      (.file | endswith("smoke.bats")) and
+      .in_tests == true
+    )] | length) == 1
+  '
+}
+
+@test "#204 AC1: a clean bats file classes as shell for the coverage ledger" {
+  cat >"$TMP/clean.bats" <<'EOF'
+@test "prints" {
+  run echo hi
+  [ "$status" -eq 0 ]
+}
+EOF
+
+  run "$SCANNER" "$TMP/clean.bats" --json --skip-deps --report-dir "$TMP/reports"
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '
+    .files_scanned == 1 and
+    .coverage.injection_command.status == "covered_no_hits"
+  '
+}
+
+@test "#204 AC2: an all-unscannable explicit scope without --force exits nonzero and names the empty scan" {
+  printf '# prose only\n' >"$TMP/notes.md"
+  printf 'no extension here\n' >"$TMP/runbook"
+
+  run "$SCANNER" "$TMP/notes.md" "$TMP/runbook" --json --skip-deps --report-dir "$TMP/reports"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"EMPTY-SCAN"* ]]
+}
+
+@test "#204 AC2: --force still writes the report but EMPTY-SCAN survives into recommendation and report" {
+  printf '# prose only\n' >"$TMP/notes.md"
+
+  run "$SCANNER" "$TMP/notes.md" --force --json --skip-deps --report-dir "$TMP/reports"
+  [ "$status" -ne 0 ]
+  echo "$output" | jq -e '
+    .files_scanned == 0 and
+    .recommendation == "EMPTY-SCAN"
+  '
+
+  report_path="$(echo "$output" | jq -r '.report_path')"
+  [ -f "$report_path" ]
+  grep -qF 'EMPTY-SCAN' "$report_path"
+}
+
+@test "#204 AC3: explicitly supplied unscannable targets are named as dropped, scanned ones are not" {
+  cat >"$TMP/clean.py" <<'EOF'
+def add(a, b):
+    return a + b
+EOF
+  printf '# prose only\n' >"$TMP/doc.md"
+  printf 'no extension here\n' >"$TMP/runbook"
+
+  run "$SCANNER" "$TMP/clean.py" "$TMP/doc.md" "$TMP/runbook" --json --skip-deps --report-dir "$TMP/reports"
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '
+    .files_scanned == 1 and
+    (.dropped_targets | type) == "array" and
+    (.dropped_targets | length) == 2 and
+    ([.dropped_targets[] | select(endswith("doc.md"))] | length) == 1 and
+    ([.dropped_targets[] | select(endswith("runbook"))] | length) == 1 and
+    ([.dropped_targets[] | select(endswith("clean.py"))] | length) == 0
+  '
+
+  report_path="$(echo "$output" | jq -r '.report_path')"
+  [ -f "$report_path" ]
+  grep -qi 'dropped' "$report_path"
+}
+
