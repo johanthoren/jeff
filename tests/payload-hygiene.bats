@@ -213,7 +213,7 @@ setup() {
 # ---------------------------------------------------------------------------
 
 @test "#117 AC2: per-stage effort values appear only in role frontmatter" {
-  run grep -rn 'xhigh' "$REPO/AGENTS.md" "$REPO/skills/cook"
+  run grep -rn 'xhigh' "$REPO/AGENTS.md" "$REPO/skills/cook" "$REPO/docs/specs/jeff-design.md"
   [ "$status" -ne 0 ]
   [ -z "$output" ]
 }
@@ -246,7 +246,12 @@ convergence and council|K=3
 git|Never put red
 standards|code-standards
 builder/judge separation|INV-1
+operation approval|cook approve <id> <operator>
 CASES
+  grep -qF 'skills/cook/reference/operations.md' "$REPO/AGENTS.md" || {
+    echo "AGENTS.md does not defer the operation approval sequence to skills/cook/reference/operations.md"
+    return 1
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -1378,7 +1383,7 @@ entry_gate_prose() {
 }
 
 @test "#199 AC3: a named risk floor overrides a lighter classification and restores the ordinary pause" {
-  local gate member label
+  local gate member label design
   gate="$(entry_gate)"
   [ -n "$gate" ] || {
     echo "cook SKILL.md has no Entry section"
@@ -1401,6 +1406,15 @@ release|releases
 build|durable build infrastructure
 deploy|durable deploy infrastructure
 FLOORS
+  design="$(tr '\n' ' ' <"$REPO/docs/specs/jeff-design.md")"
+  grep -qiE 'risk floor[^.]{0,240}skills/cook/SKILL\.md[^.]{0,160}authoritative|authoritative[^.]{0,160}skills/cook/SKILL\.md[^.]{0,240}risk floor' <<<"$design" || {
+    echo "the design spec does not defer the risk floor to the authoritative skills/cook/SKILL.md in the same sentence"
+    return 1
+  }
+  if grep -qiE 'risk floor[^.]{0,240}(production behavio|user data|data migration|security boundar|accessibilit|irreversible|shared state|release|build|deploy)' <<<"$design"; then
+    echo "the design spec restates risk-floor members instead of leaving their enumeration to skills/cook/SKILL.md"
+    return 1
+  fi
 
   grep -qiE 'floor[^.]{0,240}(overrid|always|beats?|wins?|trumps?)|(overrid|always)[^.]{0,240}floor' <<<"$gate" || {
     echo "the Entry gate does not make a risk floor override a lighter classification; a floor that only advises is not a floor"
@@ -1548,12 +1562,11 @@ LIGHT
 #
 # Marker discipline, per the #117 block above: 'total cost per task' and
 # 'per-token' are the settled policy's own vocabulary and identify the full
-# statement; 'inherits the orchestrator provider/model' is the verbatim
-# duplicated clause the restatement sites share today; 'Do not add model or
-# effort overrides' is the exact sentence src/pi/role-session.js contradicts on
-# every Pi dispatch (it applies agents/cook-*.md frontmatter effort). Proximity
-# assertions are bounded by [^.] so they hold within one sentence, whatever the
-# wording.
+# statement. 'One model inheritance' and 'specialists inherit model' are the
+# stale unconditional shorthand forms; non-owner sites may instead say
+# inheritance is the default or defer to the dispatch owner. 'Do not add model
+# or effort overrides' is the exact sentence src/pi/role-session.js contradicts
+# on every Pi dispatch (it applies agents/cook-*.md frontmatter effort).
 #
 # The single-ownership discriminator is the cost bound, not the word "model": a
 # deferring site may name the owner, but only a full statement carries the
@@ -1605,20 +1618,21 @@ skill_outside_dispatch_rules() {
   }
 }
 
-@test "#205 AC2/AC6: no site outside the dispatch rules restates the inheritance rule" {
-  local pattern='inherits? the orchestrator[^.]{0,40}(provider|model)'
+@test "#205 AC2/AC6: sites outside the dispatch rules only default or defer model inheritance" {
+  local pattern='one[[:space:]-]+model[[:space:]-]+inheritance|specialists?[^.]{0,100}inherit(s|ance)?[^.]{0,60}model|specialists?[^.]{0,100}model[^.]{0,60}inherit(s|ance)?'
+  local allowance='default[^.]{0,100}inherit|inherit[^.]{0,100}default|defer(s|red|ring)?[^.]{0,100}(dispatch|skills/cook/SKILL)|follow(s|ing)?[^.]{0,100}(dispatch|skills/cook/SKILL)'
   local offenders="" file hits
 
-  hits="$(skill_outside_dispatch_rules | grep -nEi "$pattern" || true)"
+  hits="$(skill_outside_dispatch_rules | grep -nEi "$pattern" | grep -viE "$allowance" || true)"
   [ -z "$hits" ] || offenders+="skills/cook/SKILL.md (outside the dispatch rules):"$'\n'"$hits"$'\n'
 
   for file in AGENTS.md docs/specs/jeff-design.md docs/specs/control-plane-vision.md; do
-    hits="$(grep -nEi "$pattern" "$REPO/$file" || true)"
+    hits="$(grep -nEi "$pattern" "$REPO/$file" | grep -viE "$allowance" || true)"
     [ -z "$hits" ] || offenders+="$file:"$'\n'"$hits"$'\n'
   done
 
   [ -z "$offenders" ] || {
-    printf 'sites outside the owning dispatch rules still restate the model inheritance rule instead of deferring to skills/cook/SKILL.md:\n%s' "$offenders"
+    printf 'sites outside the owning dispatch rules still claim unconditional model inheritance instead of making inheritance the default or deferring to skills/cook/SKILL.md:\n%s' "$offenders"
     return 1
   }
 }
