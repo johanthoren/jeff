@@ -35,31 +35,35 @@ IGNORE_DIRS = {
     "target",
 }
 
-SCAN_EXTENSIONS = {
-    ".py",
-    ".js",
-    ".ts",
-    ".tsx",
-    ".jsx",
-    ".go",
-    ".rb",
-    ".java",
-    ".kt",
-    ".swift",
-    ".rs",
-    ".php",
-    ".cs",
-    ".sh",
-    ".bash",
-    ".zsh",
-    ".ps1",
-    ".yaml",
-    ".yml",
-    ".json",
-    ".toml",
-    ".ini",
-    ".cfg",
-    ".env",
+# File-extension class for coverage applicability. Extensions not listed fall
+# back to "compiled" (a generic source-code class). SCAN_EXTENSIONS (below,
+# after RULES) is derived from these same keys, so a new extension is one row.
+FILE_CLASSES: dict[str, str] = {
+    ".py": "python",
+    ".js": "js",
+    ".ts": "js",
+    ".tsx": "js",
+    ".jsx": "js",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".zsh": "shell",
+    ".ps1": "shell",
+    ".bats": "shell",
+    ".go": "compiled",
+    ".rb": "compiled",
+    ".java": "compiled",
+    ".kt": "compiled",
+    ".swift": "compiled",
+    ".rs": "compiled",
+    ".php": "compiled",
+    ".cs": "compiled",
+    ".yaml": "config",
+    ".yml": "config",
+    ".json": "config",
+    ".toml": "config",
+    ".ini": "config",
+    ".cfg": "config",
+    ".env": "config",
 }
 
 MAX_REPORT_FINDINGS = 400
@@ -448,34 +452,9 @@ RULES_BY_ID = {rule.id: rule for rule in RULES}
 # Coverage engines available under task #24 (external engines are #25/#26).
 COVERAGE_ENGINES = ["builtin"]
 
-# File-extension class for coverage applicability. Extensions not listed fall
-# back to "compiled" (a generic source-code class).
-FILE_CLASSES: dict[str, str] = {
-    ".py": "python",
-    ".js": "js",
-    ".ts": "js",
-    ".tsx": "js",
-    ".jsx": "js",
-    ".sh": "shell",
-    ".bash": "shell",
-    ".zsh": "shell",
-    ".ps1": "shell",
-    ".go": "compiled",
-    ".rb": "compiled",
-    ".java": "compiled",
-    ".kt": "compiled",
-    ".swift": "compiled",
-    ".rs": "compiled",
-    ".php": "compiled",
-    ".cs": "compiled",
-    ".yaml": "config",
-    ".yml": "config",
-    ".json": "config",
-    ".toml": "config",
-    ".ini": "config",
-    ".cfg": "config",
-    ".env": "config",
-}
+# Scannable extensions: exactly the FILE_CLASSES keys (see above). Do not add
+# an extension to one table without the other; there is only one now.
+SCAN_EXTENSIONS = frozenset(FILE_CLASSES)
 
 _ALL_CODE = {"python", "js", "shell", "compiled"}
 
@@ -722,22 +701,34 @@ def added_lines_by_file(repo_root: Path, staged: bool) -> dict[str, set[int]]:
     return added
 
 
-def resolve_files(args: argparse.Namespace, cwd: Path, repo_root: Path) -> list[Path]:
+def resolve_files(args: argparse.Namespace, cwd: Path, repo_root: Path) -> tuple[list[Path], list[str]]:
+    """Resolve the scan scope.
+
+    Returns (files, dropped_targets). `dropped_targets` names explicitly
+    supplied scope items that did not resolve to a scanned file: unscannable
+    files (unknown extension, extensionless, oversized) and items that are
+    neither a file nor a directory (typo'd, deleted, broken symlink);
+    dir-walk drops are not explicit targets and are not named. Directory
+    args and `--changes`/`--staged`/full-codebase scans never populate
+    `dropped_targets`.
+    """
     if args.staged or args.changes:
-        return resolve_changed_files(repo_root, args.staged, args.changes, args.max_file_kb)
+        return resolve_changed_files(repo_root, args.staged, args.changes, args.max_file_kb), []
 
     if args.scope:
         files: list[Path] = []
+        dropped_targets: list[str] = []
         for item in args.scope:
             path = (cwd / item).resolve()
             if path.is_file() and is_scannable_file(path, args.max_file_kb):
                 files.append(path)
-                continue
-            if path.is_dir():
+            elif path.is_dir():
                 files.extend(walk_scope(path, args.max_file_kb))
-        return sorted(set(files))
+            else:
+                dropped_targets.append(item)
+        return sorted(set(files)), dropped_targets
 
-    return sorted(set(walk_scope(repo_root, args.max_file_kb)))
+    return sorted(set(walk_scope(repo_root, args.max_file_kb))), []
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -1651,10 +1642,14 @@ def count_severities(findings: list[Finding]) -> dict[str, int]:
 
 
 def exit_code(recommendation: str) -> int:
-    """Process exit code for a recommendation: BLOCK is 2, REVIEW is 1, PASS is 0."""
+    """Process exit code for a recommendation.
+
+    BLOCK is 2. REVIEW and EMPTY-SCAN (a scan that resolved nothing to look
+    at, never mistakable for a clean PASS) are 1. PASS is 0.
+    """
     if recommendation == "BLOCK":
         return 2
-    if recommendation == "REVIEW":
+    if recommendation in ("REVIEW", "EMPTY-SCAN"):
         return 1
     return 0
 
@@ -1672,6 +1667,7 @@ def write_report(
     audit_failures: int,
     risk_points: int,
     tools: list[dict[str, Any]] | None = None,
+    dropped_targets: list[str] | None = None,
 ) -> None:
     sorted_findings = sort_findings(findings)
     counts = count_severities(findings)
@@ -1694,6 +1690,9 @@ def write_report(
     lines.append(f"- Adversarial risk points: {risk_points}")
     lines.append(f"- Strict mode: `{str(strict).lower()}`")
     lines.append(f"- Recommendation: **{recommendation}**")
+    if dropped_targets:
+        dropped_list = ", ".join(f"`{t}`" for t in dropped_targets)
+        lines.append(f"- Dropped targets (explicitly supplied, unscannable): {dropped_list}")
     lines.append("")
 
     lines.append("## Coverage Ledger")
@@ -1809,6 +1808,7 @@ def write_report(
     lines.append("- BLOCK: any critical finding")
     lines.append("- REVIEW: any non-critical findings or audit/coverage debt")
     lines.append("- PASS: zero findings + zero debt")
+    lines.append("- EMPTY-SCAN: an explicitly supplied, non-empty scope resolved zero scannable files")
     lines.append("")
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
@@ -1819,8 +1819,15 @@ def main(argv: list[str]) -> int:
     cwd = Path.cwd().resolve()
     repo_root = detect_repo_root(cwd) or cwd
 
-    files = resolve_files(args, cwd, repo_root)
+    files, dropped_targets = resolve_files(args, cwd, repo_root)
     resolved_scope = scope_label(args)
+
+    # An explicit, non-empty scope that resolves to zero scannable files is a
+    # distinct outcome, never an ordinary clean scan: without it, a typo'd or
+    # entirely unscannable scope silently reads as PASS. `--changes`/`--staged`
+    # and full-codebase scans are deliberately excluded (a real empty diff is
+    # ordinary, not an error).
+    empty_scan = bool(args.scope) and not files
 
     if args.list_tools:
         # Read-only mode: report applicability/installed per registry tool and
@@ -1829,9 +1836,17 @@ def main(argv: list[str]) -> int:
         return 0
 
     if not files and not args.force:
-        notice = "No scannable files resolved for security review. Use --force to emit an empty audit report."
+        if empty_scan:
+            notice = (
+                "EMPTY-SCAN: the explicitly supplied scope resolved zero scannable "
+                "files. Use --force to still write a report."
+            )
+            code = exit_code("EMPTY-SCAN")
+        else:
+            notice = "No scannable files resolved for security review. Use --force to emit an empty audit report."
+            code = 0
         print(notice, file=sys.stderr if args.json else sys.stdout)
-        return 0
+        return code
 
     compiled_rules = [(rule, re.compile(rule.regex)) for rule in RULES]
 
@@ -1903,6 +1918,11 @@ def main(argv: list[str]) -> int:
     else:
         recommendation = make_recommendation(counts, audit_failures, args.strict)
 
+    # --force still writes a report for an empty scan, but the caller-visible
+    # recommendation must never read as an ordinary PASS.
+    if empty_scan:
+        recommendation = "EMPTY-SCAN"
+
     report_dir = (cwd / args.report_dir).resolve()
     report_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -1921,6 +1941,7 @@ def main(argv: list[str]) -> int:
         audit_failures=audit_failures,
         risk_points=risk_points,
         tools=tools_ledger,
+        dropped_targets=dropped_targets,
     )
 
     total = sum(counts.values())
@@ -1973,6 +1994,7 @@ def main(argv: list[str]) -> int:
             "scope": resolved_scope,
             "introduced_only": args.introduced_only,
             "files_scanned": len(files),
+            "dropped_targets": dropped_targets,
             "findings": findings_json,
             "suppressions": suppressions_json,
             "coverage": coverage_status,
@@ -1989,6 +2011,7 @@ def main(argv: list[str]) -> int:
     print("security_audit_result:")
     print(f"  scope: \"{resolved_scope}\"")
     print(f"  files_scanned: {len(files)}")
+    print(f"  dropped_targets: {dropped_targets}")
     print("  findings:")
     print(f"    total: {total}")
     print(f"    critical: {counts['critical']}")

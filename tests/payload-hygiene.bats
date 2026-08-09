@@ -1669,3 +1669,35 @@ skill_outside_dispatch_rules() {
     return 1
   }
 }
+
+
+# ---------------------------------------------------------------------------
+# task #204 AC4: the audit floor in skills/cook/SKILL.md must state that the
+# security scanner cannot cover payload-prose (markdown) diffs and that the
+# auditor owes a manual secrets/injection pass on them. Settled capture
+# decision (issue #204): document the gap, no markdown rule set. The floor
+# sentence is auditor-facing behavior: without it, a markdown-only diff
+# receives no manual pass and the mechanical floor silently rests on auditor
+# diligence (observed on task #199 / PR #203).
+#
+# RED now: the Audit floor paragraph in the Dispatch section names neither
+# markdown/payload-prose coverage limits nor a manual pass.
+# ---------------------------------------------------------------------------
+
+@test "#204 AC4: the audit floor states the scanner cannot cover payload-prose diffs and a manual pass is owed" {
+  local floor
+  floor="$(skill_section '^## Dispatch$' | section_paragraphs 'audit floor')"
+  [ -n "$floor" ] || {
+    echo "cook SKILL.md Dispatch section has no Audit floor paragraph"
+    return 1
+  }
+
+  grep -qiE '(payload-prose|markdown)[^.]{0,240}(cannot|does not|not|no|outside|beyond)[^.]{0,160}(cover|scan|see)|(cannot|does not)[^.]{0,160}(cover|scan|see)[^.]{0,240}(payload-prose|markdown)' <<<"$floor" || {
+    echo "the audit floor does not state that the scanner cannot cover payload-prose (markdown) diffs"
+    return 1
+  }
+  grep -qiE 'manual[^.]{0,240}(pass|review|secrets|injection)|(owe|owed|owes)[^.]{0,240}manual' <<<"$floor" || {
+    echo "the audit floor does not state that a manual pass is owed on payload-prose diffs"
+    return 1
+  }
+}

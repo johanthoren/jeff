@@ -178,7 +178,7 @@ Each specialist's model follows the dispatch rules (§Dispatch). Per-stage effor
 
 **Parallel refutes.** When more than one blocking finding remains, dispatch all source-bound refute specialists concurrently: one fresh specialist per finding, each blind to the others. Returns may be recorded in any order.
 
-**Audit floor.** For code, run the security scanner over the diff before review/audit. For an operation, raise `audit.required` when the plan or mechanical risk floor includes destructive filesystem or Git work, path resolution, release/external state, credentials, or another security-sensitive boundary. The plan's audit call is a floor, never a ceiling.
+**Audit floor.** For code, run the security scanner over the diff before review/audit. The scanner cannot cover payload-prose (markdown) diffs, so the auditor owes a manual secrets/injection pass on them. For an operation, raise `audit.required` when the plan or mechanical risk floor includes destructive filesystem or Git work, path resolution, release/external state, credentials, or another security-sensitive boundary. The plan's audit call is a floor, never a ceiling.
 
 **Dual review on complex tasks.** When `complexity` is `complex`, dispatch **two** review specialists concurrently (both `cook-review`, distinct agent ids), decorrelated by brief emphasis: one weighted toward correctness-vs-acceptance-criteria and test integrity, the other toward standards, simplification, and boundary safety. **Pass requires both to pass; the blocking set is the union of both reviews** (dedupe identical findings, keeping the stricter class). Record both ids (`agents.reviewer_agent_id`, `agents.reviewer2_agent_id`); each must be distinct from the implementer. Simple tasks dispatch one reviewer, unchanged.
 
