@@ -6,7 +6,7 @@ For a **shared repo** the team owns the task tracker (Jira, GitHub issues, `docs
 
 ## Operating profile (lite)
 
-`.jeff/profile.md` is the project's operating contract: a tight file that distills the team's conventions (task location, branch/merge method, test command, standards floor, audit triggers, vocabulary map) so no specialist re-derives them from scratch. It is optional (absent until `cook profile init` or `cook bind` creates it; `cook validate` skips it when absent and fails closed when present but malformed). When present:
+`.jeff/profile.md` is the project's operating contract: a tight file that distills the team's conventions (task location, branch/merge method, test command, standards floor, audit triggers, vocabulary map) so no specialist re-derives them from scratch. It is optional (absent until `cook profile init` creates it; `cook validate` skips it when absent and fails closed when present but malformed). When present:
 
 - **Read it fresh at the top of every loop**, before selecting the next task. Never use a stale copy from context. `cook profile` prints it and validates it; the file lives at `.jeff/profile.md`.
 - **Inject it into every specialist dispatch brief.** Paste the full profile into the agent prompt ahead of the task spec. A fresh-context specialist inherits nothing; the profile is the only reliable delivery mechanism for the project's operating context.

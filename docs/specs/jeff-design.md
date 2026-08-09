@@ -85,13 +85,16 @@ still judge whether the spec and implementation are good.
 ## 8. Commands
 
 The checked-JS entry point implements the public CLI surface:
-`validate`, `verify`, `record`, `approve`, `baseline check`, `ls`, `status`,
-`show`, `init`, `lite`, `plan section|check|append`, `indiff`, `deinit`,
-`flavor`, `profile`, `doctor`, and help routing. A private adoption dispatch
-remains available only for internal pending-ledger wiring; it is neither an
-operator command nor a pipeline starter. `cook approve <id> <operator>`
-atomically copies the active pending operation request into append-only grant
-history.
+`validate`, `verify`, `record`, `approve <id> <operator>`, `rebuild <id>`,
+`reverify <id>`, `journal <id> <intent|external>`, `baseline check [<hash>]`,
+`ready`, `claim <id> [--by <label>]`, `release <id>`, `claims`, `ls`, `status`,
+`show <id>`, `snapshot --json`, `init`, `lite`, `plan <sub>`,
+`indiff <base-ref> <pre-ref>`, `deinit`, `flavor`, `profile`, `profile init`,
+`doctor`, and `help`. A private
+adoption dispatch remains available only for internal pending-ledger wiring; it
+is neither an operator command nor a pipeline starter. `cook approve <id>
+<operator>` atomically copies the active pending operation request into
+append-only grant history.
 
 ## 9. Ambient entry
 
@@ -109,7 +112,7 @@ After a short assess, Jeff classifies the work on consequence and expected lifet
 
 Specialists are held to jeff's **bundled first-party** `code-standards`/`testing`/`security-auditor` skills as a portable quality floor; applicable user, host, repository, and language instructions may tighten or specialize it, never weaken it. This does **not** depend on a third-party `code-standards` skill. jeff owns the method, state, conventions, and file locations. We write only:
 
-- the `cook` orchestration/loop skill (+ embedded schema doc + validator script),
+- the `cook` orchestration/loop skill, its separate reference files, and the checked-JS owners under `src/core/` and `src/cli/`,
 - Jeff-run capture, including primary-outcome category classification and lock.
 - Fresh specialist briefs for code plan/implement/refactor/review, operation plan/execute/verify, and shared audit/refute/convergence.
 
@@ -117,9 +120,8 @@ Specialists may **use** official tools (`/code-review`, `/simplify`, `/verify`) 
 
 ## 11. Deferred (v1.1+)
 
-`cook all` (drain); richer backlog analytics; migration script; multi-task parallel dispatch.
+Richer backlog analytics; migration script.
 
 ## Open questions
 
 - Whether `refactor`'s "beyond the diff" license needs a scope cap.
-- ~~Effort knob mechanics.~~ **Resolved:** specialist model selection is the orchestrator's judgment, owned by `skills/cook/SKILL.md` (§Dispatch), default inherit; Pi and Claude Code apply role-frontmatter effort where supported, while Codex inherits orchestrator effort.

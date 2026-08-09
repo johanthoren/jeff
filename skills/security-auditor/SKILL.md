@@ -55,7 +55,7 @@ Do not filesystem-search for the script; resolve it from the announced base dire
 security_audit_result:
   scope: "<resolved-scope>"
   files_scanned: <n>
-  dropped_targets: [<explicitly supplied unscannable path>, ...]
+  dropped_targets: [<explicitly supplied dropped target>, ...]
   findings:
     total: <n>
     critical: <n>
@@ -70,7 +70,7 @@ security_audit_result:
   report_path: "scratchpads/security-audit-<timestamp>.md"
 ```
 
-`dropped_targets` names each explicitly supplied file argument the scanner rejected as unscannable (unknown extension, extensionless, oversized); it never silently discards a target the caller named directly. Directory-walk drops are not explicit targets and are not listed.
+`dropped_targets` names each explicitly supplied scope item that did not resolve to a scanned file: unscannable files (unknown extension or extensionless), oversized files, and missing, deleted, or broken-symlink paths. It never silently discards a target the caller named directly. Directory-walk drops are not explicit targets and are not listed.
 
 ## Gate Defaults
 

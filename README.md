@@ -80,7 +80,7 @@ commands run through the bundled Node CLI and require no `jq`. The Pi install
 also brings the dispatch SDK used when the host does not inject `pi.pi`.
 Node.js `>=22.19.0` is required by the bundled Pi dispatch SDK.
 
-### Pi — recommended stable path
+### Pi: recommended stable path
 
 Use the npm package for normal Pi installs. This gives you semver releases.
 
@@ -117,8 +117,9 @@ Install the same npm package through OMP's plugin command:
 omp plugin install @johanthoren/jeff
 ```
 
-Jeff specialists inherit the exact active model and only their stage tools. They
-do not inherit OMP orchestration, extensions, custom or MCP tools, advisor,
+The orchestrator chooses each Jeff specialist's model; the default is active
+provider/model inheritance. Specialists do not inherit OMP orchestration,
+extensions, custom or MCP tools, advisor,
 memory/autolearn, or model fallback behavior.
 
 OMP user- and project-level `SYSTEM.md` instructions remain applicable to
@@ -126,7 +127,7 @@ specialists by design: like other applicable user, host, and repository
 instructions, they may tighten or specialize Jeff's bundled first-party
 standards floor, never weaken it.
 
-### Claude Code — recommended path
+### Claude Code: recommended path
 
 Use Claude Code's plugin CLI flow:
 
@@ -141,7 +142,7 @@ Update the installed plugin, then restart Claude Code:
 claude plugin update jeff@jeff
 ```
 
-### Codex — recommended path
+### Codex: recommended path
 
 Add the Git marketplace, then install Jeff:
 
@@ -177,10 +178,11 @@ Activate Jeff per repo, once. Two modes:
 
 ## Use
 
-Just say what you want done. In an active project, the normal host agent handles
-ordinary intent as ad hoc work in the current context under your usual project
-instructions, with no task or specialist. Experiment freely, then choose what
-deserves durability:
+Just say what you want done. In an active project, the normal host agent first
+assesses ordinary intent without making a durable change. Disposable work, such
+as a throwaway experiment, comparison, local evidence collector, or one-off
+helper, goes directly to ad-hoc route A with no A/B/C interrupt. It is not
+pipeline-verified and is deleted or explicitly kept local when finished.
 
 - **Explore:** keep quick, reversible work in the current context.
 - **Remember:** an explicit Remember request is the consent to write durable memory without creating work. Full mode uses `.jeff/memory/`; elsewhere Jeff prefers a suitable existing tracked memory, decisions, learnings, or handoff file and preserves its purpose and format, then falls back to local `.jeff/memory/`. Without an explicit Remember (or other persistence) request, ordinary Explore work does not write durable memory. Never use `AGENTS.md`, a README, or ordinary product documentation as a memory dump.
@@ -189,6 +191,16 @@ deserves durability:
   internal bookkeeping does not start execution.
 - **Start:** explicitly ask Jeff to begin or resume a recorded item and run it
   through the pipeline. `cook <id>` and `cook on <id>` are equivalent start forms.
+
+A risk floor always restores the pause for production behavior, user data, data
+migration, security boundaries, accessibility basics, irreversible or shared
+state, releases, and durable build or deploy infrastructure. Other durable work
+pauses before its first write when it changes the method, harness, skills,
+agents, validator, or dispatch; changes the shipped payload or cuts a version
+or tag; is multi-file or cross-cutting behavior; needs crisp acceptance criteria
+or independent review; or should survive another session. Jeff then asks you to
+choose A (ad-hoc minimal ship), B (record pending), or C (record and start
+capture), and holds all durable writes until you choose.
 
 Jeff suggests tracking only when a meaningful obligation emerges, and explains
 what to track, why structure helps, and how to record or start it. Recording and
