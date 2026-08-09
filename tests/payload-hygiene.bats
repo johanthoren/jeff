@@ -1715,3 +1715,38 @@ skill_outside_dispatch_rules() {
     return 1
   }
 }
+
+
+# ===========================================================================
+# task #209 AC3: checked source owns persisted shape
+#
+# The reference remains useful for lifecycle and compatibility semantics, but
+# consumers must reach every checkable shape through its checked owner. Path
+# identifiers are stable ownership pointers; fenced JSON/JSONC and the former
+# shape-list headings are structural duplication markers, not sentence pins.
+# ===========================================================================
+
+@test "#209 AC3: the state reference points to checked shape owners without structural copies" {
+  local schema="${JEFF_TEST_STATE_SCHEMA:-$REPO/skills/cook/reference/jeff-state-schema.md}"
+  local owner duplicates problems=""
+
+  for owner in \
+    src/core/types.js \
+    src/core/task-schema.js \
+    src/core/invariants.js \
+    src/core/journal.js \
+    src/core/snapshot.js
+  do
+    grep -qF -- "$owner" "$schema" \
+      || problems+="missing checked-source owner pointer: $owner"$'\n'
+  done
+
+  duplicates="$(grep -niE '^```jsonc?([[:space:]]|$)|^#{2,6}[[:space:]]+(Field rules|Document shape)([[:space:](]|$)' "$schema" || true)"
+  [ -z "$duplicates" ] \
+    || problems+="structural field/shape duplication remains:"$'\n'"$duplicates"$'\n'
+
+  [ -z "$problems" ] || {
+    printf 'skills/cook/reference/jeff-state-schema.md must defer checkable structure to checked source:\n%s' "$problems"
+    return 1
+  }
+}
