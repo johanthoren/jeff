@@ -1488,8 +1488,9 @@ PY
 
 @test "#204 AC1: a bats file under tests/ is scanned by the shell rule pack" {
   mkdir -p "$TMP/tests"
-  cat >"$TMP/tests/smoke.bats" <<'EOF'
-@test "runs a dynamic command" {
+  printf '%s' '@' >"$TMP/tests/smoke.bats"
+  cat >>"$TMP/tests/smoke.bats" <<'EOF'
+test "runs a dynamic command" {
   CMD="ls"
   eval $CMD
 }
@@ -1508,8 +1509,9 @@ EOF
 }
 
 @test "#204 AC1: a clean bats file classes as shell for the coverage ledger" {
-  cat >"$TMP/clean.bats" <<'EOF'
-@test "prints" {
+  printf '%s' '@' >"$TMP/clean.bats"
+  cat >>"$TMP/clean.bats" <<'EOF'
+test "prints" {
   run echo hi
   [ "$status" -eq 0 ]
 }
