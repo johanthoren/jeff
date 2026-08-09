@@ -527,9 +527,9 @@ Dashboard levers configure the **driver / orchestrator** for managed runtimes:
 - model
 - effort
 
-Specialists keep the settled method rule:
+Specialists keep the settled method rule, owned by `skills/cook/SKILL.md` (§Dispatch):
 
-- inherit the orchestrator provider/model unchanged
+- model selection is the orchestrator's judgment, default inherit
 - Pi and Claude Code apply role-frontmatter effort where supported
 - Codex children inherit orchestrator effort
 

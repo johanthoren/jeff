@@ -1535,6 +1535,142 @@ LIGHT
   }
 }
 
+# ===========================================================================
+# task #205: the specialist model policy has one owner, and the owner grants
+# orchestrator discretion with inherit as the default
+#
+# Seam: unchanged from the #117 block above. The payload prose IS the product.
+# skills/cook/SKILL.md loads in full on every activation, and the model rule a
+# consuming host obeys at each dispatch is observable in exactly one place: the
+# shipped files. The capture decision (operator-confirmed 2026-08-08) fixes the
+# owner as the dispatch rules of skills/cook/SKILL.md; every other site defers
+# without restating the members of the policy.
+#
+# Marker discipline, per the #117 block above: 'total cost per task' and
+# 'per-token' are the settled policy's own vocabulary and identify the full
+# statement; 'inherits the orchestrator provider/model' is the verbatim
+# duplicated clause the restatement sites share today; 'Do not add model or
+# effort overrides' is the exact sentence src/pi/role-session.js contradicts on
+# every Pi dispatch (it applies agents/cook-*.md frontmatter effort). Proximity
+# assertions are bounded by [^.] so they hold within one sentence, whatever the
+# wording.
+#
+# The single-ownership discriminator is the cost bound, not the word "model": a
+# deferring site may name the owner, but only a full statement carries the
+# policy's members, and the cost clause is the member no deferral needs.
+# ===========================================================================
+
+dispatch_rules() {
+  skill_section '^## Dispatch$' | tr '\n' ' '
+}
+
+# skills/cook/SKILL.md with the owning dispatch-rules region removed: the region
+# runs from the `## Dispatch` heading to its first subsection heading. Everything
+# outside it is a non-owner site for the model policy.
+skill_outside_dispatch_rules() {
+  awk '
+    /^## Dispatch$/ { skip = 1; next }
+    skip && /^#{2,3} / { skip = 0 }
+    !skip { print }
+  ' "$REPO/skills/cook/SKILL.md"
+}
+
+@test "#205 AC1/AC4: the dispatch rules grant model discretion with inherit default, bounded by verdict quality" {
+  local rules
+  rules="$(dispatch_rules)"
+  [ -n "$rules" ] || {
+    echo "cook SKILL.md has no Dispatch section"
+    return 1
+  }
+
+  grep -qiE '(orchestrator|jeff)[^.]{0,160}(pick|choos|select)[^.]{0,120}model|model[^.]{0,160}(orchestrator|jeff)[^.]{0,100}(judgment|discretion)' <<<"$rules" || {
+    echo "the dispatch rules do not grant the orchestrator the choice of each dispatched specialist's model; without the grant the old unconditional inheritance is still the operative rule"
+    return 1
+  }
+  grep -qiE 'default[^.]{0,140}inherit|inherit[^.]{0,140}default' <<<"$rules" || {
+    echo "the dispatch rules do not make inheriting the orchestrator provider/model the default; discretion without a stated default leaves every dispatch a coin toss"
+    return 1
+  }
+  grep -qiE 'separation[^.]{0,160}(unchanged|intact|holds|stands)|(unchanged|intact)[^.]{0,160}separation' <<<"$rules" || {
+    echo "the policy does not hold builder/judge separation unchanged; a tier choice must never relax who may sign work off"
+    return 1
+  }
+  grep -qiE 'total cost per task[^.]{0,80}rework|rework[^.]{0,120}total cost per task' <<<"$rules" || {
+    echo "the policy does not bind a non-default tier choice to total cost per task including rework"
+    return 1
+  }
+  grep -qiE '(never|not)[^.]{0,100}per-token' <<<"$rules" || {
+    echo "the policy does not rule out per-token price as a justification; per-token price is the metric the obsolete 2026-07 bench conclusion priced on"
+    return 1
+  }
+}
+
+@test "#205 AC2/AC6: no site outside the dispatch rules restates the inheritance rule" {
+  local pattern='inherits? the orchestrator[^.]{0,40}(provider|model)'
+  local offenders="" file hits
+
+  hits="$(skill_outside_dispatch_rules | grep -nEi "$pattern" || true)"
+  [ -z "$hits" ] || offenders+="skills/cook/SKILL.md (outside the dispatch rules):"$'\n'"$hits"$'\n'
+
+  for file in AGENTS.md docs/specs/jeff-design.md docs/specs/control-plane-vision.md; do
+    hits="$(grep -nEi "$pattern" "$REPO/$file" || true)"
+    [ -z "$hits" ] || offenders+="$file:"$'\n'"$hits"$'\n'
+  done
+
+  [ -z "$offenders" ] || {
+    printf 'sites outside the owning dispatch rules still restate the model inheritance rule instead of deferring to skills/cook/SKILL.md:\n%s' "$offenders"
+    return 1
+  }
+}
+
+@test "#205 AC6: the policy cost bound has exactly one home, in cook SKILL.md" {
+  local homes
+  homes="$(grep -rni 'total cost per task' "$REPO/skills" "$REPO/agents" "$REPO/AGENTS.md" "$REPO/docs/specs" || true)"
+
+  [ "$(printf '%s\n' "$homes" | grep -c .)" -eq 1 ] || {
+    printf 'the policy cost bound must have exactly one full statement; found:\n%s\n' "${homes:-none}"
+    return 1
+  }
+  printf '%s\n' "$homes" | grep -qF "$REPO/skills/cook/SKILL.md:" || {
+    printf 'the surviving policy statement is not in skills/cook/SKILL.md, the owner the capture decision fixed:\n%s\n' "$homes"
+    return 1
+  }
+}
+
+@test "#205 AC3: the no-overrides sentence is gone and frontmatter effort ownership stands with its dispatchers" {
+  run grep -rnF 'Do not add model or effort overrides' \
+    "$REPO/skills" "$REPO/agents" "$REPO/AGENTS.md" "$REPO/docs/specs"
+  [ "$status" -ne 0 ] || {
+    printf 'the payload still claims there are no model or effort overrides; src/pi/role-session.js applies agents/cook-*.md frontmatter effort on every Pi dispatch, so the sentence is false:\n%s\n' "$output"
+    return 1
+  }
+  [ -z "$output" ]
+
+  local skill
+  skill="$(tr '\n' ' ' <"$REPO/skills/cook/SKILL.md")"
+  grep -qiE 'effort[^.]{0,60}owned by[^.]{0,40}agents/cook' <<<"$skill" || {
+    echo "cook SKILL.md no longer states that per-stage effort is owned by agents/cook-*.md frontmatter"
+    return 1
+  }
+  grep -qiE 'frontmatter[^.]{0,120}appl' <<<"$skill" || {
+    echo "cook SKILL.md no longer states that the dispatchers apply the frontmatter effort"
+    return 1
+  }
+}
+
+@test "#205 AC5: recorded dispatch evidence still names the child's actual provider/model/effort" {
+  # Green control, #173 precedent: the rewrite happens around this sentence, and
+  # with discretion granted the ledger is the only place a reader learns which
+  # tier produced a verdict.
+  local skill
+  skill="$(tr '\n' ' ' <"$REPO/skills/cook/SKILL.md")"
+  grep -qiE 'provider/model/effort[^.]{0,140}evidence|evidence[^.]{0,140}provider/model/effort' <<<"$skill" || {
+    echo "cook SKILL.md no longer keeps the child session's provider/model/effort as recorded evidence"
+    return 1
+  }
+}
+
+
 # ---------------------------------------------------------------------------
 # task #204 AC4: the audit floor in skills/cook/SKILL.md must state that the
 # security scanner cannot cover payload-prose (markdown) diffs and that the

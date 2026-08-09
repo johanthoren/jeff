@@ -17,7 +17,7 @@ This is **not** a trust, anti-forgery, or hostile-child containment system. Host
 
 1. **Thin orchestrator that never judges.** The main session routes work and transcribes specialist verdicts; it never decides "good enough." Every act of judgment happens in a fresh specialist context. Jeff may not override a `needs-work`.
 2. **Separation by fresh context.** Code separates test author, implementer, and reviewers. Operations separate executor and verifier. Audit is an additional conditional judgment.
-3. **One model, host-native effort.** Every specialist inherits the orchestrator provider/model unchanged. Pi and Claude Code apply role-frontmatter effort where supported; Codex inherits orchestrator effort.
+3. **Model is the orchestrator's judgment; effort is host-native.** Specialist model selection follows the dispatch rules in `skills/cook/SKILL.md` (§Dispatch), default inherit. Pi and Claude Code apply role-frontmatter effort where supported; Codex inherits orchestrator effort.
 4. **Category-specific completion.** Code reaches done only through its test/review/audit gate. Operation reaches done only through execution evidence, independent postcondition verification, and conditional audit. Kickbacks remain within the locked category.
 5. **Durable truth on disk.** State lives in git-tracked files, re-read each loop, never trusted to Jeff's context. Survives compaction and restarts.
 6. **Lean method, borrowed craft.** The craft (capture, TDD, review) is native to frontier models; we supply framing + conventions and use jeff's bundled first-party standards as a portable floor. Applicable user, host, repository, and language instructions may tighten or specialize it, never weaken it. No dependency on method-imposing third-party packs.
@@ -47,9 +47,9 @@ Code planning owns tests and targeted RED. Operation planning owns a bounded run
 
 Operation execute and verify use ordinary host-native stage dispatch. Role contracts guide cooperative agents; they do not mechanically confine host tools. A verifier independently applies the plan's deterministic methods and reports `needs-work` when a required method is unavailable. Execution evidence is never substituted for independent observation.
 
-## 5. Model inheritance and effort
+## 5. Model selection and effort
 
-Every specialist inherits the orchestrator provider/model unchanged. Pi and Claude Code apply plan/refactor/review/verify/audit/refute `xhigh` and implement/execute `high`; Codex children inherit orchestrator effort. Dispatch reports actual provider/model/effort as evidence.
+Model selection for each specialist follows the dispatch rules owned by `skills/cook/SKILL.md` (§Dispatch). Pi and Claude Code apply plan/refactor/review/verify/audit/refute `xhigh` and implement/execute `high`; Codex children inherit orchestrator effort. Dispatch reports actual provider/model/effort as evidence.
 
 ## 6. State & schema
 
@@ -122,4 +122,4 @@ Specialists may **use** official tools (`/code-review`, `/simplify`, `/verify`) 
 ## Open questions
 
 - Whether `refactor`'s "beyond the diff" license needs a scope cap.
-- ~~Effort knob mechanics.~~ **Resolved:** specialists inherit the orchestrator model; Pi and Claude Code apply role-frontmatter effort where supported, while Codex inherits orchestrator effort.
+- ~~Effort knob mechanics.~~ **Resolved:** specialist model selection is the orchestrator's judgment, owned by `skills/cook/SKILL.md` (§Dispatch), default inherit; Pi and Claude Code apply role-frontmatter effort where supported, while Codex inherits orchestrator effort.
