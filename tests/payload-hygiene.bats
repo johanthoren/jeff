@@ -9,8 +9,9 @@
 # Public payload scan set:
 #   skills/  agents/  commands/  hooks/  src/  assets/  .claude-plugin/
 #   .codex-plugin/  .agents/plugins/  AGENTS.md  README.md  NOTICE  package.json
-#   Optional paths are skipped. docs/, tests/, .jeff/, Makefile are excluded by
-#   construction (AC5: historical forge refs in docs/ must survive).
+#   docs/brand.md  docs/maintaining-jeff.md  docs/specs/jeff-design.md
+#   Optional paths are skipped. Other docs, tests, .jeff/, and Makefile are
+#   excluded by construction.
 #
 # fire-and-forget safety:
 #   skills/cook/SKILL.md contains "fire-and-forget": the substring "forge" appears
@@ -29,7 +30,8 @@ setup() {
   for dir in skills agents commands hooks src assets .claude-plugin .codex-plugin .agents/plugins; do
     [ -d "$REPO/$dir" ] && PAYLOAD_ARGS+=("$REPO/$dir")
   done
-  for file in AGENTS.md README.md NOTICE package.json; do
+  for file in AGENTS.md README.md NOTICE package.json \
+    docs/brand.md docs/maintaining-jeff.md docs/specs/jeff-design.md; do
     [ -f "$REPO/$file" ] && PAYLOAD_ARGS+=("$REPO/$file")
   done
 }
@@ -55,6 +57,17 @@ setup() {
 @test "payload: no /Users/ occurrence (machine-specific absolute path)" {
   run grep -r --include="*" -l '/Users/' "${PAYLOAD_ARGS[@]}"
   [ "$status" -ne 0 ]
+  [ -z "$output" ]
+}
+
+@test "#210 AC4: shipped reader and agent prose uses no em dashes" {
+  local offenders
+  run grep -r --include="*.md" -l '—' "${PAYLOAD_ARGS[@]}"
+  [ "$status" -eq 1 ] || {
+    offenders="$(sed "s#^$REPO/##" <<<"$output")"
+    printf 'shipped prose contains em dashes:\n%s\n' "$offenders"
+    return 1
+  }
   [ -z "$output" ]
 }
 
@@ -1626,7 +1639,7 @@ skill_outside_dispatch_rules() {
   hits="$(skill_outside_dispatch_rules | grep -nEi "$pattern" | grep -viE "$allowance" || true)"
   [ -z "$hits" ] || offenders+="skills/cook/SKILL.md (outside the dispatch rules):"$'\n'"$hits"$'\n'
 
-  for file in AGENTS.md docs/specs/jeff-design.md docs/specs/control-plane-vision.md; do
+  for file in README.md AGENTS.md docs/specs/jeff-design.md docs/specs/control-plane-vision.md; do
     hits="$(grep -nEi "$pattern" "$REPO/$file" | grep -viE "$allowance" || true)"
     [ -z "$hits" ] || offenders+="$file:"$'\n'"$hits"$'\n'
   done

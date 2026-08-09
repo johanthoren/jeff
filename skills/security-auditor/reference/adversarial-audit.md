@@ -70,6 +70,7 @@ If tool missing, command fails, or timeout occurs:
 - `BLOCK`: any `critical`
 - `REVIEW`: any `high/medium` or dependency audit gaps
 - `PASS`: zero findings + zero dependency-audit debt (`not_covered` categories are inapplicable, not debt)
+- `EMPTY-SCAN`: an explicitly supplied, non-empty scope resolved zero scannable files; never treat it as `PASS`
 
 ## Reporting Rules
 
@@ -81,6 +82,9 @@ Each finding includes:
 - exploit narrative (what attacker does)
 - concrete remediation
 - confidence (high/medium/low)
+
+`dropped_targets` names explicitly supplied targets omitted from the scan; emitted
+reports repeat them in the summary.
 
 ## Non-Shirking Rules
 

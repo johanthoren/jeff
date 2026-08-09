@@ -1,10 +1,15 @@
 # review-security `--json` result schema
 
-`review-security.sh <scope> --json` prints one JSON object to stdout. The
-markdown report is still written to `--report-dir` (its path rides inside the
-JSON as `report_path`), and the human-readable `security_audit_result:` stdout
-block is replaced by this object. Exit codes are unchanged: `2` for BLOCK, `1`
-for REVIEW, `0` for PASS.
+`review-security.sh <scope> --json` normally prints one JSON object to stdout.
+The markdown report is also written to `--report-dir` and its path appears as
+`report_path`; the object replaces the human-readable `security_audit_result:`
+stdout block. Exit codes are `2` for BLOCK, `1` for REVIEW or EMPTY-SCAN, and `0`
+for PASS.
+
+An explicitly supplied, non-empty scope that resolves zero scannable files is
+EMPTY-SCAN. Without `--force`, the command exits `1` and produces neither a
+report nor a JSON object. With `--force`, it writes the report, prints the JSON
+object with `recommendation: "EMPTY-SCAN"`, and still exits `1`.
 
 This is the stable field contract a downstream audit agent parses. Field names
 are load-bearing; the object may gain fields over time but existing names and
@@ -18,12 +23,13 @@ meanings do not change.
 | `scope` | string | Resolved scope label: `full-codebase`, `changes`, `staged`, or the joined scope arguments. |
 | `introduced_only` | boolean | Whether `--introduced-only` was set. |
 | `files_scanned` | number | Count of files the scanner read. |
+| `dropped_targets` | array | Explicitly supplied scope items that did not resolve to scanned files. Empty for directory-walk drops and non-explicit scopes. |
 | `findings` | array | Zero or more finding objects (see below), sorted by severity then category, file, line. |
 | `suppressions` | array | Zero or more suppression objects (see below): every `# security-ok:` marker encountered, honored or rejected. |
 | `coverage` | object | Per-category coverage: category name to a `{status, engines}` object (see below). |
 | `tools` | array | Amplifier tool-status ledger: one entry per registry engine (see below). Informational: an applicable but absent tool is never coverage debt and never downgrades the recommendation. |
 | `counts` | object | Aggregate counts (see below). |
-| `recommendation` | string | `BLOCK`, `REVIEW`, or `PASS`. |
+| `recommendation` | string | `BLOCK`, `REVIEW`, `PASS`, or `EMPTY-SCAN`. |
 | `risk_points` | number | Weighted adversarial risk score. |
 | `strict` | boolean | Whether `--strict` was set. |
 | `report_path` | string | Absolute path to the written markdown report. |
