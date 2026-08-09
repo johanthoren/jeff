@@ -21,160 +21,65 @@ Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` +
 
 ## `task.json`
 
-```json
-{
-  "schemaVersion": 1,
-  "pipelineVersion": "<package.json version>",
-  "id": 1,
-  "slug": "kebab-case-slug",
-  "title": "Human-readable title",
-  "status": "pending",
-  "category": "code",
-  "stage": "capture",
-  "priority": "p2",
-  "deps": [],
-  "discoveredFrom": 7,
-  "createdAt": "2026-06-13T12:00:00.000Z",
-  "updatedAt": "2026-06-13T12:00:00.000Z",
-  "complexity": "complex",
-  "agents": {
-    "implementer_agent_id": null,
-    "reviewer_agent_id": null,
-    "reviewer2_agent_id": null,
-    "audit_agent_id": null,
-    "executor_agent_id": null,
-    "verifier_agent_id": null
-  },
-  "tests":  { "authored_by_agent_id": null, "green": false, "evidence": [] },
-  "review": { "verdict": null, "reviewer_agent_id": null, "evidence": [] },
-  "review2": null,
-  "audit":  { "required": false, "verdict": "na", "audit_agent_id": null, "evidence": [] },
-  "commits": [],
-  "kickbacks": [],
-  "blockedReason": null,
-  "abandonReason": null
-}
-```
+`src/core/types.js` owns the canonical task vocabulary. `src/core/task-schema.js`
+owns persisted field names, types, enums, defaults, and the task, config, and
+convergence shapes. `src/core/invariants.js` owns enforced relationships and
+completion gates.
 
-### Field rules (carried from the old schema where sensible)
+### Lifecycle and compatibility
 
-- `id`: positive integer, unique. Task dir = `<id zero-padded to 4>-<slug>`.
-- `slug`: non-empty, kebab-case.
-- `title`: non-empty.
-- `status` ∈ `pending | in_progress | blocked | done | abandoned`.
-- `category` is `code | operation`. Capture locks it by primary outcome. Omission is historical compatibility and behaves exactly as `code`.
-- `operationStateVersion`: canonical operation writers persist `1`. An unmarked schema-v1 operation ledger uses the mechanically checked legacy branch; any other marker value is invalid. Code ledgers, including historical category omission, never enter this branch.
-- `pipelineVersion` is optional for historical compatibility. When present it is a nonempty string containing the jeff `package.json` version used to create the ledger. Canonical ledger writers set it; it is provenance only and no 6.0 gate reads it.
-- Code stages are `capture | plan | implement | refactor | review | audit | done`; operation stages are `capture | plan | execute | verify | audit | done`. Historical code ledgers may persist `test` as a compatibility-resume state. Category graphs and kickbacks are closed. Marked operation stages retain their exact predecessor state, and `status:"done"` is equivalent to `stage:"done"`.
-- `priority` ∈ `p0 | p1 | p2 | p3 | p4`.
-- `createdAt` / `updatedAt`: calendar-valid ISO-8601 datetimes. The same strict timestamp contract applies to `tests.gate.at`, every `kickbacks[*].at`, approval request and grant times, execution `recordedAt`, and judgment-history times.
-- `deps`: array of predecessor task ids. Without config provenance, every id must name a live task. In full mode, every id must name either a live task or an id in `prunedTaskIds`; terminally pruned predecessors remain recorded but do not block scheduling or participate in cycles. Cycles among live tasks remain invalid.
-- `discoveredFrom` (optional): one task id recording which task surfaced this task. It is provenance only and never schedules; scheduling remains exclusively in `deps`. Full mode requires a live task id or an id in `prunedTaskIds`. Lite mode checks only that the value is a string or number. Omission preserves historical behavior.
-- `complexity`: `"simple" | "complex"` (absent ⇒ `"complex"`). Set or refine it at plan by whether the change complects or carries risk: braids concerns, couples previously separate things, crosses subsystem boundaries, or has non-local side effects. Classify by complecting, not difficulty; deployment or other non-local side effects ⇒ `"complex"`; default `"complex"` when unsure. It does not select Git topology.
-- Code `plan.refactorOpportunity` carries a nonempty named behavior-preserving opportunity or `null`; historical code plans may omit it. A completed operation plan requires `runbook`, `preconditions`, `recoveryBoundary`, exact operator-facing `approvalBoundary`, boolean `requiresApproval`, `postconditions`, and deterministic `verificationSeams`, and omits code test/refactor fields. An unresolved operation fork instead persists only `result:"escalation"`, nonempty `slices`, and nonnull `{fork, options}` while remaining at `plan`; the answered plan replaces it.
-- `branch` (optional, deprecated): ignored legacy state. New records omit it; validators continue to accept old records containing it without migration.
-- Historical records may contain a `brains` field. Validators ignore it and accept those records unchanged; new records omit it. Dispatch evidence may report the child session's actual provider/model/effort.
-- `agents.*`: every populated stage identity is bound from the separate host-observed ID at the recorder boundary. Canonical code audits bind `agents.audit_agent_id` to `audit.audit_agent_id`, and the auditor differs from the implementer. Historical code records, including category omission, may populate either audit identity alone; every populated identity differs from the implementer, and the two identities match when both are populated. Operation records `executor_agent_id` and `verifier_agent_id`, which must differ. Recorded operation identities are nonempty strings; `null` is the only vacant marker. An operation audit binds both audit identities, and the auditor differs from both the executor and verifier. Historical plan/test identities remain accepted and ignored.
-- `tests`, `review`, and `review2`: authoritative only for code and omitted from canonical operation ledgers. Compatibility readers validate any present fields and fail closed on malformed shapes.
-- Canonical `review` and optional `review2` share the same shape: `verdict` is
-  `pass | needs-work | null`, `reviewer_agent_id` is a string or null, and
-  `evidence` is an array. The runtime reader additionally accepts `na` only for
-  historical primary `review.verdict` values; canonical writers and `review2`
-  remain strict. `review2` may be absent or null for historical and single-review
-  records. For the primary review, historical records may populate either the
-  outcome identity or `agents.reviewer_agent_id`; every populated identity must
-  differ from the implementer, and the two identities must match when both are
-  populated. `review2` remains canonically bound to
-  `agents.reviewer2_agent_id`. A complex done task requires both recorded reviews
-  to pass; simple tasks and historical records identified by the retired
-  plan/test agent fields retain the single-review path.
-- `audit`: `required` set by `plan`; `verdict` is `pass | needs-work | na`. Canonical code audits bind both audit identity fields. Historical code records, including category omission, may populate either identity alone; each populated identity differs from the implementer, and dual-populated identities match. A recorded code verdict of `pass` or `needs-work` requires at least one populated auditor identity. Complete vacancy is valid only for the compatible required code `{ verdict:"na", audit_agent_id:null }` shape when `agents.audit_agent_id` is also vacant. `{ verdict:"na", audit_agent_id:null }` is the vacant operation placeholder; a required operation audit cannot occupy it with a recorded auditor.
-- `execution`: operation execute result plus bound executor identity, nonnegative `cycle`, ISO `recordedAt`, nonempty action strings and command/output evidence, nullable `approvalRequired`, optional `approvalRequestId`, and optional operator-recorded `approval`. For `requiresApproval:true`, `approval-required` must equal `plan.approvalBoundary` byte-for-byte, append and bind the exact request, retain the requesting executor identity, and remain at `execute`. The executor return cannot contain a grant. After the operator approves the displayed request, Jeff records it through host-neutral `cook approve <id> <operator>` and re-fires execute with a fresh specialist using ordinary host-native tools.
-- `approvalRequests`: append-only operation request history. Each row is `{ id, mutation, requestedBy, requestedAt, cycle }`, where `id` is its zero-based append index. The pending execution binds the latest row exactly. Completed approval-gated execution retains that row's id and cycle, with `requestedAt <= grantedAt <= execution.recordedAt`; the requester differs from the final executor and grantor.
-- `approvals`: optional append-only operation grant history. Each record is `{ mutation, grantedBy, grantedAt }`; `mutation` is the historical field name for the exact operator-facing request. The atomic parent transition copies only the active pending request. It rejects missing, changed, stale, duplicate, or executor-attributed grants. A `requiresApproval:true` plan cannot execute directly, and completed execution binds the latest exact request to the latest retained grant.
-- `verification`: operation verdict plus bound verifier identity, deterministic `{ postcondition, ok, evidence }` results, findings, and nonempty command/output evidence. A fresh verifier uses the plan's deterministic methods with ordinary host-native read capabilities. An unavailable method produces `needs-work`; executor evidence is never sign-off. Done retains the plan and requires exactly one row per `plan.postconditions` item in identical order and text, with every row true and evidenced, and verifier different from executor. Follow-ups and refute- or exact council-demoted findings remain durable without blocking completion.
-- `judgmentHistory`: optional append-only archived judgment cycles. When present, each code row has an ISO time, exact code `review`, nullable `review2`, and `audit` outcomes, plus exactly matching bound identities; it has no operation `cycle`. An operation row additionally records its zero-based `cycle` and exact verifier/auditor outcomes. Scoped repair appends the whole current row once and never rewrites an earlier row. Field absence remains valid for historical ledgers.
-- `cook reverify <id>` is available only for an in-progress operation with completed execution, a current `needs-work` verification-only failure, and an untouched recovery state before any refute, kickback, or council recovery; no blocking finding may be routed to `execute`. The atomic transition appends the whole superseded judgment and its evidence to `judgmentHistory`, clears only the live verification slot, leaves recorded execution and approvals unchanged, and returns the task to `verify`; the next verifier must be fresh and distinct from both the executor and every archived verifier.
-- `kickbacks`: `[{ from, to, reason, at, findings? }]`. Ordinary code judgment kickbacks may add `findings: [{ source, file, line, what, kickTo }]`; `source` is `review | review2 | audit`, `file` and `what` are nonempty strings, `line` is an integer at least 1, and `kickTo` is `capture | plan | implement | refactor`. Only `implement | refactor` qualifies for scoped repair. Absence and an empty array remain valid historical forms but cannot let an older typed contract authorize retention. Council-block kickbacks omit `findings` and retain their existing shape. Ordinary operation sources are `execute | verify | audit` and destinations are `capture | plan | execute`; a council-scoped execute kickback to capture or plan terminates as `blocked-to-operator`. Code keeps its existing graph, including historical `verify` source compatibility.
-- `status = blocked` ⇒ `blockedReason` non-null.
-- `status = abandoned` ⇒ `abandonReason` non-null.
-- `status = done` ⇒ the done-gate holds (validator invariant 4).
+- Capture locks `category` by primary outcome. Historical omission remains code. Canonical operation ledgers carry the current operation-state marker; unmarked schema-v1 operation ledgers use the checked legacy branch, while code ledgers never enter it.
+- Code and operation follow separate closed stage graphs. Historical code ledgers may resume from the retired `test` stage. A terminal status and terminal stage remain equivalent.
+- Pipeline-version data is optional provenance and does not participate in a 6.0 gate. Canonical writers include it. The deprecated branch value and historical brain data remain accepted and ignored; new records omit both.
+- Dependencies schedule work. Full mode accepts live predecessors and terminal predecessors retained by prune provenance, while lite mode checks only local dependency cycles. Discovery provenance records origin but never schedules. Historical omission preserves the earlier behavior.
+- Complexity describes complecting and non-local risk, not difficulty or Git topology. Historical omission defaults to complex.
+- Code plans retain a named behavior-preserving refactor opportunity or `null`. Operation plans retain their runbook, preconditions, recovery and approval boundaries, postconditions, and deterministic verification seams. An unresolved operation fork remains parked at plan until an answered plan replaces it.
+- The recorder binds stage identities from host-observed IDs. Code keeps test-author, implementer, reviewer, and auditor separation; operation keeps executor, verifier, and auditor separation. Historical code identity representations remain compatible, but dual-populated representations must agree. Complex code completion requires two passing reviews; simple and identified historical records retain the single-review path.
+- Operation approval requests and grants are append-only provenance. A pending request must match the planned boundary exactly. The executor cannot grant its own request, and completed approval-gated execution binds the active request and retained grant before verification.
+- Operation verification is independent of execution evidence. Completion preserves the plan and requires one ordered, evidenced, successful result for every planned postcondition from a verifier distinct from the executor. Resolved follow-ups and demoted findings remain durable.
+- Judgment history is append-only. Scoped repair archives the whole current judgment cycle once. `cook reverify <id>` is limited to a completed execution with a current verification-only failure before any other recovery; it preserves execution and approvals, archives the superseded judgment, and requires a fresh verifier.
+- Kickbacks preserve source, destination, reason, and any typed finding contract. Typed code findings alone authorize scoped implement or refactor repair. Operation kickbacks remain limited to the operation graph, and a council-scoped execute kickback to capture or plan terminates as blocked-to-operator.
+- Blocked and abandoned states retain their reasons. Done means the category-specific done-gate holds.
 
 ## `journal.jsonl`
 
-The optional per-task journal is append-only JSONL with one complete object per
-line and a monotonically increasing `seq` from 0. Writers allocate the next
-sequence as one greater than the greatest valid prior sequence while holding the
-shared `.record-lock`.
-
-The 6.0 event vocabulary is closed:
-
-```jsonc
-{"seq":0,"at":"<ISO>","event":"intent","stage":"<stage|refute|council|external>","note":"<optional text>"}
-{"seq":1,"at":"<ISO>","event":"record","stage":"<stage>","agent":"<observedAgentId>"}
-{"seq":2,"at":"<ISO>","event":"gate","hash":"<sha>","green":true,"clean":true}
-{"seq":3,"at":"<ISO>","event":"external","note":"<optional completion text>"}
-```
+`src/core/journal.js` owns journal event names, stages, required and optional
+fields, and validation. The optional per-task journal is append-only. Writers
+allocate the next sequence after the greatest valid prior sequence while holding
+the shared `.record-lock`.
 
 `cook journal <id> intent --stage <s> [--note <text>]` and `cook journal
 <id> external [--note <text>]` are the operator-authored surfaces. Successful
 `cook record`, `cook approve`, and tracked `cook verify --task <id>` append
-their required `record` or `gate` events automatically after candidate validation
-and before task persistence, all under the shared store lock. If later task
-persistence fails, the appended provenance remains because there is no cross-file
-rollback.
-Malformed JSON or invalid event shapes warn and are skipped when reading; their
-bytes stay unchanged. Appends fail closed and surface containment, lock, read,
-or write errors. The journal is operational provenance, not validated state:
-`cook validate` ignores it in 6.0, and historical task directories without one
-remain valid.
+their provenance automatically after candidate validation and before task
+persistence, all under the shared store lock. If later task persistence fails,
+the appended provenance remains because there is no cross-file rollback.
+Malformed JSON or invalid events warn and are skipped when reading; their bytes
+stay unchanged. Appends fail closed and surface containment, lock, read, or write
+errors. The journal is operational provenance, not validated state: `cook
+validate` ignores it in 6.0, and historical task directories without one remain
+valid.
 
 ## `convergence` (optional bounded judgment-loop termination)
 
-Code uses `review`/`audit` counters and sources (`review`, `review2`, `audit`). Operation uses `verify`/`audit`. Both reuse the same cap, source-bound refute, K=3 council vote, retained resolved findings, and one-scoped-cycle terminal mechanism.
+Code and operation judgments reuse the same cap, source-bound refute, K=3 council vote, retained resolved findings, and one-scoped-cycle terminal mechanism.
 
-**Optional, with strict back-compat.** A `task.json` *without* `convergence`
-validates exactly as before (treated as defaulted/zeroed); invariants INV-7..11
-are skipped entirely. No migration: only 0002+ carry the block; 0001 (done) is
-never touched.
+**Optional, with strict back-compat.** A `task.json` without convergence state
+validates exactly as before: its counters are treated as zero and INV-7 through
+INV-11 are skipped. No migration is required; historical completed tasks remain
+untouched.
 
-```jsonc
-"convergence": {
-  "cap": 2,                                  // int ≥ 1: per-stage blocking-kickback cap
-  "stages": {
-    "review": { "blockingKickbacks": 0 },    // int 0..cap; optional "bonusGranted": bool
-    "audit":  { "blockingKickbacks": 0 }     // int 0..cap (independent counter)
-  },
-  "council": {
-    "convened": false,                       // bool: true once the complete task-wide council returns
-    "stage": null,                           // null | "review" | "audit" (cap trigger/recovery compatibility)
-    "members": [],                           // when convened: EXACTLY 3
-    //   member = { "agent_id": str, "lens": "integrity"|"security"|"pragmatist", "temperature": number|null }
-    "findings": [],                          // when convened: exact active source+summary blocker union
-    //   finding = { "id": str, "summary": str, "source": "review"|"review2"|"audit",
-    //               "blockingVotes": int 0..3,
-    //               "survived": bool, "followupTaskId": task id|"ledger"|null }
-    "verdict": null,                         // null | "ship" | "block"
-    "outcome": null                          // null | "shipped" | "scoped-fix-shipped" | "blocked-to-operator"
-  }
-}
-```
+`src/core/types.js` and `src/core/task-schema.js` own the convergence fields,
+types, enums, defaults, and persisted shape. `src/core/invariants.js` owns the
+relationships below.
 
-### Field rules
+### Lifecycle semantics
 
-- `cap`: integer at least 1; default protocol cap is 2.
-- Category-specific judgment counters are independent and increment only for source-bound surviving blocking findings. A convened council is valid only when its own category-valid source equals `cap`; another source at cap is not authority for it.
-- `council.stage` is the single exact-cap trigger: `review | audit` for code or `verify | audit` for operation. A convened operation council also retains the active execution `cycle` and baseline `executor_agent_id`.
-- `council.members`: the K=3 lenses. `lens` ∈ `integrity | security | pragmatist`
-  (each used exactly once). `temperature` records the intended decorrelation
-  temperature (or `null` where the dispatch cannot set one). Code member separation is scoped to the active judgment cycle. Operation members also differ from archived judges and refuters.
-  The orchestrator assembles member identities from three host-observed dispatch
-  IDs; council lens returns do not author `agent_id`.
-- `council.findings` is exactly the active blocking union for the category, matched by source plus summary. New returns require the source. Every blocker requires a source-bound surviving refute.
-- `blockingVotes` is 0..3 and `survived == (blockingVotes >= 2)`. Demoted findings record a valid follow-up task id or the literal `"ledger"` for a line in `.jeff/FOLLOWUPS.md`; survivors record `null`.
-- `stages.<source>.bonusGranted` is an optional boolean; absent means `false`. It records that the source has spent its one evidence-scaled bonus cycle, so the bound for that source is `cap + 1` kickback cycles at most once.
-- `council.verdict` is `block` iff any finding survived, otherwise `ship`.
-- A block permits one scoped `implement` cycle for code or `execute` cycle for operation. Operation completion proves exactly one adjacent execution cycle by an executor distinct from the council baseline, followed by fresh category-specific judgments whose identities do not reuse archived judges or council members. Code additionally requires its fresh clean full-suite gate. An operation approval stop remains resumable, but a scoped execute kickback or failed reassessment ends as `blocked-to-operator`.
+- Category-specific judgment counters are independent. A council can convene only when its triggering source reaches the exact cap.
+- The complete task-wide council uses three distinct, host-observed member identities. Code separation is scoped to the active judgment cycle. Operation members also differ from archived judges and refuters.
+- Council findings are exactly the active blocking union, matched by source and summary. Every blocker receives a source-bound refute. A majority decides whether each finding survives; demoted findings retain a valid follow-up, while survivors do not.
+- A source may spend one evidence-scaled bonus cycle only after a confined typed repair strictly reduces its findings.
+- The council blocks if any finding survives. A block permits one scoped implement cycle for code or execute cycle for operation. Operation completion proves one adjacent execution cycle by a fresh executor followed by fresh judgments. Code also requires a fresh clean full-suite gate. An operation approval stop remains resumable, but a scoped execute kickback or failed reassessment ends as blocked-to-operator.
 
 ### Validator invariants (INV-7..INV-11)
 
@@ -217,15 +122,16 @@ The `.jeff/tasks/<NNNN>-<slug>/` dirs are the live registry. `cook ls` / `cook s
 
 ## `config.json` (`mode`: full vs lite)
 
-`.jeff/config.json` carries the per-project mode:
+`src/core/types.js` and `src/core/task-schema.js` own the config fields, types,
+defaults, and persisted shape. A missing config retains historical full-mode
+behavior. `cook init` preserves that default; `cook lite` selects lite mode.
 
-```json
-{ "schemaVersion": 1, "system": "jeff", "mode": "lite", "active": true }
-```
+Full mode reads its full-suite gate command from config and fails closed when it
+is unavailable. Lite mode reads the command from the operating profile instead
+of duplicating it into config. Full mode may retain terminal predecessor
+provenance after pruning; absence preserves the legacy live-predecessor rule,
+and lite mode ignores that provenance.
 
-- `mode` ∈ `full | lite`. **Absent ⇒ `full`** (back-compat: every pre-lite store reads as full and validates byte-identically to today). `cook init` leaves `mode` unset (full); `cook lite` writes `mode:"lite"`.
-- `testCommand` (string, full mode; optional): the project's full-suite gate command, run by `cook verify` as the verdict (exit 0 = green). Absent/empty ⇒ `cook verify` fails closed (it never falls back to a hardcoded default). In lite mode the command is read instead from the operating profile's `Test command:` prose line (single-source; not duplicated into config).
-- `prunedTaskIds` (positive-integer array, full mode; optional): terminal-only provenance. Values must be unique and must not name live task ids. INV-5 accepts `deps` ids from the union of live task ids and this array, while scheduling ignores pruned predecessors. New tasks allocate above the maximum of that union but are not appended while live. Absence preserves the legacy rule that every dependency must name a live task, so existing full-mode stores require no migration. Lite mode ignores the field.
 - **Full mode** (the default): the committed task dirs, validated by the full invariant set below. Jeff runs `cook validate` before each stage-boundary commit; CI runs `make validate` on push. No git pre-commit hook is installed in any mode.
 - **Lite mode** (for a shared repo): the `.jeff/` store is git-excluded locally (`.git/info/exclude`, never committed) and **no** pre-commit hook is installed. The team owns the tracker and merge; jeff contributes only its quality machinery. Activated by `cook lite` (or its explicit natural-language twin; see `skills/cook/SKILL.md`).
 
@@ -263,9 +169,11 @@ canonical writers include both.
 
 **Done-gate full-suite binding (`[gate]`, task 0044):** when a `done` task records `tests.gate`, the validator asserts `gate.green == true` AND `gate.clean == true` AND `gate.hash` is a non-empty string, and that `tests.green == true` is backed by `gate.green == true`: so `tests.green` can only stand on a recorded green+clean full-suite run (written by `cook verify`), never on a targeted-subset run. It is a pure function of `task.json` (no per-task git probe); gate freshness (the gated hash matching the tree at done) is enforced at write time by Jeff via `cook verify` / `cook baseline check`. **Null-tolerant:** `tests.gate` absent ⇒ skipped, so the historical `done` tasks (which carry no gate) keep validating. Runs in both full and lite mode (a done-gate quality invariant, not a registry one).
 
-The lite **run-ledger** is the `task.json` shape above minus the registry-only obligations: `id` may be a string.
-
-- `externalRef` (string, lite only): the plan location connected to a ledger by lite's private adoption wiring: a markdown plan ref (`docs/plans/foo.md`, `PLAN.md`, or `PLAN.md#anchor`), and in later adapters a tracker ref. The writer sets `id` to this same ref. It is the **idempotency key**: named-task routing first resumes the local ledger whose `id` or `externalRef` matches rather than creating a second one. Absent on registry (full-mode) tasks.
+The lite run-ledger uses the checked task shape without full-mode registry
+obligations. `src/core/types.js` and `src/core/task-schema.js` own its fields and
+types. Lite adoption binds the external plan location as the ledger's
+idempotency key, so named-task routing resumes the matching local ledger instead
+of creating another one.
 
 ## Dropped from the old schema
 
@@ -282,32 +190,9 @@ see broken state. Legality remains `cook validate`.
 The projection is **additive-only**. Absent fields mean exact legacy semantics.
 Consumers gate on `schemaVersion` and never sniff fields for meaning.
 
-### Document shape
-
-Top level always:
-
-- `schemaVersion` (integer; starts at `1`)
-- `generatedAt` (ISO 8601 UTC)
-- `mode` (`lite` | `full`, from `readMode`)
-- `tasks` (array, sorted by `id` with the same total order as `cook ls`)
-
-Top level optional (present only when the underlying state carries them):
-
-- `maxParallelTasks` (from `.jeff/config.json` when set)
-
-Each task always projects:
-
-- `id`, `slug`, `title`, `status`, `stage`, `priority`, `deps`, `blockedReason`
-
-Each task optionally projects when present on the ledger or side files:
-
-- `category`
-- `discoveredFrom`
-- `claim` as `{ by, at }` from `.jeff/tasks/<dir>/.claim/claim.json` beside
-  the task directory (not from `task.json`); omitted when missing, unreadable,
-  or malformed
-- `escalation` as `{ fork, options }` only when `plan.escalation` is a non-null
-  parked summary
+`src/core/snapshot.js` owns the projection's document fields, types, task
+whitelist, optional side-file projections, and task ordering. Optional data is
+omitted when its underlying state is absent or unreadable.
 
 Outside an initialized project (no readable `.jeff/config.json`), the command
 exits non-zero with a clear `cook: snapshot: …` error.

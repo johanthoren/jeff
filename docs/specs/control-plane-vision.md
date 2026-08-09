@@ -59,7 +59,7 @@ Iron rules still bind:
 - thin orchestrator that never self-judges
 - builder/judge separation and fresh specialists
 - durable truth on disk; plain files
-- one model inheritance for specialists; host-native effort
+- specialists inherit the orchestrator model by default; host-native effort
 - `cook validate` and the done-gate remain mechanical
 
 The control plane is a **hybrid surface**:
@@ -113,7 +113,7 @@ Parked non-goals for this vision:
 | Inbox persistence | `.jeff/inbox/` inside each project |
 | Multi-project discovery | Explicit registry file (home-level) |
 | Coexistence | Task-level exclusive claim (not project-wide single writer) |
-| Model levers | Orchestrator/driver only; specialists inherit model; role frontmatter owns effort where supported |
+| Model levers | Orchestrator/driver only; specialists inherit model by default; role frontmatter owns effort where supported |
 | Drain brain | Hybrid: mechanical ready/claim/launch loop; standby Jeff brain per project while autodrain is on or inbox needs a reply |
 | Host launch | Claim task, then launch host in that repo/worktree already bound to the task |
 | Scheduling | Spec now; implement after the item 7 drain dogfood |
@@ -629,8 +629,8 @@ Everything else is deferred sugar.
    not silently deleted.
 8. **Global chat is a view.** Joint transcript has no separate authoritative
    store that can diverge from project inboxes.
-9. **One model inheritance remains.** Driver levers do not become per-specialist
-   model routing.
+9. **Model inheritance is the default.** Driver levers do not become
+   per-specialist model routing.
 10. **Implementation waits for item-7 dogfood** unless Johan explicitly
     reopens scheduling.
 
