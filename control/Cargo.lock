@@ -144,7 +144,7 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "jeff"
-version = "6.0.0-alpha.10"
+version = "6.0.0"
 dependencies = [
  "assert_cmd",
  "clap",
