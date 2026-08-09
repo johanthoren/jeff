@@ -49,7 +49,7 @@ Operation execute and verify use ordinary host-native stage dispatch. Role contr
 
 ## 5. Model selection and effort
 
-Model selection for each specialist follows the dispatch rules owned by `skills/cook/SKILL.md` (§Dispatch). Pi and Claude Code apply plan/refactor/review/verify/audit/refute `xhigh` and implement/execute `high`; Codex children inherit orchestrator effort. Dispatch reports actual provider/model/effort as evidence.
+Model selection for each specialist follows the dispatch rules owned by `skills/cook/SKILL.md` (§Dispatch). Pi and Claude Code apply the per-stage effort values owned by `agents/cook-*.md` frontmatter; Codex children inherit orchestrator effort. Dispatch reports actual provider/model/effort as evidence.
 
 ## 6. State & schema
 
@@ -103,7 +103,7 @@ In active lite mode, only when no local ledger matches may that route resolve th
 
 An explicit Remember request is the consent to write durable memory. Full mode keeps durable findings under `.jeff/memory/`. Outside full mode, Jeff prefers a suitable existing Git-tracked memory, decisions, learnings, or handoff file and preserves its purpose and format; local `.jeff/memory/` is the fallback. Without an explicit Remember (or other persistence) request, ordinary Explore work does not write durable memory. `AGENTS.md`, READMEs, and ordinary product documentation are not memory stores.
 
-After a short assess, Jeff classifies the work on consequence and expected lifetime: disposable work takes the ad-hoc route with no interrupt, and a named risk floor (production behavior, user data, security boundaries, accessibility basics, irreversible or shared state, releases, durable build and deploy infrastructure) always overrides a lighter classification. Otherwise, when a durable write would touch method/harness, shipped payload or version cuts, cross-cutting behavior, needed ACs/independent review, or work that should survive another session, Jeff **pauses before the first durable write** and forks once (grounded): ad-hoc minimal ship, record pending, or record + start capture. Hold writes until the Chef picks; do not continue ad hoc by default. Version cuts never ride silently on ad-hoc. Once the Chef starts tracked work, the existing capture, separation, verification, review, audit, convergence, and done-gate contracts apply unchanged. `skills/cook/SKILL.md` is authoritative for the operational boundary.
+After a short assess, Jeff classifies the work on consequence and expected lifetime: disposable work takes the ad-hoc route with no interrupt, and a risk floor always overrides a lighter classification and restores the ordinary pause; `skills/cook/SKILL.md` is authoritative for its membership and operational boundary. Otherwise, when a durable write would touch method/harness, shipped payload or version cuts, cross-cutting behavior, needed ACs/independent review, or work that should survive another session, Jeff **pauses before the first durable write** and forks once (grounded): ad-hoc minimal ship, record pending, or record + start capture. Hold writes until the Chef picks; do not continue ad hoc by default. Version cuts never ride silently on ad-hoc. Once the Chef starts tracked work, the existing capture, separation, verification, review, audit, convergence, and done-gate contracts apply unchanged.
 
 ## 10. Standards & skill-leaning policy
 
