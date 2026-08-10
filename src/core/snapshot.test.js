@@ -172,6 +172,49 @@ test('buildSnapshot golden: fixture store projects documented JSON with tasks so
   }
 });
 
+test('buildSnapshot omits escalation when fork or options has a malformed field type', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-snapshot-escalation-'));
+  try {
+    await writeConfig(root, {
+      schemaVersion: 1,
+      system: 'jeff',
+      mode: 'lite',
+      active: true,
+    });
+    const malformedEscalations = [
+      { fork: 1, options: ['local'] },
+      { fork: 'Which registry?', options: 'local' },
+      { fork: 'Which registry?', options: ['local', 1] },
+    ];
+    for (const [index, escalation] of malformedEscalations.entries()) {
+      const id = index + 1;
+      await writeTaskDir(
+        root,
+        `000${id}-malformed`,
+        baseTask({
+          id,
+          slug: `malformed-${id}`,
+          title: `Malformed ${id}`,
+          plan: { escalation },
+        }),
+      );
+    }
+
+    const doc = await buildSnapshot(root, { now: () => FIXED_NOW });
+
+    assert.deepEqual(
+      doc.tasks.map((task) => [task.id, Object.hasOwn(task, 'escalation')]),
+      [
+        [1, false],
+        [2, false],
+        [3, false],
+      ],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('buildSnapshot optionality: legacy store omits claim and maxParallelTasks; present state projects them', async () => {
   const root = await mkdtemp(join(tmpdir(), 'jeff-snapshot-opt-'));
   try {
