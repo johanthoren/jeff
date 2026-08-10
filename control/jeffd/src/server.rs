@@ -6,7 +6,7 @@ mod snapshots;
 use crate::config::DaemonConfig;
 use crate::lifecycle::OwnedSocket;
 use crate::protocol::{
-    spawn_connection, ConnectionId, ConnectionParts, OwnerMessage, WriterMessage,
+    spawn_connection, ConnectionId, ConnectionParts, OwnerMessage, SnapshotRun, WriterMessage,
 };
 use crate::registry::load_registry;
 use crate::state::{DirtyTracker, ProjectCache};
@@ -55,6 +55,10 @@ struct Waiter {
     request_id: String,
     kind: WaitKind,
 }
+struct ActiveSnapshot {
+    run: SnapshotRun,
+    cancelled: Arc<AtomicBool>,
+}
 
 pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError> {
     let projects = load_registry(&config.registry)
@@ -93,10 +97,13 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         subscriptions: HashMap::new(),
         waiters: HashMap::new(),
         active: HashMap::new(),
+        pending_watches: HashSet::new(),
+        watch_retry_due: None,
         next_connection: 1,
         next_subscription: 1,
         started: Instant::now(),
         registry_due: None,
+        registry_poll_due: registry_watch::REGISTRY_POLL_INTERVAL,
     };
     for project in &server.projects {
         server
@@ -118,11 +125,14 @@ struct Server {
     connections: HashMap<ConnectionId, Connection>,
     subscriptions: HashMap<String, Subscription>,
     waiters: HashMap<String, Vec<Waiter>>,
-    active: HashMap<String, Arc<AtomicBool>>,
+    active: HashMap<String, ActiveSnapshot>,
+    pending_watches: HashSet<String>,
+    watch_retry_due: Option<Duration>,
     next_connection: ConnectionId,
     next_subscription: u64,
     started: Instant,
     registry_due: Option<Duration>,
+    registry_poll_due: Duration,
 }
 
 impl Server {
@@ -130,7 +140,9 @@ impl Server {
         while !shutdown.load(Ordering::Acquire) {
             self.accept_connections()?;
             self.run_due_snapshots();
+            self.poll_registry();
             self.reload_registry_if_due();
+            self.retry_pending_watches();
             match self.messages_rx.recv_timeout(Duration::from_millis(10)) {
                 Ok(message) => self.handle_message(message),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -186,17 +198,29 @@ impl Server {
     fn handle_message(&mut self, message: OwnerMessage) {
         match message {
             OwnerMessage::Request { connection, frame } => self.handle_request(connection, frame),
-            OwnerMessage::Disconnected(connection) => self.drop_connection(connection),
-            OwnerMessage::SnapshotDone { project_id, result } => {
-                self.finish_snapshot(&project_id, result)
+            OwnerMessage::FrameTooLarge {
+                connection,
+                request_id,
+            } => {
+                if let Some(request_id) = request_id {
+                    self.send_error(
+                        connection,
+                        &request_id,
+                        "frame_too_large",
+                        "frame exceeds maximum size",
+                    );
+                }
+                self.close_connection(connection);
             }
+            OwnerMessage::Disconnected(connection) => self.drop_connection(connection),
+            OwnerMessage::SnapshotDone { run, result } => self.finish_snapshot(run, result),
             OwnerMessage::Notify(event) => self.handle_notify(event),
         }
     }
 
     fn shutdown(&mut self) {
-        for cancelled in self.active.values() {
-            cancelled.store(true, Ordering::Release);
+        for active in self.active.values() {
+            active.cancelled.store(true, Ordering::Release);
         }
         let subscriptions: Vec<_> = self
             .subscriptions
@@ -214,8 +238,15 @@ impl Server {
 
         while !self.active.is_empty() {
             match self.messages_rx.recv_timeout(Duration::from_millis(50)) {
-                Ok(OwnerMessage::SnapshotDone { project_id, .. }) => {
-                    self.active.remove(&project_id);
+                Ok(OwnerMessage::SnapshotDone { run, .. }) => {
+                    let project_id = &run.record.id;
+                    if self
+                        .active
+                        .get(project_id)
+                        .is_some_and(|active| active.run == run)
+                    {
+                        self.active.remove(project_id);
+                    }
                 }
                 Ok(OwnerMessage::Disconnected(connection)) => self.drop_connection(connection),
                 Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}

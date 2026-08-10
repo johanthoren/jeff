@@ -4,6 +4,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -131,30 +132,50 @@ pub(crate) fn run_snapshot_with_cancel(
     let process_group = child.id() as i32;
     let stdout = child.stdout.take().expect("captured stdout");
     let stderr = child.stderr.take().expect("captured stderr");
-    let stdout_reader = thread::spawn(move || read_all(stdout));
-    let stderr_reader = thread::spawn(move || read_bounded(stderr, STDERR_LIMIT));
+    let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
+    let (stderr_tx, stderr_rx) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let _ = stdout_tx.send(read_all(stdout));
+    });
+    thread::spawn(move || {
+        let _ = stderr_tx.send(read_bounded(stderr, STDERR_LIMIT));
+    });
     let started = Instant::now();
+    let mut status = None;
+    let mut stdout = None;
+    let mut stderr = None;
 
-    let status = loop {
+    loop {
         if cancelled.load(Ordering::Acquire) {
             terminate_group(process_group, &mut child);
-            join_output(stdout_reader, stderr_reader)?;
             return Err(SnapshotFailure::Cancelled);
         }
         if started.elapsed() >= timeout {
             terminate_group(process_group, &mut child);
-            join_output(stdout_reader, stderr_reader)?;
             return Err(SnapshotFailure::Timeout);
         }
-        match child
-            .try_wait()
-            .map_err(|error| SnapshotFailure::Output(error.to_string()))?
-        {
-            Some(status) => break status,
-            None => thread::sleep(Duration::from_millis(5)),
+        if status.is_none() {
+            status = child
+                .try_wait()
+                .map_err(|error| SnapshotFailure::Output(error.to_string()))?;
         }
-    };
-    let (stdout, stderr) = join_output(stdout_reader, stderr_reader)?;
+        if stdout.is_none() {
+            stdout = receive_output(&stdout_rx, "stdout")?;
+        }
+        if stderr.is_none() {
+            stderr = receive_output(&stderr_rx, "stderr")?;
+        }
+        if status.is_some() && stdout.is_some() && stderr.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let status =
+        status.ok_or_else(|| SnapshotFailure::Output("missing child status".to_owned()))?;
+    let stdout =
+        stdout.ok_or_else(|| SnapshotFailure::Output("missing stdout output".to_owned()))?;
+    let stderr =
+        stderr.ok_or_else(|| SnapshotFailure::Output("missing stderr output".to_owned()))?;
     if status.success() {
         parse_snapshot_output(&stdout)
     } else {
@@ -201,17 +222,16 @@ fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
     }
 }
 
-fn join_output(
-    stdout: thread::JoinHandle<io::Result<Vec<u8>>>,
-    stderr: thread::JoinHandle<io::Result<Vec<u8>>>,
-) -> Result<(Vec<u8>, Vec<u8>), SnapshotFailure> {
-    let stdout = stdout
-        .join()
-        .map_err(|_| SnapshotFailure::Output("stdout reader panicked".to_owned()))?
-        .map_err(|error| SnapshotFailure::Output(error.to_string()))?;
-    let stderr = stderr
-        .join()
-        .map_err(|_| SnapshotFailure::Output("stderr reader panicked".to_owned()))?
-        .map_err(|error| SnapshotFailure::Output(error.to_string()))?;
-    Ok((stdout, stderr))
+fn receive_output(
+    receiver: &Receiver<io::Result<Vec<u8>>>,
+    name: &str,
+) -> Result<Option<Vec<u8>>, SnapshotFailure> {
+    match receiver.try_recv() {
+        Ok(Ok(bytes)) => Ok(Some(bytes)),
+        Ok(Err(error)) => Err(SnapshotFailure::Output(error.to_string())),
+        Err(TryRecvError::Empty) => Ok(None),
+        Err(TryRecvError::Disconnected) => Err(SnapshotFailure::Output(format!(
+            "{name} reader stopped before returning output"
+        ))),
+    }
 }

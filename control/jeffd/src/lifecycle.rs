@@ -7,6 +7,7 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -51,7 +52,7 @@ impl OwnedSocket {
         validate_lock_file(&lock)?;
         fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600))?;
         lock.set_len(0)?;
-        write!(lock, "{}\n", std::process::id())?;
+        writeln!(lock, "{}", std::process::id())?;
         lock.sync_data()?;
 
         remove_stale_socket(&config.socket)?;
@@ -75,7 +76,11 @@ impl OwnedSocket {
                     && metadata.dev() == self.device
                     && metadata.ino() == self.inode =>
             {
-                fs::remove_file(&self.socket_path)?;
+                match remove_validated_socket(&self.socket_path, self.device, self.inode) {
+                    Ok(_) => {}
+                    Err(LifecycleError::Io(error)) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -197,8 +202,53 @@ fn remove_stale_socket(path: &Path) -> Result<(), LifecycleError> {
     {
         return Err(LifecycleError::UnsafeSocket(path.to_path_buf()));
     }
-    fs::remove_file(path)?;
+    if !remove_validated_socket(path, after.dev(), after.ino())? {
+        return Err(LifecycleError::UnsafeSocket(path.to_path_buf()));
+    }
     Ok(())
+}
+static NEXT_QUARANTINE: AtomicU64 = AtomicU64::new(0);
+
+fn remove_validated_socket(
+    path: &Path,
+    expected_device: u64,
+    expected_inode: u64,
+) -> Result<bool, LifecycleError> {
+    let quarantine = quarantine_path(path)?;
+    fs::rename(path, &quarantine)?;
+    let metadata = fs::symlink_metadata(&quarantine)?;
+    if metadata.file_type().is_socket()
+        && metadata.dev() == expected_device
+        && metadata.ino() == expected_inode
+    {
+        fs::remove_file(quarantine)?;
+        return Ok(true);
+    }
+
+    fs::hard_link(&quarantine, path)?;
+    fs::remove_file(quarantine)?;
+    Ok(false)
+}
+
+fn quarantine_path(path: &Path) -> Result<PathBuf, LifecycleError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| LifecycleError::UnsafeSocket(path.to_path_buf()))?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| LifecycleError::UnsafeSocket(path.to_path_buf()))?;
+    for _ in 0..16 {
+        let sequence = NEXT_QUARANTINE.fetch_add(1, Ordering::Relaxed);
+        let mut name = file_name.to_os_string();
+        name.push(format!(".jeffd-remove-{}-{sequence}", std::process::id()));
+        let candidate = parent.join(name);
+        match fs::symlink_metadata(&candidate) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(candidate),
+            Ok(_) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(LifecycleError::UnsafeSocket(path.to_path_buf()))
 }
 
 fn read_bounded_frame(stream: &mut UnixStream, limit: usize) -> io::Result<Vec<u8>> {

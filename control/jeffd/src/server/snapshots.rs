@@ -1,7 +1,8 @@
-use super::{Server, WaitKind};
-use crate::protocol::OwnerMessage;
+use super::{ActiveSnapshot, Server, WaitKind};
+use crate::protocol::{OwnerMessage, SnapshotRun};
 use crate::snapshot::run_snapshot_with_cancel;
 use crate::state::ProjectCache;
+use jeff_project::ProjectRecord;
 use serde_json::json;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -21,15 +22,7 @@ impl Server {
             self.dirty.finished(project_id, self.now());
             return;
         };
-        let cancelled = Arc::new(AtomicBool::new(false));
-        self.active.insert(project_id.to_owned(), cancelled.clone());
-        let sender = self.messages_tx.clone();
-        let timeout = self.config.snapshot_timeout();
-        let project_id = project_id.to_owned();
-        thread::spawn(move || {
-            let result = run_snapshot_with_cancel(&record, timeout, cancelled);
-            let _ = sender.send(OwnerMessage::SnapshotDone { project_id, result });
-        });
+        self.launch_snapshot(record);
     }
 
     pub(super) fn run_due_snapshots(&mut self) {
@@ -46,51 +39,94 @@ impl Server {
                 self.dirty.finished(&project_id, self.now());
                 continue;
             };
-            let cancelled = Arc::new(AtomicBool::new(false));
-            self.active.insert(project_id.clone(), cancelled.clone());
-            let sender = self.messages_tx.clone();
-            let timeout = self.config.snapshot_timeout();
-            thread::spawn(move || {
-                let result = run_snapshot_with_cancel(&record, timeout, cancelled);
-                let _ = sender.send(OwnerMessage::SnapshotDone { project_id, result });
-            });
+            self.launch_snapshot(record);
         }
+    }
+
+    fn launch_snapshot(&mut self, record: ProjectRecord) {
+        let run = SnapshotRun { record };
+        let project_id = run.record.id.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.active.insert(
+            project_id,
+            ActiveSnapshot {
+                run: run.clone(),
+                cancelled: cancelled.clone(),
+            },
+        );
+        let sender = self.messages_tx.clone();
+        let timeout = self.config.snapshot_timeout();
+        thread::spawn(move || {
+            let result = run_snapshot_with_cancel(&run.record, timeout, cancelled);
+            let _ = sender.send(OwnerMessage::SnapshotDone { run, result });
+        });
     }
 
     pub(super) fn finish_snapshot(
         &mut self,
-        project_id: &str,
+        run: SnapshotRun,
         result: Result<jeff_project::Snapshot, crate::snapshot::SnapshotFailure>,
     ) {
-        self.active.remove(project_id);
+        let project_id = run.record.id.clone();
+        if !self
+            .active
+            .get(&project_id)
+            .is_some_and(|active| active.run == run)
+        {
+            return;
+        }
+        self.active.remove(&project_id);
+        let is_current = self
+            .projects
+            .iter()
+            .any(|record| record.enabled && *record == run.record);
+        if !is_current {
+            self.dirty.finished(&project_id, self.now());
+            if self
+                .waiters
+                .get(&project_id)
+                .is_some_and(|waiters| !waiters.is_empty())
+                && self
+                    .projects
+                    .iter()
+                    .any(|record| record.id == project_id && record.enabled)
+            {
+                self.start_snapshot(&project_id);
+            } else {
+                self.answer_waiters(&project_id);
+            }
+            return;
+        }
+
         let had_good = self
             .caches
-            .get(project_id)
+            .get(&project_id)
             .and_then(ProjectCache::projection)
             .is_some();
-        if let Some(cache) = self.caches.get_mut(project_id) {
+        if let Some(cache) = self.caches.get_mut(&project_id) {
             match &result {
                 Ok(snapshot) => cache.replace(snapshot.clone()),
                 Err(error) => cache.fail(error.to_string(), error.exit_code()),
             }
         }
-        self.answer_waiters(project_id);
+        self.answer_waiters(&project_id);
         match result {
-            Ok(_) => {
+            Ok(_) if had_good => {
                 if let Some(projection) = self
                     .caches
-                    .get(project_id)
+                    .get(&project_id)
                     .and_then(ProjectCache::projection)
                 {
                     self.send_project_event(
-                        project_id,
+                        &project_id,
                         "snapshot.replaced",
                         json!({"projectId": project_id, "snapshot": projection}),
                     );
                 }
             }
+            Ok(_) => {}
             Err(error) if had_good => self.send_project_event(
-                project_id,
+                &project_id,
                 "snapshot.failed",
                 json!({
                     "projectId": project_id,
@@ -100,7 +136,7 @@ impl Server {
             ),
             Err(_) => {}
         }
-        self.dirty.finished(project_id, self.now());
+        self.dirty.finished(&project_id, self.now());
     }
 
     fn answer_waiters(&mut self, project_id: &str) {

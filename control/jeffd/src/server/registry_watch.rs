@@ -7,6 +7,8 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+const WATCH_RETRY_INTERVAL: Duration = Duration::from_millis(25);
+pub(super) const REGISTRY_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 impl Server {
     pub(super) fn handle_notify(&mut self, event: notify::Result<notify::Event>) {
@@ -41,6 +43,58 @@ impl Server {
             Err(error) => eprintln!("jeffd: registry reload ignored: {error}"),
         }
     }
+    pub(super) fn poll_registry(&mut self) {
+        let now = self.now();
+        if now < self.registry_poll_due {
+            return;
+        }
+        self.registry_poll_due = now + REGISTRY_POLL_INTERVAL;
+        if let Ok(projects) = load_registry(&self.config.registry) {
+            if projects != self.projects {
+                self.replace_registry(projects);
+            }
+        }
+    }
+
+    pub(super) fn retry_pending_watches(&mut self) {
+        if self.pending_watches.is_empty() {
+            self.watch_retry_due = None;
+            return;
+        }
+        let now = self.now();
+        if self.watch_retry_due.is_some_and(|deadline| now < deadline) {
+            return;
+        }
+        let pending: Vec<_> = self
+            .projects
+            .iter()
+            .filter(|project| project.enabled && self.pending_watches.contains(&project.id))
+            .cloned()
+            .collect();
+        let mut installed = Vec::new();
+        for project in pending {
+            if self
+                .watcher
+                .watch(&project.path.join(".jeff"), RecursiveMode::Recursive)
+                .is_ok()
+            {
+                self.pending_watches.remove(&project.id);
+                installed.push(project);
+            }
+        }
+        self.watch_retry_due =
+            (!self.pending_watches.is_empty()).then_some(now + WATCH_RETRY_INTERVAL);
+        for project in installed {
+            self.broadcast_event(
+                "project.updated",
+                json!({
+                    "projectId": project.id,
+                    "path": project.path,
+                    "enabled": true
+                }),
+            );
+        }
+    }
 
     fn replace_registry(&mut self, projects: Vec<ProjectRecord>) {
         let old: HashMap<_, _> = self
@@ -53,33 +107,52 @@ impl Server {
             .map(|project| (project.id.clone(), project.clone()))
             .collect();
 
+        let mut watch_retried = HashSet::new();
         for previous in old.values() {
             let changed = new.get(&previous.id);
             if previous.enabled
                 && changed.is_none_or(|next| !next.enabled || next.path != previous.path)
             {
                 let _ = self.watcher.unwatch(&previous.path.join(".jeff"));
+                self.pending_watches.remove(&previous.id);
             }
         }
         for next in new.values() {
-            let changed = old.get(&next.id);
-            if next.enabled
-                && changed.is_none_or(|previous| !previous.enabled || previous.path != next.path)
-            {
-                if let Err(error) = self
+            let previous = old.get(&next.id);
+            let was_pending = self.pending_watches.contains(&next.id);
+            let changed =
+                previous.is_none_or(|previous| !previous.enabled || previous.path != next.path);
+            if next.enabled && (changed || was_pending) {
+                match self
                     .watcher
                     .watch(&next.path.join(".jeff"), RecursiveMode::Recursive)
                 {
-                    eprintln!("jeffd: cannot watch project {}: {error}", next.id);
+                    Ok(()) => {
+                        self.pending_watches.remove(&next.id);
+                        if was_pending {
+                            watch_retried.insert(next.id.clone());
+                        }
+                    }
+                    Err(error) => {
+                        self.pending_watches.insert(next.id.clone());
+                        eprintln!("jeffd: cannot watch project {}: {error}", next.id);
+                    }
                 }
+            } else if !next.enabled {
+                self.pending_watches.remove(&next.id);
             }
         }
 
-        let ids: HashSet<_> = old.keys().chain(new.keys()).cloned().collect();
+        let ids: HashSet<_> = old
+            .keys()
+            .chain(new.keys())
+            .chain(watch_retried.iter())
+            .cloned()
+            .collect();
         for id in ids {
             let previous = old.get(&id);
             let next = new.get(&id);
-            if previous == next {
+            if previous == next && !watch_retried.contains(&id) {
                 continue;
             }
             let preserve = matches!((previous, next), (Some(a), Some(b)) if a.path == b.path);
@@ -100,8 +173,8 @@ impl Server {
             };
             if ends_subscription {
                 self.end_project_subscriptions(&id, "project_removed");
-                if let Some(cancelled) = self.active.get(&id) {
-                    cancelled.store(true, Ordering::Release);
+                if let Some(active) = self.active.get(&id) {
+                    active.cancelled.store(true, Ordering::Release);
                 }
                 self.dirty.remove(&id);
             }
@@ -116,5 +189,7 @@ impl Server {
             );
         }
         self.projects = projects;
+        self.watch_retry_due =
+            (!self.pending_watches.is_empty()).then_some(self.now() + WATCH_RETRY_INTERVAL);
     }
 }

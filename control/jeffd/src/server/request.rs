@@ -7,6 +7,11 @@ use serde_json::{json, Value};
 
 impl Server {
     pub(super) fn handle_request(&mut self, connection: ConnectionId, frame: Value) {
+        let safe_id = frame
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
         let request = serde_json::from_value::<Envelope>(frame);
         let (version, id, method, params) = match request {
             Ok(Envelope::Request {
@@ -18,7 +23,7 @@ impl Server {
             _ => {
                 self.send_error(
                     connection,
-                    "",
+                    &safe_id,
                     "invalid_request",
                     "expected request envelope",
                 );
@@ -33,6 +38,15 @@ impl Server {
                 "unsupported protocol major version",
             );
             self.close_connection(connection);
+            return;
+        }
+        if matches!(&method, Method::ServerHello | Method::ProjectList) && !params.is_object() {
+            self.send_error(
+                connection,
+                &id,
+                "invalid_params",
+                "params must be an object",
+            );
             return;
         }
         match method {
