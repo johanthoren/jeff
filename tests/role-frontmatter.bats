@@ -20,26 +20,35 @@ frontmatter_field() {
   awk '/^---$/{if(++n==2)exit} n==1 && /^'"$field"':/{gsub(/^'"$field"':[[:space:]]*/,""); print}' "$file"
 }
 
+# heading_section <file> <pattern> [ci]
+# The section of a markdown file from the first heading whose text matches
+# <pattern> to the next heading of the same or shallower level (exclusive),
+# so a matched heading's own subsections stay inside the result. Pass "ci" to
+# match case-insensitively. Empty output if no heading matches.
+heading_section() {
+  local file="$1" pattern="$2" mode="${3:-}"
+  awk -v pat="$pattern" -v ci="$mode" '
+    function line() { return ci == "ci" ? tolower($0) : $0 }
+    /^#+[ \t]/ {
+      match($0, /^#+/); level = RLENGTH
+      if (found && level <= start_level) exit
+      if (!found && line() ~ (ci == "ci" ? tolower(pat) : pat)) { found = 1; start_level = level }
+    }
+    found { print }
+  ' "$file"
+}
+
 # codex_dispatch_contract
 # Extracts the Codex native v2 dispatch contract from wherever the cook payload
 # keeps it. Task #117 discloses that branch-gated block progressively: it moves
 # out of the always-loaded SKILL.md into skills/cook/reference/. The contract
 # itself is unchanged, so this helper follows the content instead of pinning a
-# location: it scans SKILL.md and every reference file, and takes the section
-# from its heading to the next heading of the same or shallower level (so a
-# dedicated file's own subsections stay inside the contract).
+# location: it scans SKILL.md and every reference file via heading_section.
 codex_dispatch_contract() {
   local file
   for file in "$REPO"/skills/cook/SKILL.md "$REPO"/skills/cook/reference/*.md; do
     [ -f "$file" ] || continue
-    awk '
-      /^#+[ \t]/ {
-        match($0, /^#+/); level = RLENGTH
-        if (found && level <= start_level) exit
-        if (!found && $0 ~ /Codex native v2 dispatch/) { found = 1; start_level = level }
-      }
-      found { print }
-    ' "$file"
+    heading_section "$file" 'Codex native v2 dispatch'
   done
 }
 
@@ -222,19 +231,10 @@ qualifying_role_files() {
 }
 
 # plain_steps_block <file>
-# The `## Plain steps` section, from its heading to the next heading of the
-# same or shallower level. Same awk idiom as dispatch_section and
-# codex_dispatch_contract. Missing section yields empty output.
+# The `## Plain steps` section of a role file, via heading_section (also used
+# by codex_dispatch_contract). Missing section yields empty output.
 plain_steps_block() {
-  local file="$1"
-  awk '
-    /^#+[ \t]/ {
-      match($0, /^#+/); level = RLENGTH
-      if (found && level <= start_level) exit
-      if (!found && tolower($0) ~ /plain steps/) { found = 1; start_level = level }
-    }
-    found { print }
-  ' "$file"
+  heading_section "$1" 'plain steps' ci
 }
 
 @test "issue 218: role files granting a command or editing capability carry a plain steps section" {
