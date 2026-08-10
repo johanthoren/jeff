@@ -32,7 +32,7 @@ const CURRENT_SNAPSHOT: &str = r#"
 }
 "#;
 
-const LEGACY_SNAPSHOT: &str = r#"
+const LEGACY_SNAPSHOT: &str = r##"
 {
   "schemaVersion": 1,
   "generatedAt": "2026-08-01T00:00:00.000Z",
@@ -50,7 +50,7 @@ const LEGACY_SNAPSHOT: &str = r#"
     }
   ]
 }
-"#;
+"##;
 
 #[test]
 fn current_snapshot_round_trips_known_fields_and_tolerates_additions() {
