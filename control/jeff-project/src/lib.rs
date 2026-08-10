@@ -225,24 +225,18 @@ pub enum Envelope {
     },
 }
 
-fn deserialize_required_nullable<'de, D>(
-    deserializer: D,
-) -> Result<Option<String>, D::Error>
+fn deserialize_required_nullable<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
     Option::deserialize(deserializer)
 }
 
+#[derive(Default)]
 enum Presence<T> {
+    #[default]
     Missing,
     Present(T),
-}
-
-impl<T> Default for Presence<T> {
-    fn default() -> Self {
-        Self::Missing
-    }
 }
 
 impl<'de, T> Deserialize<'de> for Presence<T>

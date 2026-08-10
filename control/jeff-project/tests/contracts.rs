@@ -319,7 +319,6 @@ fn success_and_error_response_envelopes_round_trip() {
     ));
 }
 
-
 #[test]
 fn invalid_response_result_error_combinations_are_rejected() {
     let cases = [
@@ -377,11 +376,7 @@ fn invalid_response_result_error_combinations_are_rejected() {
 
     let accepted: Vec<_> = cases
         .into_iter()
-        .filter_map(|(name, input)| {
-            serde_json::from_value::<Envelope>(input)
-                .ok()
-                .map(|_| name)
-        })
+        .filter_map(|(name, input)| serde_json::from_value::<Envelope>(input).ok().map(|_| name))
         .collect();
 
     assert!(
