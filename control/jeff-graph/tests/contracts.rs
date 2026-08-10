@@ -2,7 +2,7 @@
 
 use jeff_graph::{
     hit_test, CacheDecision, CellPoint, Degradation, EdgeKind, GraphCanvas, GraphModel,
-    LayoutCache, NodeGeometry, SelectionDirection, Viewport, WorldPoint, WorldRect,
+    LayoutCache, NodeGeometry, SelectionDirection, Viewport, WorldRect,
 };
 use jeff_project::{ProjectMode, Snapshot, SnapshotTask, TaskId};
 use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
@@ -55,6 +55,25 @@ fn assert_close(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() < 1e-9,
         "expected {expected}, got {actual}"
+    );
+}
+
+fn assert_bounded_intersection(viewport: &Viewport, bounds: WorldRect) {
+    let visible = viewport.visible_world();
+    let overlap_width =
+        (visible.max_x.min(bounds.max_x) - visible.min_x.max(bounds.min_x)).max(0.0);
+    let overlap_height =
+        (visible.max_y.min(bounds.max_y) - visible.min_y.max(bounds.min_y)).max(0.0);
+    let required_width = (visible.width() * 0.2).min(bounds.width());
+    let required_height = (visible.height() * 0.2).min(bounds.height());
+
+    assert!(
+        overlap_width + 1e-9 >= required_width,
+        "horizontal overlap {overlap_width} is below required {required_width}"
+    );
+    assert!(
+        overlap_height + 1e-9 >= required_height,
+        "vertical overlap {overlap_height} is below required {required_height}"
     );
 }
 
@@ -268,6 +287,19 @@ fn zoom_is_clamped_and_keeps_the_cursor_world_point_anchored() {
 }
 
 #[test]
+fn zoom_out_reclamps_edge_pan_to_bounded_world_intersection() {
+    let bounds = WorldRect::new(0.0, 0.0, 1_000.0, 1_000.0);
+    let mut viewport = Viewport::new(bounds, 80, 24);
+    let cursor = CellPoint::new(0, 0);
+    viewport.set_zoom_at(2.0, cursor);
+    viewport.pan_by_cells(1_000_000.0, 1_000_000.0);
+
+    viewport.set_zoom_at(0.25, cursor);
+
+    assert_bounded_intersection(&viewport, bounds);
+}
+
+#[test]
 fn pan_uses_inverse_zoom_and_clamps_to_a_bounded_world_intersection() {
     let bounds = WorldRect::new(0.0, 0.0, 1_000.0, 1_000.0);
     let mut viewport = Viewport::new(bounds, 80, 24);
@@ -281,13 +313,7 @@ fn pan_uses_inverse_zoom_and_clamps_to_a_bounded_world_intersection() {
     assert_close(after.y, before.y - 3.0);
 
     viewport.pan_by_cells(1_000_000.0, 1_000_000.0);
-    let visible = viewport.visible_world();
-    let overlap_width =
-        (visible.max_x.min(bounds.max_x) - visible.min_x.max(bounds.min_x)).max(0.0);
-    let overlap_height =
-        (visible.max_y.min(bounds.max_y) - visible.min_y.max(bounds.min_y)).max(0.0);
-    assert!(overlap_width + 1e-9 >= (visible.width() * 0.2).min(bounds.width()));
-    assert!(overlap_height + 1e-9 >= (visible.height() * 0.2).min(bounds.height()));
+    assert_bounded_intersection(&viewport, bounds);
 }
 
 #[test]
@@ -307,6 +333,17 @@ fn resize_updates_view_bounds_without_invalidating_layout() {
     assert!(viewport.visible_world().width() > old_width);
     assert_eq!(cache.update(&graph), CacheDecision::Reused);
     assert_eq!(cache.layout().expect("reused layout").nodes(), positions);
+}
+
+#[test]
+fn resize_larger_reclamps_edge_pan_to_bounded_world_intersection() {
+    let bounds = WorldRect::new(0.0, 0.0, 1_000.0, 1_000.0);
+    let mut viewport = Viewport::new(bounds, 40, 20);
+    viewport.pan_by_cells(1_000_000.0, 1_000_000.0);
+
+    viewport.resize(80, 40);
+
+    assert_bounded_intersection(&viewport, bounds);
 }
 
 #[test]

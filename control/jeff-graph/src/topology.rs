@@ -3,7 +3,7 @@ use petgraph::{
     algo::{has_path_connecting, is_cyclic_directed},
     stable_graph::{NodeIndex, StableDiGraph},
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{btree_map::Entry, BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum EdgeKind {
@@ -90,8 +90,8 @@ impl GraphModel {
         let mut indices = BTreeMap::new();
         for task in &tasks {
             let key = CanonicalTaskId::from_task_id(&task.id);
-            if !indices.contains_key(&key) {
-                indices.insert(key, graph.add_node((*task).clone()));
+            if let Entry::Vacant(entry) = indices.entry(key) {
+                entry.insert(graph.add_node((*task).clone()));
             }
         }
 
