@@ -11,18 +11,31 @@ fn id(value: u64) -> TaskId {
     TaskId::Number(value)
 }
 
+fn string_id(value: &str) -> TaskId {
+    TaskId::String(value.into())
+}
+
 fn task(value: u64, deps: &[u64], discovered_from: Option<u64>) -> SnapshotTask {
+    task_with_id(
+        id(value),
+        deps.iter().copied().map(id).collect(),
+        discovered_from.map(id),
+    )
+}
+
+fn task_with_id(value: TaskId, deps: Vec<TaskId>, discovered_from: Option<TaskId>) -> SnapshotTask {
+    let label = format!("{value:?}");
     SnapshotTask {
-        id: id(value),
-        slug: format!("task-{value}"),
-        title: format!("Task {value}"),
+        id: value,
+        slug: format!("task-{label}"),
+        title: format!("Task {label}"),
         status: "pending".into(),
         stage: "implement".into(),
         priority: "p1".into(),
-        deps: deps.iter().copied().map(id).collect(),
+        deps,
         blocked_reason: None,
         category: Some("code".into()),
-        discovered_from: discovered_from.map(id),
+        discovered_from,
         claim: None,
         escalation: None,
     }
@@ -125,6 +138,38 @@ fn equivalent_topologies_have_equal_fingerprints_and_positions() {
 }
 
 #[test]
+fn dependency_cycles_degrade_and_use_stable_node_preserving_fallback() {
+    let first = GraphModel::from_snapshot(&snapshot(vec![
+        task(1, &[2], None),
+        task(2, &[1], None),
+        task(3, &[1], None),
+    ]));
+    let second = GraphModel::from_snapshot(&snapshot(vec![
+        task(3, &[1], None),
+        task(2, &[1], None),
+        task(1, &[2], None),
+    ]));
+    let mut first_cache = LayoutCache::default();
+    let mut second_cache = LayoutCache::default();
+
+    assert_eq!(first.degradations(), &[Degradation::CyclicDependencies]);
+    assert_eq!(second.degradations(), &[Degradation::CyclicDependencies]);
+    assert_eq!(first_cache.update(&first), CacheDecision::Recomputed);
+    assert_eq!(second_cache.update(&second), CacheDecision::Recomputed);
+    let first_layout = first_cache.layout().expect("first fallback layout");
+    let second_layout = second_cache.layout().expect("second fallback layout");
+    assert_eq!(
+        first_layout
+            .nodes()
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>(),
+        vec![id(1), id(2), id(3)]
+    );
+    assert_eq!(first_layout.nodes(), second_layout.nodes());
+}
+
+#[test]
 fn display_only_updates_reuse_layout_but_topology_updates_recompute() {
     let base = snapshot(vec![task(1, &[], None), task(2, &[1], None)]);
     let first = GraphModel::from_snapshot(&base);
@@ -148,6 +193,60 @@ fn display_only_updates_reuse_layout_but_topology_updates_recompute() {
         original_positions
     );
     assert_eq!(cache.update(&topology_changed), CacheDecision::Recomputed);
+}
+
+#[test]
+fn edge_only_topology_changes_recompute_layout_with_stable_ids() {
+    let dependency_before = GraphModel::from_snapshot(&snapshot(vec![
+        task(1, &[], None),
+        task(2, &[1], None),
+        task(3, &[], None),
+    ]));
+    let dependency_after = GraphModel::from_snapshot(&snapshot(vec![
+        task(1, &[], None),
+        task(2, &[3], None),
+        task(3, &[], None),
+    ]));
+    let discovery_before = GraphModel::from_snapshot(&snapshot(vec![
+        task(1, &[], None),
+        task(2, &[], None),
+        task(3, &[], Some(1)),
+    ]));
+    let discovery_after = GraphModel::from_snapshot(&snapshot(vec![
+        task(1, &[], None),
+        task(2, &[], None),
+        task(3, &[], Some(2)),
+    ]));
+    let mut dependency_cache = LayoutCache::default();
+    let mut discovery_cache = LayoutCache::default();
+
+    assert_eq!(dependency_before.task_ids(), dependency_after.task_ids());
+    assert_ne!(
+        dependency_before.topology_fingerprint(),
+        dependency_after.topology_fingerprint()
+    );
+    assert_eq!(
+        dependency_cache.update(&dependency_before),
+        CacheDecision::Recomputed
+    );
+    assert_eq!(
+        dependency_cache.update(&dependency_after),
+        CacheDecision::Recomputed
+    );
+
+    assert_eq!(discovery_before.task_ids(), discovery_after.task_ids());
+    assert_ne!(
+        discovery_before.topology_fingerprint(),
+        discovery_after.topology_fingerprint()
+    );
+    assert_eq!(
+        discovery_cache.update(&discovery_before),
+        CacheDecision::Recomputed
+    );
+    assert_eq!(
+        discovery_cache.update(&discovery_after),
+        CacheDecision::Recomputed
+    );
 }
 
 #[test]
@@ -252,6 +351,69 @@ fn keyboard_navigation_can_reach_the_same_task_as_mouse_hit_testing() {
         graph.navigate(Some(&id(3)), SelectionDirection::Backward),
         Some(&mouse_selected)
     );
+}
+
+#[test]
+fn mixed_ids_remain_distinct_and_follow_canonical_layout_selection_order() {
+    let number_one = id(1);
+    let string_one = string_id("1");
+    let alpha = string_id("alpha");
+    let zed = string_id("z");
+    let graph = GraphModel::from_snapshot(&snapshot(vec![
+        task_with_id(zed.clone(), Vec::new(), None),
+        task_with_id(string_one.clone(), Vec::new(), None),
+        task_with_id(number_one.clone(), Vec::new(), None),
+        task_with_id(alpha.clone(), Vec::new(), None),
+    ]));
+    let without_string_one = GraphModel::from_snapshot(&snapshot(vec![
+        task_with_id(zed.clone(), Vec::new(), None),
+        task_with_id(number_one.clone(), Vec::new(), None),
+        task_with_id(alpha.clone(), Vec::new(), None),
+    ]));
+    let expected = vec![
+        number_one.clone(),
+        string_one.clone(),
+        alpha.clone(),
+        zed.clone(),
+    ];
+
+    assert_eq!(graph.task_ids(), expected);
+    assert_ne!(
+        graph.topology_fingerprint(),
+        without_string_one.topology_fingerprint()
+    );
+    assert_eq!(
+        graph.navigate(Some(&number_one), SelectionDirection::Forward),
+        Some(&string_one)
+    );
+    assert_eq!(
+        graph.navigate(Some(&number_one), SelectionDirection::Backward),
+        Some(&zed)
+    );
+
+    let mut cache = LayoutCache::default();
+    assert_eq!(cache.update(&graph), CacheDecision::Recomputed);
+    assert_eq!(
+        cache
+            .layout()
+            .expect("mixed-id layout")
+            .nodes()
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>(),
+        expected
+    );
+
+    let viewport = Viewport::new(WorldRect::new(-100.0, -100.0, 100.0, 100.0), 40, 20);
+    let cell = CellPoint::new(10, 10);
+    let center = viewport.cell_to_world(cell);
+    let equal_nodes = vec![
+        NodeGeometry::new(zed.clone(), center, 8.0, 8.0),
+        NodeGeometry::new(number_one, center, 8.0, 8.0),
+        NodeGeometry::new(alpha, center, 8.0, 8.0),
+        NodeGeometry::new(string_one, center, 8.0, 8.0),
+    ];
+    assert_eq!(hit_test(&viewport, cell, &equal_nodes), Some(zed));
 }
 
 #[test]
