@@ -111,8 +111,7 @@ pub fn check_snapshot_schema(version: u64) -> Result<(), SnapshotError> {
 
 /// Decodes a snapshot and applies the explicit schema compatibility gate.
 pub fn parse_snapshot(input: &str) -> Result<Snapshot, SnapshotError> {
-    let header: SnapshotHeader =
-        serde_json::from_str(input).map_err(SnapshotError::Malformed)?;
+    let header: SnapshotHeader = serde_json::from_str(input).map_err(SnapshotError::Malformed)?;
     check_snapshot_schema(header.schema_version)?;
     serde_json::from_str(input).map_err(SnapshotError::Malformed)
 }

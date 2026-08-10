@@ -127,7 +127,7 @@ async function projectTask(root, task) {
     !Array.isArray(escalation) &&
     typeof escalation.fork === 'string' &&
     Array.isArray(escalation.options) &&
-    escalation.options.every((option) => typeof option === 'string')
+    escalation.options.every((/** @type {unknown} */ option) => typeof option === 'string')
   ) {
     const esc = /** @type {{ fork?: string, options?: string[] }} */ (escalation);
     out.escalation = {
