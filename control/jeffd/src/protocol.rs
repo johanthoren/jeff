@@ -11,6 +11,7 @@ pub type ConnectionId = u64;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnapshotRun {
     pub record: ProjectRecord,
+    pub generation: u64,
 }
 
 pub enum OwnerMessage {
@@ -32,11 +33,12 @@ pub enum OwnerMessage {
 
 pub enum WriterMessage {
     Frame(Value),
-    Close,
+    Close(mpsc::SyncSender<()>),
 }
 
 pub struct ConnectionParts {
     pub writer: Sender<WriterMessage>,
+    pub control_stream: UnixStream,
     pub reader_handle: JoinHandle<()>,
     pub writer_handle: JoinHandle<()>,
 }
@@ -47,12 +49,14 @@ pub fn spawn_connection(
     frame_limit: usize,
     owner: Sender<OwnerMessage>,
 ) -> std::io::Result<ConnectionParts> {
+    let control_stream = stream.try_clone()?;
     let writer_stream = stream.try_clone()?;
     let (writer, writer_rx) = mpsc::channel();
     let writer_handle = thread::spawn(move || write_frames(writer_stream, writer_rx));
     let reader_handle = thread::spawn(move || read_frames(id, stream, frame_limit, owner));
     Ok(ConnectionParts {
         writer,
+        control_stream,
         reader_handle,
         writer_handle,
     })
@@ -203,7 +207,10 @@ fn write_frames(mut stream: UnixStream, messages: Receiver<WriterMessage>) {
                     break;
                 }
             }
-            WriterMessage::Close => break,
+            WriterMessage::Close(closed) => {
+                let _ = closed.send(());
+                break;
+            }
         }
     }
     let _ = stream.shutdown(Shutdown::Both);

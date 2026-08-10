@@ -12,6 +12,7 @@ use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -947,7 +948,7 @@ fn review_contract_inherited_capture_pipes_remain_timeout_and_shutdown_bounded()
 }
 
 #[test]
-fn review_contract_registry_path_replacement_discards_stale_completion() {
+fn second_recovery_contract_replacement_accounts_for_the_ended_cold_subscription() {
     let mut fixture = Fixture::new(true);
     let root = fixture.home.parent().expect("fixture root").to_path_buf();
     let script = root.join("path-aware-cook");
@@ -1028,19 +1029,52 @@ exit 0
         "enabled": true,
         "cook": cook
     }]));
-    let updated = client.recv_until(|frame| frame["name"] == "project.updated");
-    assert_eq!(updated["payload"]["projectId"], "project-a");
-    client.send(&json!({
-        "v": 1,
-        "kind": "req",
-        "id": "new-get",
-        "method": "snapshot.get",
-        "params": {"path": fixture.other_project}
-    }));
+    let mut replacement_frames = Vec::new();
+    while !replacement_frames
+        .iter()
+        .any(|frame: &Value| frame["name"] == "project.updated")
+    {
+        replacement_frames.push(client.recv());
+    }
     gates.release();
+    while !replacement_frames
+        .iter()
+        .any(|frame| frame["id"] == "old-sub")
+    {
+        replacement_frames.push(client.recv());
+    }
 
-    let response = client.recv_until(|frame| frame["id"] == "new-get");
-    let projection = assert_ok(&response);
+    let ended = replacement_frames
+        .iter()
+        .find(|frame| frame["name"] == "subscription.ended")
+        .expect("replacement emits the pending subscription's ended frame");
+    assert_eq!(ended["payload"]["reason"], "project_removed");
+    let ended_subscription_id = ended["payload"]["subscriptionId"]
+        .as_str()
+        .expect("ended frame carries the pending subscription id")
+        .to_owned();
+    let updated = replacement_frames
+        .iter()
+        .find(|frame| frame["name"] == "project.updated")
+        .expect("replacement emits project.updated");
+    assert_eq!(updated["payload"]["projectId"], "project-a");
+    let old_response = replacement_frames
+        .iter()
+        .find(|frame| frame["id"] == "old-sub")
+        .expect("pending subscribe receives a terminal response")
+        .clone();
+
+    let ownership = client.request(
+        "old-owner",
+        "snapshot.unsubscribe",
+        json!({"subscriptionId": ended_subscription_id}),
+    );
+    let current = client.request(
+        "new-get",
+        "snapshot.get",
+        json!({"path": fixture.other_project}),
+    );
+    let projection = assert_ok(&current);
     assert_eq!(projection["path"], json!(fixture.other_project));
     assert_eq!(projection["tasks"][0]["title"], "new path");
     assert_eq!(
@@ -1051,6 +1085,22 @@ exit 0
         ]
     );
     assert!(fixture.stop_and_wait().status.success());
+
+    assert_eq!(
+        (
+            old_response["ok"].clone(),
+            old_response["error"]["code"].clone(),
+            ownership["ok"].clone(),
+            ownership["error"]["code"].clone(),
+        ),
+        (
+            json!(false),
+            json!("unavailable"),
+            json!(false),
+            json!("unknown_subscription"),
+        ),
+        "an ended cold subscription must fail once and remain unowned"
+    );
 }
 
 #[test]
@@ -1387,4 +1437,354 @@ fn review_contract_disconnect_drops_subscription_ownership_before_later_events()
     assert_eq!(rejected["ok"], false);
     assert_eq!(rejected["error"]["code"], "unknown_subscription");
     assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn second_recovery_contract_invalid_reload_and_a_b_a_epochs_preserve_only_current_state() {
+    let mut fixture = Fixture::new(true);
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let generation_cook = root.join("generation-cook");
+    let obsolete_snapshot = root.join("obsolete-generation.json");
+    let fresh_snapshot = root.join("fresh-generation.json");
+    let generation_count = root.join("generation-count");
+    let generation_log = root.join("generation.log");
+    let mut generation_gate = FifoPair::new(&root);
+    fs::write(
+        &obsolete_snapshot,
+        support::snapshot("2026-08-10T13:00:00Z", "obsolete generation"),
+    )
+    .expect("write obsolete generation");
+    fs::write(
+        &fresh_snapshot,
+        support::snapshot("2026-08-10T13:01:00Z", "fresh generation"),
+    )
+    .expect("write fresh generation");
+    fs::write(&generation_count, "0\n").expect("initialize generation counter");
+    fs::write(&generation_log, "").expect("initialize generation log");
+    write_executable(
+        &generation_cook,
+        r#"#!/bin/sh
+obsolete=$1
+fresh=$2
+count_file=$3
+ready=$4
+release=$5
+log=$6
+count=0
+IFS= read -r count < "$count_file"
+count=$((count + 1))
+printf '%s\n' "$count" > "$count_file"
+printf '%s\n' "$PWD" >> "$log"
+if [ "$count" -eq 1 ]; then
+  parent=$$
+  (
+    while kill -0 "$parent" 2>/dev/null; do :; done
+    printf 'run\n' > "$ready"
+    IFS= read -r _release < "$release"
+  ) &
+  response=$obsolete
+else
+  response=$fresh
+fi
+while IFS= read -r line || [ -n "$line" ]; do
+  printf '%s\n' "$line"
+done < "$response"
+exit 0
+"#,
+    );
+
+    let generation_a = json!({
+        "id": "project-a",
+        "path": fixture.project,
+        "name": "Generation A",
+        "enabled": true,
+        "cook": [
+            generation_cook,
+            obsolete_snapshot,
+            fresh_snapshot,
+            generation_count,
+            generation_gate.ready_path,
+            generation_gate.release_path,
+            generation_log
+        ]
+    });
+    let mut generation_b = generation_a.clone();
+    generation_b["name"] = json!("Generation B");
+    let retained = fixture.path_cook_record();
+    let registry_a = json!([generation_a, retained]);
+    fixture.write_registry(registry_a.clone());
+    fixture.start();
+
+    let mut retained_client = fixture.client();
+    let retained_subscription = retained_client.request(
+        "retained-sub",
+        "snapshot.subscribe",
+        json!({"projectId": "project-b"}),
+    );
+    assert_eq!(
+        assert_ok(&retained_subscription)["snapshot"]["tasks"][0]["title"],
+        "first"
+    );
+    assert_eq!(
+        wait_for_log_lines(&fixture.log, 1),
+        [format!(
+            "{}|snapshot --json",
+            fixture.other_project.to_string_lossy()
+        )]
+    );
+
+    let registry_path = fixture.registry_path();
+    fs::remove_file(&registry_path).expect("replace registry with invalid FIFO payload");
+    make_race_fifo(&registry_path);
+    let fifo_for_open = registry_path.clone();
+    let (writer_tx, writer_rx) = mpsc::channel();
+    let opener = thread::spawn(move || {
+        writer_tx
+            .send(OpenOptions::new().write(true).open(fifo_for_open))
+            .expect("send registry FIFO writer");
+    });
+    let mut invalid_registry = writer_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("daemon opens the runtime registry FIFO")
+        .expect("open runtime registry FIFO writer");
+    opener.join().expect("join registry FIFO opener");
+    retained_client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "list-after-invalid",
+        "method": "project.list",
+        "params": {}
+    }));
+    invalid_registry
+        .write_all(b"{invalid runtime registry")
+        .expect("write invalid runtime registry");
+    invalid_registry
+        .flush()
+        .expect("flush invalid runtime registry");
+    drop(invalid_registry);
+    fs::remove_file(&registry_path).expect("remove consumed registry FIFO");
+    fixture.write_registry(registry_a.clone());
+
+    let listed = retained_client.recv_until(|frame| frame["id"] == "list-after-invalid");
+    let rows = assert_ok(&listed)["projects"]
+        .as_array()
+        .expect("project list rows");
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["id"].as_str().expect("listed project id"))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["project-a", "project-b"])
+    );
+    let cached = retained_client.request(
+        "get-after-invalid",
+        "snapshot.get",
+        json!({"projectId": "project-b"}),
+    );
+    assert_eq!(assert_ok(&cached)["tasks"][0]["title"], "first");
+
+    fixture.set_snapshot("2026-08-10T13:02:00Z", "after invalid reload");
+    fixture.touch_project(&fixture.other_project, "after-invalid-trigger");
+    assert_eq!(
+        wait_for_log_lines(&fixture.log, 2),
+        [
+            format!(
+                "{}|snapshot --json",
+                fixture.other_project.to_string_lossy()
+            ),
+            format!(
+                "{}|snapshot --json",
+                fixture.other_project.to_string_lossy()
+            ),
+        ]
+    );
+    let retained_replacement =
+        retained_client.recv_until(|frame| frame["name"] == "snapshot.replaced");
+    assert_eq!(
+        retained_replacement["payload"]["snapshot"]["tasks"][0]["title"],
+        "after invalid reload"
+    );
+
+    let mut obsolete_client = fixture.client();
+    obsolete_client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "obsolete-get",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    generation_gate.wait_for_run();
+
+    let mut current_client = fixture.client();
+    fixture.write_registry(json!([generation_b, fixture.path_cook_record()]));
+    let generation_b_update = current_client.recv_until(|frame| frame["name"] == "project.updated");
+    assert_eq!(generation_b_update["payload"]["projectId"], "project-a");
+    fixture.write_registry(registry_a);
+    let generation_a_update = current_client.recv_until(|frame| frame["name"] == "project.updated");
+    assert_eq!(generation_a_update["payload"]["projectId"], "project-a");
+    current_client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "current-get",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    generation_gate.release();
+    let current =
+        current_client.recv_until(|frame| frame["kind"] == "res" && frame["id"] == "current-get");
+    let current_title = assert_ok(&current)["tasks"][0]["title"]
+        .as_str()
+        .expect("current generation title")
+        .to_owned();
+    let generation_invocations = fs::read_to_string(&generation_log)
+        .expect("read generation invocation log")
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert!(fixture.stop_and_wait().status.success());
+
+    assert_eq!(current_title, "fresh generation");
+    assert_eq!(
+        generation_invocations,
+        [
+            fixture.project.to_string_lossy().into_owned(),
+            fixture.project.to_string_lossy().into_owned(),
+        ],
+        "A restored after A→B→A must launch a new immutable generation"
+    );
+}
+
+#[test]
+fn second_recovery_contract_disabled_rows_and_typed_selectors_fail_without_hidden_work() {
+    let mut fixture = Fixture::new(true);
+    let disabled = json!({
+        "id": "project-disabled",
+        "path": fixture.other_project,
+        "name": "Disabled Project",
+        "enabled": false,
+        "cook": [fixture.fake_cook, "--disabled"]
+    });
+    fixture.write_registry(json!([fixture.default_record(), disabled]));
+    fixture.start();
+    let mut client = fixture.client();
+
+    let listed = client.request("list", "project.list", json!({}));
+    let rows = assert_ok(&listed)["projects"]
+        .as_array()
+        .expect("project list rows");
+    let disabled_row = rows
+        .iter()
+        .find(|row| row["id"] == "project-disabled")
+        .expect("disabled project remains listable");
+    assert_eq!(disabled_row["enabled"], false);
+
+    let disabled_get = client.request(
+        "disabled-get",
+        "snapshot.get",
+        json!({"projectId": "project-disabled"}),
+    );
+    let disabled_subscribe = client.request(
+        "disabled-subscribe",
+        "snapshot.subscribe",
+        json!({"path": fixture.other_project}),
+    );
+    assert_eq!(
+        (
+            disabled_get["error"]["code"].clone(),
+            disabled_subscribe["error"]["code"].clone(),
+        ),
+        (json!("unavailable"), json!("unavailable"))
+    );
+    assert!(
+        fixture.invocations().is_empty(),
+        "disabled get and subscribe must not invoke cook"
+    );
+
+    let mixed_get = client.request(
+        "mixed-get",
+        "snapshot.get",
+        json!({"projectId": "project-a", "path": 7}),
+    );
+    let mixed_subscribe = client.request(
+        "mixed-subscribe",
+        "snapshot.subscribe",
+        json!({"projectId": 7, "path": fixture.project}),
+    );
+    let mixed_codes = (
+        mixed_get["error"]["code"].clone(),
+        mixed_subscribe["error"]["code"].clone(),
+    );
+    assert!(fixture.stop_and_wait().status.success());
+
+    assert_eq!(
+        mixed_codes,
+        (json!("invalid_selector"), json!("invalid_selector")),
+        "get and subscribe must reject a present selector with the wrong type"
+    );
+}
+
+#[test]
+fn second_recovery_contract_shutdown_interrupts_a_blocked_connection_writer() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    fixture.start();
+    let socket = fixture.socket.clone();
+    let mut stalled = UnixStream::connect(&socket).expect("connect stalled output client");
+    stalled
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("bound stalled-client reads");
+    stalled
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .expect("bound stalled-client writes");
+    let receive_buffer: libc::c_int = 1024;
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                stalled.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                (&receive_buffer as *const libc::c_int).cast(),
+                std::mem::size_of_val(&receive_buffer) as libc::socklen_t,
+            )
+        },
+        0,
+        "shrink stalled client receive buffer: {}",
+        std::io::Error::last_os_error()
+    );
+    let large_id = "x".repeat(MAX_FRAME_BYTES / 2);
+    raw_send(
+        &mut stalled,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": large_id,
+            "method": "server.hello",
+            "params": {}
+        }),
+    );
+    let mut first_response_byte = [0_u8; 1];
+    stalled
+        .read_exact(&mut first_response_byte)
+        .expect("server begins the oversized hello response");
+
+    let stop = fixture.run(&["stop"]);
+    assert!(stop.status.success(), "stop failed: {stop:?}");
+    let (exit_tx, exit_rx) = mpsc::channel();
+    let waiter = thread::spawn(move || {
+        fixture.wait_for_exit();
+        exit_tx.send(()).expect("send blocked-writer daemon exit");
+    });
+    let shutdown_was_bounded = exit_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+    drop(stalled);
+    if !shutdown_was_bounded {
+        exit_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("daemon exits after stalled client closes");
+    }
+    waiter.join().expect("join blocked-writer daemon waiter");
+
+    assert!(
+        shutdown_was_bounded,
+        "shutdown must interrupt blocked connection output before joining the writer"
+    );
+    assert!(!socket.exists(), "bounded shutdown removes the listener");
 }

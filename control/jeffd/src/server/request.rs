@@ -191,8 +191,15 @@ impl Server {
         let object = params
             .as_object()
             .ok_or(("invalid_params", "params must be an object"))?;
-        let by_id = object.get("projectId").and_then(Value::as_str);
-        let by_path = object.get("path").and_then(Value::as_str);
+        let project_id = object.get("projectId");
+        let path = object.get("path");
+        if project_id.is_some_and(|value| !value.is_string())
+            || path.is_some_and(|value| !value.is_string())
+        {
+            return Err(("invalid_selector", "selectors must be strings"));
+        }
+        let by_id = project_id.and_then(Value::as_str);
+        let by_path = path.and_then(Value::as_str);
         let project = match (by_id, by_path) {
             (Some(id), None) => self.projects.iter().find(|project| project.id == id),
             (None, Some(path)) if std::path::Path::new(path).is_absolute() => self

@@ -35,6 +35,7 @@ pub enum ServerError {
 
 struct Connection {
     writer: Sender<WriterMessage>,
+    control_stream: UnixStream,
     reader_handle: thread::JoinHandle<()>,
     writer_handle: thread::JoinHandle<()>,
     subscriptions: HashSet<String>,
@@ -83,12 +84,22 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
     signal_hook::flag::register(signal_hook::consts::SIGTERM, shutdown.clone())?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, shutdown.clone())?;
     let dirty = DirtyTracker::new(config.debounce_window());
+    let mut next_registry_generation = 1;
+    let registry_generations = projects
+        .iter()
+        .map(|project| {
+            let generation = next_registry_generation;
+            next_registry_generation += 1;
+            (project.id.clone(), generation)
+        })
+        .collect();
 
     let mut server = Server {
         config,
         socket,
         watcher,
         projects,
+        registry_generations,
         caches: HashMap::new(),
         dirty,
         messages_tx,
@@ -101,6 +112,7 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         watch_retry_due: None,
         next_connection: 1,
         next_subscription: 1,
+        next_registry_generation,
         started: Instant::now(),
         registry_due: None,
         registry_poll_due: registry_watch::REGISTRY_POLL_INTERVAL,
@@ -119,6 +131,7 @@ struct Server {
     watcher: RecommendedWatcher,
     projects: Vec<ProjectRecord>,
     caches: HashMap<String, ProjectCache>,
+    registry_generations: HashMap<String, u64>,
     dirty: DirtyTracker,
     messages_tx: Sender<OwnerMessage>,
     messages_rx: Receiver<OwnerMessage>,
@@ -130,6 +143,7 @@ struct Server {
     watch_retry_due: Option<Duration>,
     next_connection: ConnectionId,
     next_subscription: u64,
+    next_registry_generation: u64,
     started: Instant,
     registry_due: Option<Duration>,
     registry_poll_due: Duration,
@@ -175,6 +189,7 @@ impl Server {
         self.next_connection += 1;
         let ConnectionParts {
             writer,
+            control_stream,
             reader_handle,
             writer_handle,
         } = spawn_connection(
@@ -187,6 +202,7 @@ impl Server {
             id,
             Connection {
                 writer,
+                control_stream,
                 reader_handle,
                 writer_handle,
                 subscriptions: HashSet::new(),

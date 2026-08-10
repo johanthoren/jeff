@@ -152,6 +152,15 @@ impl Server {
         for id in ids {
             let previous = old.get(&id);
             let next = new.get(&id);
+            if previous != next {
+                if next.is_some() {
+                    self.registry_generations
+                        .insert(id.clone(), self.next_registry_generation);
+                    self.next_registry_generation += 1;
+                } else {
+                    self.registry_generations.remove(&id);
+                }
+            }
             if previous == next && !watch_retried.contains(&id) {
                 continue;
             }

@@ -1,8 +1,11 @@
-use super::Server;
+use super::{Server, WaitKind};
 use crate::config::PROTOCOL_VERSION;
 use crate::protocol::{ConnectionId, WriterMessage};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::net::Shutdown;
+use std::sync::mpsc;
+use std::time::Duration;
 
 impl Server {
     pub(super) fn send_project_event(&self, project_id: &str, name: &str, payload: Value) {
@@ -24,21 +27,40 @@ impl Server {
     }
 
     pub(super) fn end_project_subscriptions(&mut self, project_id: &str, reason: &str) {
-        let subscriptions: Vec<_> = self
+        let subscriptions: HashSet<_> = self
             .subscriptions
             .iter()
             .filter(|(_, subscription)| subscription.project_id == project_id)
             .map(|(id, _)| id.clone())
             .collect();
-        for subscription_id in subscriptions {
-            if let Some(subscription) = self.subscriptions.get(&subscription_id) {
+        for subscription_id in &subscriptions {
+            if let Some(subscription) = self.subscriptions.get(subscription_id) {
                 self.send_event(
                     subscription.connection,
                     "subscription.ended",
                     json!({"subscriptionId": subscription_id, "reason": reason}),
                 );
             }
-            self.remove_subscription(&subscription_id);
+            self.remove_subscription(subscription_id);
+        }
+        let mut remaining = Vec::new();
+        for waiter in self.waiters.remove(project_id).unwrap_or_default() {
+            if matches!(
+                &waiter.kind,
+                WaitKind::Subscribe(subscription_id) if subscriptions.contains(subscription_id)
+            ) {
+                self.send_error(
+                    waiter.connection,
+                    &waiter.request_id,
+                    "unavailable",
+                    "subscription ended because the project was replaced",
+                );
+            } else {
+                remaining.push(waiter);
+            }
+        }
+        if !remaining.is_empty() {
+            self.waiters.insert(project_id.to_owned(), remaining);
         }
     }
 
@@ -90,7 +112,10 @@ impl Server {
         for subscription in &client.subscriptions {
             self.subscriptions.remove(subscription);
         }
-        let _ = client.writer.send(WriterMessage::Close);
+        let (closed_tx, closed_rx) = mpsc::sync_channel(0);
+        let _ = client.writer.send(WriterMessage::Close(closed_tx));
+        let _ = closed_rx.recv_timeout(Duration::from_millis(100));
+        let _ = client.control_stream.shutdown(Shutdown::Both);
         let _ = client.writer_handle.join();
         let _ = client.reader_handle.join();
     }
@@ -102,6 +127,7 @@ impl Server {
         for subscription in &client.subscriptions {
             self.subscriptions.remove(subscription);
         }
+        let _ = client.control_stream.shutdown(Shutdown::Both);
         drop(client.writer);
         let _ = client.reader_handle.join();
         let _ = client.writer_handle.join();

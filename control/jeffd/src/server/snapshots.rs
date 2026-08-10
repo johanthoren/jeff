@@ -44,8 +44,12 @@ impl Server {
     }
 
     fn launch_snapshot(&mut self, record: ProjectRecord) {
-        let run = SnapshotRun { record };
-        let project_id = run.record.id.clone();
+        let project_id = record.id.clone();
+        let Some(&generation) = self.registry_generations.get(&project_id) else {
+            self.dirty.finished(&project_id, self.now());
+            return;
+        };
+        let run = SnapshotRun { record, generation };
         let cancelled = Arc::new(AtomicBool::new(false));
         self.active.insert(
             project_id,
@@ -76,10 +80,11 @@ impl Server {
             return;
         }
         self.active.remove(&project_id);
-        let is_current = self
-            .projects
-            .iter()
-            .any(|record| record.enabled && *record == run.record);
+        let is_current = self.registry_generations.get(&project_id) == Some(&run.generation)
+            && self
+                .projects
+                .iter()
+                .any(|record| record.enabled && *record == run.record);
         if !is_current {
             self.dirty.finished(&project_id, self.now());
             if self
@@ -157,12 +162,27 @@ impl Server {
             }
             if let Some(projection) = &projection {
                 let result = match waiter.kind {
-                    WaitKind::Get => json!(projection),
-                    WaitKind::Subscribe(subscription_id) => {
-                        json!({"subscriptionId": subscription_id, "snapshot": projection})
+                    WaitKind::Get => Some(json!(projection)),
+                    WaitKind::Subscribe(subscription_id)
+                        if self.subscriptions.contains_key(&subscription_id) =>
+                    {
+                        Some(json!({
+                            "subscriptionId": subscription_id,
+                            "snapshot": projection
+                        }))
                     }
+                    WaitKind::Subscribe(_) => None,
                 };
-                self.send_result(waiter.connection, &waiter.request_id, result);
+                if let Some(result) = result {
+                    self.send_result(waiter.connection, &waiter.request_id, result);
+                } else {
+                    self.send_error(
+                        waiter.connection,
+                        &waiter.request_id,
+                        "unavailable",
+                        "subscription is no longer active",
+                    );
+                }
             } else {
                 if let WaitKind::Subscribe(subscription_id) = waiter.kind {
                     self.remove_subscription(&subscription_id);
