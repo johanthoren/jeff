@@ -121,7 +121,14 @@ async function projectTask(root, task) {
 
   const plan = task.plan;
   const escalation = plan && typeof plan === 'object' ? plan.escalation : null;
-  if (escalation != null && typeof escalation === 'object' && !Array.isArray(escalation)) {
+  if (
+    escalation != null &&
+    typeof escalation === 'object' &&
+    !Array.isArray(escalation) &&
+    typeof escalation.fork === 'string' &&
+    Array.isArray(escalation.options) &&
+    escalation.options.every((option) => typeof option === 'string')
+  ) {
     const esc = /** @type {{ fork?: string, options?: string[] }} */ (escalation);
     out.escalation = {
       fork: /** @type {string} */ (esc.fork),
