@@ -287,7 +287,7 @@ require_spec() {
 
 @test "#219 P1a gate record dates the narrow operator exception at its single owner" {
   require_spec
-  local record compact binding
+  local record compact binding planning
   record="$(awk 'BEGIN { RS = ""; ORS = "\n" } /2026-08-10/ { print }' "$VISION")"
   [ -n "$record" ] || {
     echo "control-plane vision has no 2026-08-10 P1a gate decision"
@@ -309,4 +309,26 @@ require_spec() {
     echo "P1a spec duplicates the governing gate rationale"
     return 1
   fi
+
+  # Limit the ownership scan to P1a planning docs; pointer-only references lack
+  # the combined gate-reopening and repository-locality rationale.
+  while IFS= read -r planning; do
+    [ "$planning" = "$VISION" ] && continue
+    if ! awk '
+      BEGIN { RS = "" }
+      {
+        paragraph = tolower($0)
+        if (paragraph ~ /reopen[a-z]*/ &&
+            paragraph ~ /p1a/ &&
+            paragraph ~ /gate/ &&
+            paragraph ~ /(dogfood|prerequisite)/ &&
+            paragraph ~ /(repo(sitory)?|localit)/) {
+          exit 1
+        }
+      }
+    ' "$planning"; then
+      echo "P1a gate locality rationale appears outside the governing vision"
+      return 1
+    fi
+  done < <(grep -ilF 'P1a' "$REPO"/docs/specs/*.md)
 }
