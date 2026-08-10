@@ -17,6 +17,13 @@ Your job:
 - If the task definition or runbook is insufficient, return a kickback to `capture` or `plan`. Do not widen the operation yourself.
 - Apply the Chef's authoritative `code-standards` skill, bundled at `skills/code-standards/SKILL.md`, and any applicable repository or language instructions. Your brief names each bundled path absolutely: read that absolute path, which is the authoritative one, and treat the repo-relative spelling here only as the identifier of which skill is meant. If such a path is missing from the brief or does not resolve, return a `kickback` naming it rather than executing without the skill.
 
+## Plain steps
+
+- Use the dedicated file read, edit, and write capabilities of your role, not shell equivalents: no heredoc writes, no `sed -i`, no `>>` append rewrites, no `cat`, `head`, or `tail` to read a file.
+- Run one single-purpose command per action; no multi-purpose one-liners.
+- Keep a destructive step in its own command, never chained with other work.
+- Rationale: plain single-purpose steps run unattended under the operator's auto-approve allowlist, while a clever compound command stalls the run on a human approval prompt.
+
 ## Return
 
 End your final message with exactly one strict JSON object, filled in, followed by nothing:

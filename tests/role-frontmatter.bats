@@ -20,26 +20,35 @@ frontmatter_field() {
   awk '/^---$/{if(++n==2)exit} n==1 && /^'"$field"':/{gsub(/^'"$field"':[[:space:]]*/,""); print}' "$file"
 }
 
+# heading_section <file> <pattern> [ci]
+# The section of a markdown file from the first heading whose text matches
+# <pattern> to the next heading of the same or shallower level (exclusive),
+# so a matched heading's own subsections stay inside the result. Pass "ci" to
+# match case-insensitively. Empty output if no heading matches.
+heading_section() {
+  local file="$1" pattern="$2" mode="${3:-}"
+  awk -v pat="$pattern" -v ci="$mode" '
+    function line() { return ci == "ci" ? tolower($0) : $0 }
+    /^#+[ \t]/ {
+      match($0, /^#+/); level = RLENGTH
+      if (found && level <= start_level) exit
+      if (!found && line() ~ (ci == "ci" ? tolower(pat) : pat)) { found = 1; start_level = level }
+    }
+    found { print }
+  ' "$file"
+}
+
 # codex_dispatch_contract
 # Extracts the Codex native v2 dispatch contract from wherever the cook payload
 # keeps it. Task #117 discloses that branch-gated block progressively: it moves
 # out of the always-loaded SKILL.md into skills/cook/reference/. The contract
 # itself is unchanged, so this helper follows the content instead of pinning a
-# location: it scans SKILL.md and every reference file, and takes the section
-# from its heading to the next heading of the same or shallower level (so a
-# dedicated file's own subsections stay inside the contract).
+# location: it scans SKILL.md and every reference file via heading_section.
 codex_dispatch_contract() {
   local file
   for file in "$REPO"/skills/cook/SKILL.md "$REPO"/skills/cook/reference/*.md; do
     [ -f "$file" ] || continue
-    awk '
-      /^#+[ \t]/ {
-        match($0, /^#+/); level = RLENGTH
-        if (found && level <= start_level) exit
-        if (!found && $0 ~ /Codex native v2 dispatch/) { found = 1; start_level = level }
-      }
-      found { print }
-    ' "$file"
+    heading_section "$file" 'Codex native v2 dispatch'
   done
 }
 
@@ -198,4 +207,119 @@ dispatch_section() {
     echo "agents/cook-audit.md no longer forbids substituting a self-run scan for the supplied one"
     return 1
   }
+}
+
+# ---------------------------------------------------------------------------
+# issue 218: plain-steps tool discipline, stated once in every carrying role
+#
+# A dispatched station has no skill loader; the role body is verbatim what the
+# host sends the child (src/pi/role-session.js:79). The rule reaches the
+# specialist only if it lives in the role body itself, so a stage that grants
+# a command or editing capability must carry the rule directly.
+# ---------------------------------------------------------------------------
+
+# qualifying_role_files
+# Every agents/cook-*.md whose frontmatter tools: value grants bash, edit, or
+# write, case-insensitively. Derived from frontmatter rather than hardcoded so
+# a future grant change pulls a role file into the requirement by itself.
+qualifying_role_files() {
+  local file tools
+  for file in "$REPO"/agents/cook-*.md; do
+    tools="$(frontmatter_field "$file" tools)"
+    grep -qEi '(^|,)[[:space:]]*(bash|edit|write)[[:space:]]*(,|$)' <<<"$tools" && echo "$file"
+  done
+}
+
+# plain_steps_block <file>
+# The `## Plain steps` section of a role file, via heading_section (also used
+# by codex_dispatch_contract). Missing section yields empty output.
+plain_steps_block() {
+  heading_section "$1" 'plain steps' ci
+}
+
+@test "issue 218: role files granting a command or editing capability carry a plain steps section" {
+  local file section
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    section="$(plain_steps_block "$file")"
+    [ -n "$section" ] || {
+      echo "$file grants a command or editing capability but has no ## Plain steps section"
+      return 1
+    }
+  done < <(qualifying_role_files)
+}
+
+@test "issue 218: the plain steps section states the whole tool-discipline contract" {
+  local file section marker
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    section="$(plain_steps_block "$file")"
+    [ -n "$section" ] || {
+      echo "$file has no ## Plain steps section to check"
+      return 1
+    }
+    for marker in 'heredoc' 'sed -i' '>>' '\bcat\b' '\bhead\b' '\btail\b' 'single[- ]purpose' 'destructive'; do
+      grep -qEi "$marker" <<<"$section" || {
+        echo "$file ## Plain steps section is missing marker: $marker"
+        return 1
+      }
+    done
+  done < <(qualifying_role_files)
+}
+
+@test "issue 218: the plain steps section names no host, only capabilities" {
+  local file section marker
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    section="$(plain_steps_block "$file")"
+    [ -n "$section" ] || {
+      echo "$file has no ## Plain steps section to check"
+      return 1
+    }
+    for marker in 'claude' 'codex' 'subagent' '\bpi\b'; do
+      ! grep -qEi "$marker" <<<"$section" || {
+        echo "$file ## Plain steps section names a host ($marker) instead of a capability"
+        return 1
+      }
+    done
+  done < <(qualifying_role_files)
+}
+
+@test "issue 218: the plain steps section has exactly one authoritative text across all role files" {
+  local file section found_count=0 diverged=0 first_section=""
+  for file in "$REPO"/agents/*.md; do
+    section="$(plain_steps_block "$file")"
+    [ -n "$section" ] || continue
+    section="$(awk '{sub(/[[:space:]]+$/,"");print}' <<<"$section")"
+    found_count=$((found_count + 1))
+    if [ "$found_count" -eq 1 ]; then
+      first_section="$section"
+    elif [ "$section" != "$first_section" ]; then
+      diverged=1
+    fi
+  done
+  [ "$found_count" -gt 0 ] || {
+    echo "no agents/*.md file carries a ## Plain steps section; expected exactly one distinct text, found 0"
+    return 1
+  }
+  [ "$diverged" -eq 0 ] || {
+    echo "agents/*.md carry more than one distinct ## Plain steps text; a copy drifted"
+    return 1
+  }
+}
+
+@test "issue 218: the plain steps section names the auto-approve allowlist rationale" {
+  local file section
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    section="$(plain_steps_block "$file")"
+    [ -n "$section" ] || {
+      echo "$file has no ## Plain steps section to check"
+      return 1
+    }
+    grep -qEi 'auto-approve|autoapprove|allowlist|allow-list' <<<"$section" || {
+      echo "$file ## Plain steps section does not name the auto-approve allowlist rationale"
+      return 1
+    }
+  done < <(qualifying_role_files)
 }

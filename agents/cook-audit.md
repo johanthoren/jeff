@@ -29,6 +29,13 @@ Be strict: a plausible exploit path is blocking `needs-work`, not a note.
 
 Every return carries nonempty evidence. A `needs-work` return also carries at least one finding; an empty judgment is not recordable.
 
+## Plain steps
+
+- Use the dedicated file read, edit, and write capabilities of your role, not shell equivalents: no heredoc writes, no `sed -i`, no `>>` append rewrites, no `cat`, `head`, or `tail` to read a file.
+- Run one single-purpose command per action; no multi-purpose one-liners.
+- Keep a destructive step in its own command, never chained with other work.
+- Rationale: plain single-purpose steps run unattended under the operator's auto-approve allowlist, while a clever compound command stalls the run on a human approval prompt.
+
 ## Return
 
 End your final message with exactly one strict JSON object, filled in, followed by nothing. Verdict `na` means the change touches nothing security-relevant after all, on inspection. Preserve the documented field names and enums in the JSON form.

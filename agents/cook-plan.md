@@ -36,6 +36,13 @@ Escape by return: if the criteria contain a genuine unresolved fork, return an e
 
 **Planning decomposition.** If planning reveals independently shippable slices, return the existing escalation shape rather than inventing a new return shape. Set the `escalation` fork to the proposed split.
 
+## Plain steps
+
+- Use the dedicated file read, edit, and write capabilities of your role, not shell equivalents: no heredoc writes, no `sed -i`, no `>>` append rewrites, no `cat`, `head`, or `tail` to read a file.
+- Run one single-purpose command per action; no multi-purpose one-liners.
+- Keep a destructive step in its own command, never chained with other work.
+- Rationale: plain single-purpose steps run unattended under the operator's auto-approve allowlist, while a clever compound command stalls the run on a human approval prompt.
+
 ## Return
 
 End your final message with exactly this strict JSON object, filled in, followed by nothing:
