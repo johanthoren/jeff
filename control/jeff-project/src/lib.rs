@@ -71,6 +71,12 @@ pub struct Snapshot {
     pub tasks: Vec<SnapshotTask>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotHeader {
+    schema_version: u64,
+}
+
 /// Errors returned while decoding or checking a snapshot.
 #[derive(Debug, Error)]
 pub enum SnapshotError {
@@ -105,9 +111,10 @@ pub fn check_snapshot_schema(version: u64) -> Result<(), SnapshotError> {
 
 /// Decodes a snapshot and applies the explicit schema compatibility gate.
 pub fn parse_snapshot(input: &str) -> Result<Snapshot, SnapshotError> {
-    let snapshot: Snapshot = serde_json::from_str(input).map_err(SnapshotError::Malformed)?;
-    check_snapshot_schema(snapshot.schema_version)?;
-    Ok(snapshot)
+    let header: SnapshotHeader =
+        serde_json::from_str(input).map_err(SnapshotError::Malformed)?;
+    check_snapshot_schema(header.schema_version)?;
+    serde_json::from_str(input).map_err(SnapshotError::Malformed)
 }
 
 /// A project registered with the daemon.
