@@ -47,6 +47,7 @@ pub struct SnapshotTask {
     pub stage: String,
     pub priority: String,
     pub deps: Vec<TaskId>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     pub blocked_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
@@ -193,7 +194,7 @@ pub enum EventName {
 }
 
 /// A request, response, or event protocol envelope.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind")]
 pub enum Envelope {
     #[serde(rename = "req")]
@@ -222,4 +223,122 @@ pub enum Envelope {
         name: EventName,
         payload: Value,
     },
+}
+
+fn deserialize_required_nullable<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::deserialize(deserializer)
+}
+
+enum Presence<T> {
+    Missing,
+    Present(T),
+}
+
+impl<T> Default for Presence<T> {
+    fn default() -> Self {
+        Self::Missing
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Presence<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(Self::Present)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind")]
+enum EnvelopeWire {
+    #[serde(rename = "req")]
+    Request {
+        #[serde(rename = "v")]
+        version: u64,
+        id: String,
+        method: Method,
+        params: Value,
+    },
+    #[serde(rename = "res")]
+    Response {
+        #[serde(rename = "v")]
+        version: u64,
+        id: String,
+        ok: bool,
+        #[serde(default)]
+        result: Presence<Value>,
+        #[serde(default)]
+        error: Presence<Value>,
+    },
+    #[serde(rename = "event")]
+    Event {
+        #[serde(rename = "v")]
+        version: u64,
+        name: EventName,
+        payload: Value,
+    },
+}
+
+impl<'de> Deserialize<'de> for Envelope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match EnvelopeWire::deserialize(deserializer)? {
+            EnvelopeWire::Request {
+                version,
+                id,
+                method,
+                params,
+            } => Ok(Self::Request {
+                version,
+                id,
+                method,
+                params,
+            }),
+            EnvelopeWire::Response {
+                version,
+                id,
+                ok,
+                result,
+                error,
+            } => match (ok, result, error) {
+                (true, Presence::Present(result), Presence::Missing) => Ok(Self::Response {
+                    version,
+                    id,
+                    ok,
+                    result: Some(result),
+                    error: None,
+                }),
+                (false, Presence::Missing, Presence::Present(error)) => Ok(Self::Response {
+                    version,
+                    id,
+                    ok,
+                    result: None,
+                    error: Some(error),
+                }),
+                _ => Err(serde::de::Error::custom(
+                    "response must contain exactly result when ok is true or error when ok is false",
+                )),
+            },
+            EnvelopeWire::Event {
+                version,
+                name,
+                payload,
+            } => Ok(Self::Event {
+                version,
+                name,
+                payload,
+            }),
+        }
+    }
 }
