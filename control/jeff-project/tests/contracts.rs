@@ -351,6 +351,28 @@ fn invalid_response_result_error_combinations_are_rejected() {
             "failure-with-neither",
             json!({"v": 1, "kind": "res", "id": "c-4", "ok": false}),
         ),
+        (
+            "success-with-result-and-error",
+            json!({
+                "v": 1,
+                "kind": "res",
+                "id": "c-5",
+                "ok": true,
+                "result": {},
+                "error": {"code": "unavailable", "message": "snapshot unavailable"}
+            }),
+        ),
+        (
+            "failure-with-result-and-error",
+            json!({
+                "v": 1,
+                "kind": "res",
+                "id": "c-6",
+                "ok": false,
+                "result": {},
+                "error": {"code": "unavailable", "message": "snapshot unavailable"}
+            }),
+        ),
     ];
 
     let accepted: Vec<_> = cases
