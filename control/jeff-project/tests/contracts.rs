@@ -121,6 +121,29 @@ fn malformed_required_snapshot_data_returns_a_typed_error() {
 }
 
 #[test]
+fn snapshot_missing_required_nullable_blocked_reason_returns_a_typed_error() {
+    let missing_blocked_reason = json!({
+        "schemaVersion": 1,
+        "generatedAt": "2026-08-03T12:00:00.000Z",
+        "mode": "lite",
+        "tasks": [{
+            "id": 1,
+            "slug": "blocked-reason-omitted",
+            "title": "Blocked reason omitted",
+            "status": "pending",
+            "stage": "capture",
+            "priority": "p1",
+            "deps": []
+        }]
+    })
+    .to_string();
+
+    let error = parse_snapshot(&missing_blocked_reason)
+        .expect_err("snapshot without required blockedReason must fail");
+    assert!(matches!(error, SnapshotError::Malformed(_)));
+}
+
+#[test]
 fn compatibility_gate_accepts_schema_version_one() {
     check_snapshot_schema(1).expect("schema version 1 is supported");
 }
@@ -274,6 +297,76 @@ fn success_and_error_response_envelopes_round_trip() {
             input
         );
     }
+
+    let response_with_addition: Envelope = serde_json::from_value(json!({
+        "v": 1,
+        "kind": "res",
+        "id": "c-3",
+        "ok": true,
+        "result": {},
+        "futureEnvelopeField": true
+    }))
+    .expect("response with an additive field parses");
+
+    assert!(matches!(
+        response_with_addition,
+        Envelope::Response {
+            ok: true,
+            result: Some(_),
+            error: None,
+            ..
+        }
+    ));
+}
+
+
+#[test]
+fn invalid_response_result_error_combinations_are_rejected() {
+    let cases = [
+        (
+            "success-with-error-only",
+            json!({
+                "v": 1,
+                "kind": "res",
+                "id": "c-1",
+                "ok": true,
+                "error": {"code": "unavailable", "message": "snapshot unavailable"}
+            }),
+        ),
+        (
+            "failure-with-result-only",
+            json!({
+                "v": 1,
+                "kind": "res",
+                "id": "c-2",
+                "ok": false,
+                "result": {}
+            }),
+        ),
+        (
+            "success-with-neither",
+            json!({"v": 1, "kind": "res", "id": "c-3", "ok": true}),
+        ),
+        (
+            "failure-with-neither",
+            json!({"v": 1, "kind": "res", "id": "c-4", "ok": false}),
+        ),
+    ];
+
+    let accepted: Vec<_> = cases
+        .into_iter()
+        .filter_map(|(name, input)| {
+            serde_json::from_value::<Envelope>(input)
+                .ok()
+                .map(|_| name)
+        })
+        .collect();
+
+    assert!(
+        accepted.is_empty(),
+        "invalid response shapes accepted: {}",
+        accepted.join(", ")
+    );
 }
 
 #[test]
