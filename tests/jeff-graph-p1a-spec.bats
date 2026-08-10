@@ -26,6 +26,7 @@ load test_helper
 setup_file() { cook_hermetic_git; }
 
 SPEC="$REPO/docs/specs/jeff-graph-p1a.md"
+VISION="$REPO/docs/specs/control-plane-vision.md"
 
 # Extract from a heading through the line before the next same-or-higher heading.
 # $1 = awk regex for the opening heading line (e.g. '^## .*[Ss]ocket').
@@ -278,4 +279,56 @@ require_spec() {
     echo "scope requires combined multi-pane for P1a"
     return 1
   fi
+}
+
+# ---------------------------------------------------------------------------
+# #219: durable P1a gate decision
+# ---------------------------------------------------------------------------
+
+@test "#219 P1a gate record dates the narrow operator exception at its single owner" {
+  require_spec
+  local record compact binding planning
+  record="$(awk 'BEGIN { RS = ""; ORS = "\n" } /2026-08-10/ { print }' "$VISION")"
+  [ -n "$record" ] || {
+    echo "control-plane vision has no 2026-08-10 P1a gate decision"
+    return 1
+  }
+  compact="$(tr '\n' ' ' <<<"$record")"
+
+  grep -qiE 'operator[^.]{0,80}(explicitly[[:space:]]+)?reopen(ed)?[^.]{0,80}(P1a[^.]{0,80}gate|gate[^.]{0,80}P1a)' <<<"$compact" \
+    || { echo "dated record does not explicitly reopen the P1a gate"; return 1; }
+  grep -qiE 'replac(es|ed)[^.]{0,80}only[^.]{0,160}(dogfood|prerequisite)[^.]{0,160}(in this repo(sitory)?|occur in this repo(sitory)?)' <<<"$compact" \
+    || { echo "dated record does not replace only the in-repository prerequisite"; return 1; }
+
+  binding="$(spec_section '^## .*[Bb]inding [Ss]ources')"
+  grep -qF 'docs/specs/control-plane-vision.md' <<<"$binding" \
+    || { echo "P1a spec does not defer to the governing control-plane record"; return 1; }
+  grep -qiE '^Status:.*approved.*P1a' "$SPEC" \
+    || { echo "P1a planning is not approved after the locality exception"; return 1; }
+  if grep -qF '2026-08-10' "$SPEC"; then
+    echo "P1a spec duplicates the governing gate rationale"
+    return 1
+  fi
+
+  # Limit the ownership scan to P1a planning docs; pointer-only references lack
+  # the combined gate-reopening and repository-locality rationale.
+  while IFS= read -r planning; do
+    [ "$planning" = "$VISION" ] && continue
+    if ! awk '
+      BEGIN { RS = "" }
+      {
+        paragraph = tolower($0)
+        if (paragraph ~ /reopen[a-z]*/ &&
+            paragraph ~ /p1a/ &&
+            paragraph ~ /gate/ &&
+            paragraph ~ /(dogfood|prerequisite)/ &&
+            paragraph ~ /(repo(sitory)?|localit)/) {
+          exit 1
+        }
+      }
+    ' "$planning"; then
+      echo "P1a gate locality rationale appears outside the governing vision"
+      return 1
+    fi
+  done < <(grep -ilF 'P1a' "$REPO"/docs/specs/*.md)
 }

@@ -634,6 +634,10 @@ Everything else is deferred sugar.
 10. **Implementation waits for item-7 dogfood** unless Johan explicitly
     reopens scheduling.
 
+Gate decision (2026-08-10): The operator explicitly reopened the P1a
+implementation gate. The exception replaces only the requirement for
+prerequisite dogfood to occur in this repository.
+
 ## 16. Implementation phases (after the gate)
 
 Ordered for learning, not for calendar commitment.
