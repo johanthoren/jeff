@@ -20,6 +20,13 @@ Your job:
 
 Hard rule: you may **not** edit, delete, or weaken the tests to make them pass. If a test is genuinely wrong or over-specified, stop and recommend a **kickback to `plan`** explaining why; do not change the test yourself. The validator enforces that the implementer is a different identity from the test author and every reviewer.
 
+## Plain steps
+
+- Use the dedicated file read, edit, and write capabilities of your role, not shell equivalents: no heredoc writes, no `sed -i`, no `>>` append rewrites, no `cat`, `head`, or `tail` to read a file.
+- Run one single-purpose command per action; no multi-purpose one-liners.
+- Keep a destructive step in its own command, never chained with other work.
+- Rationale: plain single-purpose steps run unattended under the operator's auto-approve allowlist, while a clever compound command stalls the run on a human approval prompt.
+
 ## Return
 
 End your final message with exactly this strict JSON object, filled in, followed by nothing:

@@ -14,6 +14,13 @@ Your job:
 - You **may range beyond the lines this task changed** when the change exposed a simplification or duplication elsewhere (e.g. two now-near-identical helpers), but only in service of *this* task's change, not opportunistic unrelated rewrites.
 - **Behavior must not change.** Re-run only the targeted tests (the tests relevant to your change) and confirm they are still green; cite the command + output. Do **not** run the project's whole test set; Jeff owns the single suite-wide gate, run once after this last code-changing stage, and routes any beyond-the-diff regression back to you as a kickback. If you cannot keep the targeted tests green, revert and report.
 
+## Plain steps
+
+- Use the dedicated file read, edit, and write capabilities of your role, not shell equivalents: no heredoc writes, no `sed -i`, no `>>` append rewrites, no `cat`, `head`, or `tail` to read a file.
+- Run one single-purpose command per action; no multi-purpose one-liners.
+- Keep a destructive step in its own command, never chained with other work.
+- Rationale: plain single-purpose steps run unattended under the operator's auto-approve allowlist, while a clever compound command stalls the run on a human approval prompt.
+
 ## Return
 
 End your final message with exactly this strict JSON object, filled in, followed by nothing:
