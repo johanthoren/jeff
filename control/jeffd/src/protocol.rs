@@ -156,8 +156,15 @@ fn read_frames(
         }
     }
     let _ = stream.shutdown(Shutdown::Both);
-    if !closed.load(Ordering::Acquire) {
-        let _ = owner.send(OwnerMessage::Disconnected(id));
+    let mut disconnected = OwnerMessage::Disconnected(id);
+    while !closed.load(Ordering::Acquire) {
+        match owner.try_send(disconnected) {
+            Ok(()) | Err(TrySendError::Disconnected(_)) => break,
+            Err(TrySendError::Full(message)) => {
+                disconnected = message;
+                thread::yield_now();
+            }
+        }
     }
 }
 

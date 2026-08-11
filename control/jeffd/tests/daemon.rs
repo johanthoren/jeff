@@ -382,9 +382,12 @@ fn notify_coalesces_dirty_again_for_only_the_changed_project() {
 }
 
 #[test]
-fn shutdown_ends_subscriptions_and_terminates_an_active_snapshot_process_group() {
+fn cycle_one_contract_shutdown_ends_only_established_subscriptions_before_eof() {
     let mut fixture = Fixture::new(true);
-    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.write_registry(json!([
+        fixture.default_record(),
+        fixture.path_cook_record()
+    ]));
     let fifo_root = fixture
         .home
         .parent()
@@ -400,17 +403,32 @@ fn shutdown_ends_subscriptions_and_terminates_an_active_snapshot_process_group()
     client.send(&json!({
         "v": 1,
         "kind": "req",
+        "id": "established-sub",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-a"}
+    }));
+    gates.wait_for_run();
+    gates.release();
+    let established = client.recv_until(|frame| frame["id"] == "established-sub");
+    let established_subscription_id = assert_ok(&established)["subscriptionId"]
+        .as_str()
+        .expect("successful subscribe returns an id")
+        .to_owned();
+
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
         "id": "cold-get",
         "method": "snapshot.get",
-        "params": {"projectId": "project-a"}
+        "params": {"projectId": "project-b"}
     }));
     gates.wait_for_run();
     client.send(&json!({
         "v": 1,
         "kind": "req",
-        "id": "cold-sub",
+        "id": "pending-sub",
         "method": "snapshot.subscribe",
-        "params": {"projectId": "project-a"}
+        "params": {"projectId": "project-b"}
     }));
     client.send(&json!({
         "v": 1,
@@ -419,8 +437,7 @@ fn shutdown_ends_subscriptions_and_terminates_an_active_snapshot_process_group()
         "method": "server.hello",
         "params": {}
     }));
-    let accepted = client.recv();
-    assert_eq!(accepted["id"], "accepted");
+    let accepted = client.recv_until(|frame| frame["id"] == "accepted");
     assert_eq!(assert_ok(&accepted)["protocolVersion"], 1);
 
     let stop = fixture.run(&["stop"]);
@@ -428,7 +445,7 @@ fn shutdown_ends_subscriptions_and_terminates_an_active_snapshot_process_group()
     let frames = client.recv_all_until_eof(8);
     fixture.wait_for_exit();
 
-    for request_id in ["cold-get", "cold-sub"] {
+    for request_id in ["cold-get", "pending-sub"] {
         let terminal = frames
             .iter()
             .filter(|frame| frame["kind"] == "res" && frame["id"] == request_id)
@@ -441,11 +458,21 @@ fn shutdown_ends_subscriptions_and_terminates_an_active_snapshot_process_group()
         assert_eq!(terminal[0]["ok"], false);
         assert_eq!(terminal[0]["error"]["code"], "unavailable");
     }
-    assert!(
-        frames
-            .iter()
-            .all(|frame| frame["name"] != "subscription.ended"),
-        "shutdown must not expose an internal subscription id that no response returned: {frames:?}"
+    let ended = frames
+        .iter()
+        .filter(|frame| frame["name"] == "subscription.ended")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ended.len(),
+        1,
+        "only the successfully returned subscription may end: {frames:?}"
+    );
+    assert_eq!(
+        ended[0]["payload"],
+        json!({
+            "subscriptionId": established_subscription_id,
+            "reason": "shutdown"
+        })
     );
     assert!(!fixture.socket.exists());
 }
@@ -610,6 +637,263 @@ fn raw_send(stream: &mut UnixStream, frame: &Value) {
     stream.write_all(b"\n").expect("terminate raw client frame");
     stream.flush().expect("flush raw client frame");
 }
+
+fn raw_send_request_burst(stream: &mut UnixStream, count: usize, method: &str, params: &Value) {
+    let mut bytes = Vec::new();
+    for sequence in 0..count {
+        serde_json::to_writer(
+            &mut bytes,
+            &json!({
+                "v": 1,
+                "kind": "req",
+                "id": format!("burst-{sequence}"),
+                "method": method,
+                "params": params
+            }),
+        )
+        .expect("serialize raw request burst");
+        bytes.push(b'\n');
+    }
+    stream.write_all(&bytes).expect("write raw request burst");
+    stream.flush().expect("flush raw request burst");
+}
+
+fn bounded_raw_client(socket: &Path) -> UnixStream {
+    let stream = UnixStream::connect(socket).expect("connect bounded raw client");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("bound raw client reads");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .expect("bound raw client writes");
+    stream
+}
+
+fn shrink_receive_buffer(stream: &UnixStream) {
+    let receive_buffer: libc::c_int = 1024;
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                (&receive_buffer as *const libc::c_int).cast(),
+                std::mem::size_of_val(&receive_buffer) as libc::socklen_t,
+            )
+        },
+        0,
+        "shrink raw client receive buffer: {}",
+        std::io::Error::last_os_error()
+    );
+}
+
+fn raw_read_to_eof(stream: &mut UnixStream, maximum_bytes: usize) -> usize {
+    let mut total = 0_usize;
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let count = stream
+            .read(&mut chunk)
+            .expect("read bounded raw output or EOF");
+        if count == 0 {
+            return total;
+        }
+        total = total.checked_add(count).expect("raw byte count fits usize");
+        assert!(
+            total <= maximum_bytes,
+            "connection exceeded the bounded raw output allowance"
+        );
+    }
+}
+
+struct EgressWriteBarrier {
+    library: PathBuf,
+    arm_path: PathBuf,
+    ready_path: PathBuf,
+    release_path: PathBuf,
+    ready: mpsc::Receiver<String>,
+    release: File,
+}
+
+impl EgressWriteBarrier {
+    fn new(root: &Path) -> Self {
+        let source = root.join("egress-write-interpose.c");
+        let library = root.join(if cfg!(target_os = "macos") {
+            "egress-write-interpose.dylib"
+        } else {
+            "egress-write-interpose.so"
+        });
+        let arm_path = root.join("egress-write-arm");
+        let ready_path = root.join("egress-write-ready.fifo");
+        let release_path = root.join("egress-write-release.fifo");
+        make_race_fifo(&ready_path);
+        make_race_fifo(&release_path);
+        fs::write(&source, EGRESS_WRITE_INTERPOSER).expect("write egress write interposer");
+        let compiler = env::var_os("CC").unwrap_or_else(|| "cc".into());
+        let mut command = Command::new(compiler);
+        if cfg!(target_os = "macos") {
+            command.arg("-dynamiclib");
+        } else {
+            command.args(["-shared", "-fPIC"]);
+        }
+        let output = command
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .expect("compile egress write interposer");
+        assert!(
+            output.status.success(),
+            "egress write interposer failed to compile: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ready_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&ready_path)
+            .expect("open egress ready FIFO");
+        let (ready_tx, ready) = mpsc::channel();
+        thread::spawn(move || {
+            let mut reader = BufReader::new(ready_file);
+            let mut line = String::new();
+            reader
+                .read_line(&mut line)
+                .expect("read blocked egress write signal");
+            ready_tx
+                .send(line)
+                .expect("forward blocked egress write signal");
+        });
+        Self {
+            library,
+            arm_path,
+            ready,
+            release: OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&release_path)
+                .expect("open egress release FIFO"),
+            ready_path,
+            release_path,
+        }
+    }
+
+    fn environment(&self) -> Vec<(&'static str, &Path)> {
+        let mut environment = vec![
+            ("_JEFFD_TEST_EGRESS_ARM", self.arm_path.as_path()),
+            ("_JEFFD_TEST_EGRESS_READY", self.ready_path.as_path()),
+            ("_JEFFD_TEST_EGRESS_RELEASE", self.release_path.as_path()),
+        ];
+        if cfg!(target_os = "macos") {
+            environment.push(("DYLD_INSERT_LIBRARIES", self.library.as_path()));
+            environment.push(("DYLD_FORCE_FLAT_NAMESPACE", Path::new("1")));
+        } else {
+            environment.push(("LD_PRELOAD", self.library.as_path()));
+        }
+        environment
+    }
+
+    fn arm(&self) {
+        fs::write(&self.arm_path, b"armed").expect("arm egress write barrier");
+    }
+
+    fn wait(&self) {
+        assert_eq!(
+            self.ready
+                .recv_timeout(Duration::from_secs(10))
+                .expect("daemon reaches the blocked egress write"),
+            "run\n"
+        );
+    }
+
+    fn release(&mut self) {
+        self.release
+            .write_all(b"x")
+            .expect("release blocked egress write");
+        self.release.flush().expect("flush egress write release");
+    }
+}
+
+const EGRESS_WRITE_INTERPOSER: &str = r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static int blocked = 0;
+
+static ssize_t next_write(int descriptor, const void *buffer, size_t count) {
+#ifdef __APPLE__
+    return (ssize_t)syscall(SYS_write, descriptor, buffer, count);
+#else
+    ssize_t (*next)(int, const void *, size_t) = dlsym(RTLD_NEXT, "write");
+    return next(descriptor, buffer, count);
+#endif
+}
+
+static ssize_t next_send(int descriptor, const void *buffer, size_t count, int flags) {
+#ifdef __APPLE__
+    return (ssize_t)syscall(SYS_sendto, descriptor, buffer, count, flags, NULL, 0);
+#else
+    ssize_t (*next)(int, const void *, size_t, int) = dlsym(RTLD_NEXT, "send");
+    return next(descriptor, buffer, count, flags);
+#endif
+}
+
+static void block_socket_write(int descriptor) {
+    const char *arm = getenv("_JEFFD_TEST_EGRESS_ARM");
+    const char *ready = getenv("_JEFFD_TEST_EGRESS_READY");
+    const char *release = getenv("_JEFFD_TEST_EGRESS_RELEASE");
+    int socket_type = 0;
+    socklen_t socket_type_size = sizeof(socket_type);
+    if (arm == NULL || ready == NULL || release == NULL
+        || access(arm, F_OK) != 0
+        || getsockopt(descriptor, SOL_SOCKET, SO_TYPE, &socket_type, &socket_type_size) != 0
+        || !__sync_bool_compare_and_swap(&blocked, 0, 1)) {
+        return;
+    }
+    int ready_fd = open(ready, O_WRONLY);
+    if (ready_fd >= 0) {
+        next_write(ready_fd, "run\n", 4);
+        close(ready_fd);
+    }
+    int release_fd = open(release, O_RDONLY);
+    if (release_fd >= 0) {
+        char byte;
+        read(release_fd, &byte, 1);
+        close(release_fd);
+    }
+}
+
+static ssize_t hook_write(int descriptor, const void *buffer, size_t count) {
+    block_socket_write(descriptor);
+    return next_write(descriptor, buffer, count);
+}
+
+static ssize_t hook_send(int descriptor, const void *buffer, size_t count, int flags) {
+    block_socket_write(descriptor);
+    return next_send(descriptor, buffer, count, flags);
+}
+
+#ifdef __APPLE__
+#define DYLD_INTERPOSE(replacement, replacee) \
+    __attribute__((used)) static struct { const void *replacement; const void *replacee; } \
+    _interpose_##replacee __attribute__((section("__DATA,__interpose"))) = { \
+        (const void *)(unsigned long)&replacement, (const void *)(unsigned long)&replacee \
+    }
+DYLD_INTERPOSE(hook_write, write);
+DYLD_INTERPOSE(hook_send, send);
+#else
+ssize_t write(int descriptor, const void *buffer, size_t count) {
+    return hook_write(descriptor, buffer, count);
+}
+
+ssize_t send(int descriptor, const void *buffer, size_t count, int flags) {
+    return hook_send(descriptor, buffer, count, flags);
+}
+#endif
+"#;
 
 fn raw_recv(reader: &mut BufReader<UnixStream>) -> Value {
     let mut line = String::new();
@@ -1508,7 +1792,7 @@ fn review_contract_disconnect_drops_subscription_ownership_before_later_events()
 }
 
 #[test]
-fn second_recovery_contract_invalid_reload_and_a_b_a_epochs_preserve_only_current_state() {
+fn cycle_one_contract_invalid_reload_preserves_state_while_invalid_is_installed() {
     let mut fixture = Fixture::new(true);
     let root = fixture.home.parent().expect("fixture root").to_path_buf();
     let generation_cook = root.join("generation-cook");
@@ -1608,12 +1892,13 @@ exit 0
         let bytes = daemon_stderr
             .read_line(&mut line)
             .expect("read daemon registry diagnostic");
-        assert_ne!(bytes, 0, "daemon stderr closed before registry rejection");
+        if bytes == 0 {
+            break;
+        }
         if line.contains("registry reload ignored") {
             reload_tx
                 .send(())
                 .expect("signal invalid registry rejection");
-            break;
         }
     });
     fs::write(fixture.registry_path(), b"{invalid runtime registry")
@@ -1621,9 +1906,6 @@ exit 0
     reload_rx
         .recv_timeout(Duration::from_secs(10))
         .expect("daemon rejects the invalid regular registry");
-    reload_reader
-        .join()
-        .expect("join registry diagnostic reader");
     retained_client.send(&json!({
         "v": 1,
         "kind": "req",
@@ -1631,7 +1913,6 @@ exit 0
         "method": "project.list",
         "params": {}
     }));
-    fixture.write_registry(registry_a.clone());
 
     let listed = retained_client.recv_until(|frame| frame["id"] == "list-after-invalid");
     let rows = assert_ok(&listed)["projects"]
@@ -1671,6 +1952,12 @@ exit 0
         retained_replacement["payload"]["snapshot"]["tasks"][0]["title"],
         "after invalid reload"
     );
+    let status_while_invalid = fixture.run(&["status"]);
+    assert!(
+        status_while_invalid.status.success(),
+        "status remains responsive while invalid registry content is installed: {status_while_invalid:?}"
+    );
+    fixture.write_registry(registry_a.clone());
 
     let mut obsolete_client = fixture.client();
     obsolete_client.send(&json!({
@@ -1708,7 +1995,17 @@ exit 0
         .lines()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-    assert!(fixture.stop_and_wait().status.success());
+    while reload_rx.try_recv().is_ok() {}
+    fs::write(fixture.registry_path(), b"{invalid before shutdown")
+        .expect("install invalid regular registry before shutdown");
+    reload_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("daemon observes invalid registry before shutdown");
+    let stop = fixture.stop_and_wait();
+    reload_reader
+        .join()
+        .expect("join registry diagnostic reader");
+    assert!(stop.status.success());
 
     assert_eq!(current_title, "fresh generation");
     assert_eq!(
@@ -2054,6 +2351,242 @@ fn council_recovery_contract_maximum_legal_request_cannot_expand_outbound() {
 }
 
 #[test]
+fn cycle_one_contract_oversized_snapshot_response_closes_only_the_offender() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.set_snapshot("2026-08-11T03:00:00Z", &"x".repeat(MAX_FRAME_BYTES));
+    fixture.start();
+
+    let mut offender = fixture.client();
+    offender.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "short-safe-id",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    assert_eq!(
+        offender.read_one_byte(),
+        0,
+        "an oversized result reached from a safe short id must emit no partial frame"
+    );
+    let mut healthy = fixture.client();
+    let hello = healthy.request("healthy", "server.hello", json!({}));
+    assert_eq!(assert_ok(&hello)["protocolVersion"], 1);
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn cycle_one_contract_ingress_full_shutdown_cannot_block_reader_join() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.set_snapshot("2026-08-11T03:01:00Z", &"\n".repeat(MAX_FRAME_BYTES / 2));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("ingress=4,in_flight=32,egress_frames=32,egress_bytes=67108864"),
+    )]);
+
+    let mut warm = fixture.client();
+    warm.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "warm-escaped-cache",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    warm.read_eof();
+
+    let mut saturated = bounded_raw_client(&fixture.socket);
+    raw_send_request_burst(
+        &mut saturated,
+        8,
+        "snapshot.get",
+        &json!({"projectId": "project-a"}),
+    );
+    assert_eq!(
+        raw_read_to_eof(&mut saturated, 1),
+        0,
+        "the full ingress reader closes before its termination notification"
+    );
+    fixture.signal(libc::SIGTERM);
+    fixture.wait_for_exit();
+    assert!(!fixture.socket.exists());
+}
+
+#[test]
+fn cycle_one_contract_ingress_full_closes_only_the_offender() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.set_snapshot("2026-08-11T03:02:00Z", &"x".repeat(MAX_FRAME_BYTES / 4));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("ingress=4,in_flight=16,egress_frames=32,egress_bytes=67108864"),
+    )]);
+    let mut warm = fixture.client();
+    let subscribed = warm.request(
+        "warm-sub",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    assert!(assert_ok(&subscribed)["subscriptionId"].is_string());
+
+    let mut offender = bounded_raw_client(&fixture.socket);
+    raw_send_request_burst(
+        &mut offender,
+        8,
+        "snapshot.get",
+        &json!({"projectId": "project-a"}),
+    );
+    raw_read_to_eof(&mut offender, 16 * 1024 * 1024);
+    fixture.set_snapshot("2026-08-11T03:02:01Z", "healthy after ingress saturation");
+    fixture.touch_project(&fixture.project, "after-ingress-saturation");
+    let replaced = warm.recv_until(|frame| frame["name"] == "snapshot.replaced");
+    assert_eq!(
+        replaced["payload"]["snapshot"]["tasks"][0]["title"],
+        "healthy after ingress saturation"
+    );
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn cycle_one_contract_in_flight_full_closes_only_the_offender() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.set_snapshot("2026-08-11T03:03:00Z", &"x".repeat(MAX_FRAME_BYTES / 4));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("ingress=16,in_flight=1,egress_frames=32,egress_bytes=67108864"),
+    )]);
+    let mut warm = fixture.client();
+    let warmed = warm.request("warm", "snapshot.get", json!({"projectId": "project-a"}));
+    assert_eq!(
+        assert_ok(&warmed)["tasks"][0]["title"]
+            .as_str()
+            .unwrap()
+            .len(),
+        MAX_FRAME_BYTES / 4
+    );
+
+    let mut offender = bounded_raw_client(&fixture.socket);
+    raw_send_request_burst(
+        &mut offender,
+        4,
+        "snapshot.get",
+        &json!({"projectId": "project-a"}),
+    );
+    raw_read_to_eof(&mut offender, 16 * 1024 * 1024);
+    let mut healthy = fixture.client();
+    let hello = healthy.request("healthy", "server.hello", json!({}));
+    assert_eq!(assert_ok(&hello)["protocolVersion"], 1);
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn cycle_one_contract_egress_frame_full_closes_only_the_offender() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut barrier = EgressWriteBarrier::new(&root);
+    let mut environment = barrier.environment();
+    environment.push((
+        "_JEFFD_TEST_LIMITS",
+        Path::new("ingress=16,in_flight=16,egress_frames=1,egress_bytes=8388608"),
+    ));
+    fixture.start_with_env(&environment);
+    drop(environment);
+
+    let mut offender = bounded_raw_client(&fixture.socket);
+    barrier.arm();
+    raw_send(
+        &mut offender,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": "blocked-frame",
+            "method": "snapshot.get",
+            "params": {"projectId": "project-a"}
+        }),
+    );
+    barrier.wait();
+    raw_send_request_burst(
+        &mut offender,
+        2,
+        "snapshot.get",
+        &json!({"projectId": "project-a"}),
+    );
+
+    assert_eq!(
+        raw_read_to_eof(&mut offender, 1),
+        0,
+        "the frame beyond the single queued slot closes only its connection"
+    );
+    barrier.release();
+    let mut healthy = fixture.client();
+    let hello = healthy.request("healthy", "server.hello", json!({}));
+    assert_eq!(assert_ok(&hello)["protocolVersion"], 1);
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn cycle_one_contract_global_egress_bytes_close_only_the_offender() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.set_snapshot("2026-08-11T03:05:00Z", &"x".repeat(MAX_FRAME_BYTES / 4));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut gates = FifoPair::new(&root);
+    fixture.start_with_env(&[
+        ("FAKE_READY_FIFO", &gates.ready_path),
+        ("FAKE_RELEASE_FIFO", &gates.release_path),
+        (
+            "_JEFFD_TEST_LIMITS",
+            Path::new("ingress=16,in_flight=16,egress_frames=4,egress_bytes=6291456"),
+        ),
+    ]);
+
+    let mut holder = bounded_raw_client(&fixture.socket);
+    shrink_receive_buffer(&holder);
+    raw_send(
+        &mut holder,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": "global-holder",
+            "method": "snapshot.get",
+            "params": {"projectId": "project-a"}
+        }),
+    );
+    gates.wait_for_run();
+    gates.release();
+    let mut first_byte = [0_u8; 1];
+    holder
+        .read_exact(&mut first_byte)
+        .expect("holder starts one globally accounted frame");
+
+    let mut offender = bounded_raw_client(&fixture.socket);
+    shrink_receive_buffer(&offender);
+    raw_send(
+        &mut offender,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": "global-overflow",
+            "method": "snapshot.get",
+            "params": {"projectId": "project-a"}
+        }),
+    );
+    assert_eq!(
+        raw_read_to_eof(&mut offender, 1),
+        0,
+        "aggregate bytes reject the second connection before any frame is written"
+    );
+    let mut healthy = fixture.client();
+    let hello = healthy.request("healthy", "server.hello", json!({}));
+    assert_eq!(assert_ok(&hello)["protocolVersion"], 1);
+    drop(holder);
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
 fn council_recovery_contract_connection_and_retained_buffer_caps_preserve_progress() {
     let mut fixture = Fixture::new(true);
     fixture.write_registry(json!([]));
@@ -2095,7 +2628,7 @@ fn council_recovery_contract_connection_and_retained_buffer_caps_preserve_progre
 }
 
 #[test]
-fn council_recovery_contract_inflight_and_waiter_caps_close_only_the_offender() {
+fn cycle_one_contract_cold_waiter_full_closes_only_the_offender() {
     let mut fixture = Fixture::new(true);
     fixture.write_registry(json!([fixture.default_record()]));
     let root = fixture.home.parent().expect("fixture root").to_path_buf();
@@ -2105,7 +2638,7 @@ fn council_recovery_contract_inflight_and_waiter_caps_close_only_the_offender() 
         ("FAKE_RELEASE_FIFO", &gates.release_path),
         (
             "_JEFFD_TEST_LIMITS",
-            Path::new("ingress=2,in_flight=2,cold_waiters=2"),
+            Path::new("ingress=16,in_flight=16,cold_waiters=2"),
         ),
     ]);
     let mut offender = fixture.client();
@@ -2131,8 +2664,7 @@ fn council_recovery_contract_inflight_and_waiter_caps_close_only_the_offender() 
         "method": "server.hello",
         "params": {}
     }));
-    let accepted = offender.recv();
-    assert_eq!(accepted["id"], "accepted-two");
+    let accepted = offender.recv_until(|frame| frame["id"] == "accepted-two");
     assert_eq!(assert_ok(&accepted)["protocolVersion"], 1);
     offender.send(&json!({
         "v": 1,
@@ -2150,19 +2682,19 @@ fn council_recovery_contract_inflight_and_waiter_caps_close_only_the_offender() 
 
     assert_eq!(
         offender_bytes, 0,
-        "the request beyond the ingress, in-flight, and waiter caps must close its connection"
+        "the request beyond the cold-waiter cap must close its connection"
     );
     assert_eq!(assert_ok(&healthy_hello)["protocolVersion"], 1);
     assert!(stop.status.success());
 }
 
 #[test]
-fn council_recovery_contract_egress_byte_budget_closes_only_the_offender() {
+fn cycle_one_contract_per_connection_egress_bytes_close_only_the_offender() {
     let mut fixture = Fixture::new(true);
     fixture.write_registry(json!([fixture.default_record()]));
     fixture.start_with_env(&[(
         "_JEFFD_TEST_LIMITS",
-        Path::new("egress_frames=1,egress_bytes=256"),
+        Path::new("egress_frames=4,egress_bytes=256"),
     )]);
     let mut offender = fixture.client();
     offender.send(&json!({
@@ -2179,7 +2711,7 @@ fn council_recovery_contract_egress_byte_budget_closes_only_the_offender() {
 
     assert_eq!(
         offender_bytes, 0,
-        "a response beyond the injected outstanding-byte budget must close its connection"
+        "a response beyond the per-connection byte budget must close its connection"
     );
     assert_eq!(assert_ok(&healthy_hello)["protocolVersion"], 1);
     assert!(stop.status.success());
