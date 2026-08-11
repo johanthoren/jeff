@@ -477,6 +477,119 @@ fn cycle_one_contract_shutdown_ends_only_established_subscriptions_before_eof() 
     assert!(!fixture.socket.exists());
 }
 
+#[test]
+fn cycle_one_contract_shutdown_reserves_terminal_capacity_for_accepted_cold_requests() {
+    let mut fixture = Fixture::new(true);
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let project_c = root.join("project-c");
+    fs::create_dir_all(project_c.join(".jeff")).expect("create third project fixture");
+    fixture.write_registry(json!([
+        fixture.default_record(),
+        fixture.path_cook_record(),
+        {
+            "id": "project-c",
+            "path": project_c,
+            "name": "Project C",
+            "enabled": true,
+            "cook": [fixture.fake_cook, "--fixture"]
+        }
+    ]));
+    let mut gates = FifoPair::new(&root);
+    let mut barrier = EgressWriteBarrier::new(&root);
+    let mut environment = barrier.environment();
+    environment.extend([
+        ("FAKE_READY_FIFO", gates.ready_path.as_path()),
+        ("FAKE_RELEASE_FIFO", gates.release_path.as_path()),
+        (
+            "_JEFFD_TEST_LIMITS",
+            Path::new("ingress=16,in_flight=16,egress_frames=1,egress_bytes=8388608"),
+        ),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+
+    let mut observer = fixture.client();
+    observer.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "established-sub",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-a"}
+    }));
+    gates.wait_for_run();
+    gates.release();
+    let established = observer.recv_until(|frame| frame["id"] == "established-sub");
+    let established_subscription_id = assert_ok(&established)["subscriptionId"]
+        .as_str()
+        .expect("successful subscribe returns an id")
+        .to_owned();
+
+    let mut client = fixture.client();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "accepted-cold-b",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-b"}
+    }));
+    gates.wait_for_run();
+
+    barrier.arm();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "blocked-ordinary",
+        "method": "server.hello",
+        "params": {}
+    }));
+    barrier.wait();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "queued-ordinary",
+        "method": "server.hello",
+        "params": {}
+    }));
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "accepted-cold-c",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-c"}
+    }));
+    gates.wait_for_run();
+
+    let stop = fixture.run(&["stop"]);
+    assert!(stop.status.success(), "stop failed: {stop:?}");
+    let ended = observer.recv_until(|frame| frame["name"] == "subscription.ended");
+    assert_eq!(
+        ended["payload"],
+        json!({
+            "subscriptionId": established_subscription_id,
+            "reason": "shutdown"
+        }),
+        "the established-subscription event is the shutdown admission barrier"
+    );
+    barrier.release();
+    let frames = client.recv_all_until_eof(8);
+    fixture.wait_for_exit();
+
+    for request_id in ["accepted-cold-b", "accepted-cold-c"] {
+        let terminal = frames
+            .iter()
+            .filter(|frame| frame["kind"] == "res" && frame["id"] == request_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal.len(),
+            1,
+            "accepted {request_id} must receive exactly one terminal response through EOF: {frames:?}"
+        );
+        assert_eq!(terminal[0]["ok"], false);
+        assert_eq!(terminal[0]["error"]["code"], "unavailable");
+    }
+    assert!(!fixture.socket.exists());
+}
+
 struct RaceGate {
     ready_path: PathBuf,
     release_path: PathBuf,
@@ -2408,6 +2521,47 @@ fn cycle_one_contract_ingress_full_shutdown_cannot_block_reader_join() {
         0,
         "the full ingress reader closes before its termination notification"
     );
+    fixture.signal(libc::SIGTERM);
+    fixture.wait_for_exit();
+    assert!(!fixture.socket.exists());
+}
+
+#[test]
+fn cycle_one_contract_oversized_input_shutdown_cannot_block_reader_join() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.set_snapshot("2026-08-11T03:01:30Z", &"\n".repeat(MAX_FRAME_BYTES / 2));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("ingress=64,in_flight=256,egress_frames=32,egress_bytes=67108864"),
+    )]);
+
+    let mut warm = fixture.client();
+    warm.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "warm-oversized-cache",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    warm.read_eof();
+
+    let mut owner_filler = bounded_raw_client(&fixture.socket);
+    raw_send_request_burst(
+        &mut owner_filler,
+        128,
+        "snapshot.get",
+        &json!({"projectId": "project-a"}),
+    );
+
+    let mut oversized = bounded_raw_client(&fixture.socket);
+    let mut frame = br#"{"v":1,"kind":"req","id":"oversized-input","#.to_vec();
+    frame.resize(MAX_FRAME_BYTES + 1, b'x');
+    oversized
+        .write_all(&frame)
+        .expect("write the over-limit input frame");
+    oversized.flush().expect("flush the over-limit input frame");
+
     fixture.signal(libc::SIGTERM);
     fixture.wait_for_exit();
     assert!(!fixture.socket.exists());

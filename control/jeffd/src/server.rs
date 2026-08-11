@@ -29,7 +29,7 @@ pub(crate) struct Limits {
     pub(crate) frame_bytes: usize,
     ingress: usize,
     pub(crate) in_flight: usize,
-    cold_waiters: usize,
+    pub(crate) cold_waiters: usize,
     pub(crate) egress_frames: usize,
     pub(crate) egress_bytes: usize,
     pub(crate) global_egress_bytes: usize,
@@ -103,6 +103,7 @@ struct Connection {
     writer_handle: thread::JoinHandle<()>,
     subscriptions: HashSet<String>,
     writer_bytes: Arc<AtomicUsize>,
+    writer_frames: Arc<AtomicUsize>,
     closed: Arc<AtomicBool>,
 }
 
@@ -270,6 +271,7 @@ impl Server {
             reader_handle,
             writer_handle,
             writer_bytes,
+            writer_frames,
             closed,
         } = spawn_connection(id, stream, self.limits, self.messages_tx.clone())?;
         self.connections.insert(
@@ -281,6 +283,7 @@ impl Server {
                 writer_handle,
                 subscriptions: HashSet::new(),
                 writer_bytes,
+                writer_frames,
                 closed,
             },
         );
@@ -326,7 +329,7 @@ impl Server {
         let waiters = std::mem::take(&mut self.waiters);
         self.waiter_count = 0;
         for waiter in waiters.into_values().flatten() {
-            self.send_error(
+            self.send_shutdown_error(
                 waiter.connection,
                 &waiter.request_id,
                 "unavailable",

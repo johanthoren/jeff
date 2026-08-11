@@ -39,14 +39,38 @@ pub struct OutboundFrame {
     pub bytes: Vec<u8>,
     connection_bytes: Arc<AtomicUsize>,
     global_bytes: Arc<AtomicUsize>,
+    writer_frames: Option<Arc<AtomicUsize>>,
 }
 
 impl Drop for OutboundFrame {
     fn drop(&mut self) {
+        if let Some(writer_frames) = self.writer_frames.take() {
+            writer_frames.fetch_sub(1, Ordering::AcqRel);
+        }
         self.connection_bytes
             .fetch_sub(self.bytes.len(), Ordering::AcqRel);
         self.global_bytes
             .fetch_sub(self.bytes.len(), Ordering::AcqRel);
+    }
+}
+
+impl OutboundFrame {
+    pub(crate) fn reserve_writer_slot(
+        mut self,
+        writer_frames: Arc<AtomicUsize>,
+        limit: usize,
+    ) -> Option<Self> {
+        if !try_reserve(&writer_frames, 1, limit) {
+            return None;
+        }
+        self.writer_frames = Some(writer_frames);
+        Some(self)
+    }
+
+    fn begin_write(&mut self) {
+        if let Some(writer_frames) = self.writer_frames.take() {
+            writer_frames.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 
@@ -61,6 +85,7 @@ pub struct ConnectionParts {
     pub reader_handle: JoinHandle<()>,
     pub writer_handle: JoinHandle<()>,
     pub writer_bytes: Arc<AtomicUsize>,
+    pub writer_frames: Arc<AtomicUsize>,
     pub closed: Arc<AtomicBool>,
 }
 
@@ -74,8 +99,13 @@ pub fn spawn_connection(
     let writer_stream = stream.try_clone()?;
     let pending = Arc::new(AtomicUsize::new(0));
     let writer_bytes = Arc::new(AtomicUsize::new(0));
+    let writer_frames = Arc::new(AtomicUsize::new(0));
     let closed = Arc::new(AtomicBool::new(false));
-    let (writer, writer_rx) = mpsc::sync_channel(limits.egress_frames);
+    let writer_capacity = limits
+        .egress_frames
+        .saturating_add(limits.cold_waiters)
+        .saturating_add(1);
+    let (writer, writer_rx) = mpsc::sync_channel(writer_capacity);
     let writer_handle = thread::spawn(move || write_frames(writer_stream, writer_rx));
     let reader_pending = pending.clone();
     let reader_closed = closed.clone();
@@ -88,6 +118,7 @@ pub fn spawn_connection(
         reader_handle,
         writer_handle,
         writer_bytes,
+        writer_frames,
         closed,
     })
 }
@@ -114,7 +145,7 @@ fn read_frames(
                 if frame.len() + newline > limits.frame_bytes {
                     frame
                         .extend_from_slice(&rest[..limits.frame_bytes.saturating_sub(frame.len())]);
-                    report_oversized(id, &frame, &owner);
+                    report_oversized(id, &frame, &owner, &closed);
                     return;
                 }
                 frame.extend_from_slice(&rest[..newline]);
@@ -147,7 +178,7 @@ fn read_frames(
                 if frame.len() + rest.len() > limits.frame_bytes {
                     frame
                         .extend_from_slice(&rest[..limits.frame_bytes.saturating_sub(frame.len())]);
-                    report_oversized(id, &frame, &owner);
+                    report_oversized(id, &frame, &owner, &closed);
                     return;
                 }
                 frame.extend_from_slice(rest);
@@ -168,14 +199,28 @@ fn read_frames(
     }
 }
 
-fn report_oversized(id: ConnectionId, frame: &[u8], owner: &SyncSender<OwnerMessage>) {
+fn report_oversized(
+    id: ConnectionId,
+    frame: &[u8],
+    owner: &SyncSender<OwnerMessage>,
+    closed: &AtomicBool,
+) {
     let request_id = (top_level_string_field(frame, b"kind", 16).as_deref() == Some("req"))
         .then(|| top_level_string_field(frame, b"id", Limits::RESPONSE_ID_BYTES))
         .flatten();
-    let _ = owner.send(OwnerMessage::FrameTooLarge {
+    let mut oversized = OwnerMessage::FrameTooLarge {
         connection: id,
         request_id,
-    });
+    };
+    while !closed.load(Ordering::Acquire) {
+        match owner.try_send(oversized) {
+            Ok(()) | Err(TrySendError::Disconnected(_)) => break,
+            Err(TrySendError::Full(message)) => {
+                oversized = message;
+                thread::yield_now();
+            }
+        }
+    }
 }
 
 fn top_level_string_field(bytes: &[u8], wanted: &[u8], limit: usize) -> Option<String> {
@@ -269,6 +314,7 @@ pub fn reserve_outbound(
         bytes,
         connection_bytes,
         global_bytes,
+        writer_frames: None,
     })
 }
 
@@ -283,7 +329,8 @@ fn try_reserve(counter: &AtomicUsize, count: usize, limit: usize) -> bool {
 fn write_frames(mut stream: UnixStream, messages: Receiver<WriterMessage>) {
     for message in messages {
         match message {
-            WriterMessage::Frame(frame) => {
+            WriterMessage::Frame(mut frame) => {
+                frame.begin_write();
                 if stream.write_all(&frame.bytes).is_err()
                     || stream.write_all(b"\n").is_err()
                     || stream.flush().is_err()
