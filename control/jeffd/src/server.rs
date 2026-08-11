@@ -13,7 +13,7 @@ use crate::state::{DirtyTracker, ProjectCache};
 use jeff_project::ProjectRecord;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -37,10 +37,13 @@ pub(crate) struct Limits {
     pub(crate) connection_subscriptions: usize,
     global_subscriptions: usize,
     accepts_per_turn: usize,
+    active_snapshots: usize,
+    cache_bytes: usize,
 }
 
 impl Limits {
     pub(crate) const RESPONSE_ID_BYTES: usize = 4 * 1024;
+    pub(crate) const MAX_SERIALIZED_RESPONSE_ID_BYTES: usize = Self::RESPONSE_ID_BYTES * 6;
 
     fn new(frame_bytes: usize) -> Self {
         let mut limits = Self {
@@ -56,6 +59,8 @@ impl Limits {
             connection_subscriptions: 64,
             global_subscriptions: 512,
             accepts_per_turn: 64,
+            active_snapshots: 16,
+            cache_bytes: 256 * 1024 * 1024,
         };
         #[cfg(debug_assertions)]
         limits.apply_test_overrides();
@@ -93,6 +98,8 @@ impl Limits {
                 "connection_subscriptions" => self.connection_subscriptions = value,
                 "global_subscriptions" => self.global_subscriptions = value,
                 "accepts_per_turn" => self.accepts_per_turn = value,
+                "active_snapshots" => self.active_snapshots = value,
+                "cache_bytes" => self.cache_bytes = value,
                 _ => {}
             }
         }
@@ -209,6 +216,8 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         waiters: HashMap::new(),
         waiter_count: 0,
         active: HashMap::new(),
+        deferred_snapshots: VecDeque::new(),
+        retained_cache_bytes: 0,
         pending_watches: HashSet::new(),
         notify_overflow,
         watch_retry_due: None,
@@ -245,6 +254,8 @@ struct Server {
     waiters: HashMap<String, Vec<Waiter>>,
     waiter_count: usize,
     active: HashMap<String, ActiveSnapshot>,
+    deferred_snapshots: VecDeque<String>,
+    retained_cache_bytes: usize,
     pending_watches: HashSet<String>,
     notify_overflow: Arc<AtomicBool>,
     watch_retry_due: Option<Duration>,
@@ -368,7 +379,10 @@ impl Server {
                 }
                 self.close_connection(connection);
             }
-            OwnerMessage::SnapshotDone { run, result } => self.finish_snapshot(run, result),
+            OwnerMessage::SnapshotDone { run, result } => {
+                self.finish_snapshot(run, result);
+                self.launch_deferred_snapshots();
+            }
         }
     }
 

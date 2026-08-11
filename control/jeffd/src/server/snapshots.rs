@@ -1,8 +1,8 @@
-use super::{ActiveSnapshot, Server, WaitKind};
+use super::{ActiveSnapshot, Limits, Server, WaitKind};
 use crate::config::PROTOCOL_VERSION;
 use crate::protocol::{OwnerMessage, SnapshotRun};
 use crate::snapshot::{run_snapshot_with_cancel, SnapshotFailure};
-use crate::state::{ProjectCache, SNAPSHOT_STALE};
+use crate::state::{retained_projection_bytes, ProjectCache, SNAPSHOT_STALE};
 use jeff_project::{GraphProjection, ProjectRecord, Snapshot};
 use serde_json::json;
 use std::sync::atomic::AtomicBool;
@@ -11,23 +11,36 @@ use std::thread;
 
 impl Server {
     pub(super) fn start_snapshot(&mut self, project_id: &str) {
-        if self.active.contains_key(project_id) || !self.dirty.start_now(project_id) {
+        if self.active.contains_key(project_id)
+            || self.deferred_snapshots.iter().any(|queued| queued == project_id)
+            || !self.dirty.start_now(project_id)
+        {
             return;
         }
-        let Some(record) = self
-            .projects
-            .iter()
-            .find(|project| project.id == project_id && project.enabled)
-            .cloned()
-        else {
-            self.dirty.finished(project_id, self.now());
-            return;
-        };
-        self.launch_snapshot(record);
+        self.defer_snapshot(project_id.to_owned());
+        self.launch_deferred_snapshots();
     }
 
     pub(super) fn run_due_snapshots(&mut self) {
         for project_id in self.dirty.due(self.now()) {
+            if self.active.contains_key(&project_id)
+                || self
+                    .deferred_snapshots
+                    .iter()
+                    .any(|queued| queued == &project_id)
+            {
+                continue;
+            }
+            self.defer_snapshot(project_id);
+        }
+        self.launch_deferred_snapshots();
+    }
+
+    pub(super) fn launch_deferred_snapshots(&mut self) {
+        while self.active.len() < self.limits.active_snapshots {
+            let Some(project_id) = self.deferred_snapshots.pop_front() else {
+                break;
+            };
             if self.active.contains_key(&project_id) {
                 continue;
             }
@@ -42,6 +55,13 @@ impl Server {
             };
             self.launch_snapshot(record);
         }
+    }
+
+    fn defer_snapshot(&mut self, project_id: String) {
+        if self.active.len() >= self.limits.active_snapshots {
+            super::signal_test_fifo("_JEFFD_TEST_ACTIVE_SNAPSHOTS_SATURATED");
+        }
+        self.deferred_snapshots.push_back(project_id);
     }
 
     fn launch_snapshot(&mut self, record: ProjectRecord) {
@@ -62,10 +82,25 @@ impl Server {
         let sender = self.messages_tx.clone();
         let timeout = self.config.snapshot_timeout();
         let output_limit = self.limits.snapshot_bytes;
-        thread::spawn(move || {
-            let result = run_snapshot_with_cancel(&run.record, timeout, cancelled, output_limit);
-            let _ = sender.send(OwnerMessage::SnapshotDone { run, result });
-        });
+        let worker_run = run.clone();
+        if let Err(error) = thread::Builder::new()
+            .name("jeffd-snapshot-supervisor".to_owned())
+            .spawn(move || {
+                let result =
+                    run_snapshot_with_cancel(&worker_run.record, timeout, cancelled, output_limit);
+                let _ = sender.send(OwnerMessage::SnapshotDone {
+                    run: worker_run,
+                    result,
+                });
+            })
+        {
+            self.finish_snapshot(
+                run,
+                Err(SnapshotFailure::Launch(format!(
+                    "snapshot supervisor thread: {error}"
+                ))),
+            );
+        }
     }
 
     pub(super) fn finish_snapshot(
@@ -105,14 +140,32 @@ impl Server {
             return;
         }
         let retained_limit = self.limits.snapshot_bytes.min(self.limits.frame_bytes);
+        let old_retained_bytes = self
+            .caches
+            .get(&project_id)
+            .map_or(0, ProjectCache::retained_bytes);
         let result = result.and_then(|snapshot| {
-            if retained_snapshot_fits(&run.record, &snapshot, retained_limit) {
-                Ok(snapshot)
-            } else {
-                Err(SnapshotFailure::OutputTooLarge(format!(
+            if !retained_snapshot_fits(&run.record, &snapshot, retained_limit) {
+                return Err(SnapshotFailure::OutputTooLarge(format!(
                     "retained snapshot exceeds {retained_limit} bytes"
-                )))
+                )));
             }
+            let retained_bytes =
+                retained_projection_bytes(&run.record, &snapshot).ok_or_else(|| {
+                    SnapshotFailure::Output("cannot measure retained snapshot".to_owned())
+                })?;
+            let total_bytes = self
+                .retained_cache_bytes
+                .checked_sub(old_retained_bytes)
+                .and_then(|bytes| bytes.checked_add(retained_bytes))
+                .filter(|bytes| *bytes <= self.limits.cache_bytes)
+                .ok_or_else(|| {
+                    SnapshotFailure::CacheFull(format!(
+                        "aggregate retained cache exceeds {} bytes",
+                        self.limits.cache_bytes
+                    ))
+                })?;
+            Ok((snapshot, retained_bytes, total_bytes))
         });
 
         let had_good = self
@@ -121,15 +174,20 @@ impl Server {
             .and_then(ProjectCache::projection)
             .is_some();
         let output_too_large = matches!(&result, Err(SnapshotFailure::OutputTooLarge(_)));
+        if let Ok((_, _, total_bytes)) = &result {
+            self.retained_cache_bytes = *total_bytes;
+        }
         if let Some(cache) = self.caches.get_mut(&project_id) {
             match &result {
-                Ok(snapshot) => cache.replace(snapshot.clone()),
+                Ok((snapshot, retained_bytes, _)) => {
+                    cache.replace_accounted(snapshot.clone(), *retained_bytes)
+                }
                 Err(error) => cache.fail(error.to_string(), error.exit_code()),
             }
         }
         self.answer_waiters(&project_id, output_too_large);
         match result {
-            Ok(_) if had_good => {
+            Ok((_, _, _)) if had_good => {
                 if let Some(projection) = self
                     .caches
                     .get(&project_id)
@@ -142,7 +200,7 @@ impl Server {
                     );
                 }
             }
-            Ok(_) => {}
+            Ok((_, _, _)) => {}
             Err(error) if had_good => self.send_project_event(
                 &project_id,
                 "snapshot.failed",
@@ -223,13 +281,18 @@ fn retained_snapshot_fits(record: &ProjectRecord, snapshot: &Snapshot, limit: us
         degraded: vec![SNAPSHOT_STALE.to_owned()],
     };
     let fits = |frame| super::client::serialize_bounded(&frame, limit).is_some();
-    fits(json!({
+    let response_limit = limit
+        .checked_sub(Limits::MAX_SERIALIZED_RESPONSE_ID_BYTES)
+        .unwrap_or(limit);
+    let response_fits =
+        |frame| super::client::serialize_bounded(&frame, response_limit).is_some();
+    response_fits(json!({
         "v": PROTOCOL_VERSION,
         "kind": "res",
         "id": "",
         "ok": true,
         "result": &projection
-    })) && fits(json!({
+    })) && response_fits(json!({
         "v": PROTOCOL_VERSION,
         "kind": "res",
         "id": "",

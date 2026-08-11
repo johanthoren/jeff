@@ -1,5 +1,6 @@
 use jeff_project::{GraphProjection, ProjectRecord, Snapshot};
 use std::collections::BTreeMap;
+use std::io::{self, Write};
 use std::time::Duration;
 
 pub(crate) const SNAPSHOT_STALE: &str = "snapshot_stale";
@@ -16,6 +17,7 @@ pub struct ProjectCache {
     projection: Option<GraphProjection>,
     last_error: Option<CacheFailure>,
     last_successful_generation: Option<String>,
+    retained_bytes: usize,
 }
 
 impl ProjectCache {
@@ -25,6 +27,7 @@ impl ProjectCache {
             projection: None,
             last_error: None,
             last_successful_generation: None,
+            retained_bytes: 0,
         }
     }
 
@@ -37,6 +40,12 @@ impl ProjectCache {
     }
 
     pub fn replace(&mut self, snapshot: Snapshot) {
+        let retained_bytes =
+            retained_projection_bytes(&self.record, &snapshot).unwrap_or(usize::MAX);
+        self.replace_accounted(snapshot, retained_bytes);
+    }
+
+    pub(crate) fn replace_accounted(&mut self, snapshot: Snapshot, retained_bytes: usize) {
         self.last_successful_generation = Some(snapshot.generated_at.clone());
         self.projection = Some(GraphProjection {
             project_id: self.record.id.clone(),
@@ -45,6 +54,7 @@ impl ProjectCache {
             degraded: Vec::new(),
         });
         self.last_error = None;
+        self.retained_bytes = retained_bytes;
     }
 
     pub fn fail(&mut self, message: String, exit_code: Option<i32>) {
@@ -61,9 +71,43 @@ impl ProjectCache {
     pub fn last_error(&self) -> Option<&CacheFailure> {
         self.last_error.as_ref()
     }
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.retained_bytes
+    }
 
     pub fn last_successful_generation(&self) -> Option<&str> {
         self.last_successful_generation.as_deref()
+    }
+}
+
+pub(crate) fn retained_projection_bytes(
+    record: &ProjectRecord,
+    snapshot: &Snapshot,
+) -> Option<usize> {
+    let projection = GraphProjection {
+        project_id: record.id.clone(),
+        path: record.path.clone(),
+        snapshot: snapshot.clone(),
+        degraded: vec![SNAPSHOT_STALE.to_owned()],
+    };
+    let mut output = ByteCounter(0);
+    serde_json::to_writer(&mut output, &projection).ok()?;
+    Some(output.0)
+}
+
+struct ByteCounter(usize);
+
+impl Write for ByteCounter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len())
+            .ok_or_else(|| io::Error::other("serialized projection length overflow"))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 

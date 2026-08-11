@@ -130,6 +130,7 @@ impl Server {
             .collect();
 
         let mut watch_retried = HashSet::new();
+        let mut restart_deferred = Vec::new();
         for previous in old.values() {
             let changed = new.get(&previous.id);
             if previous.enabled
@@ -192,10 +193,18 @@ impl Server {
                     cache.update_record(record.clone());
                 }
             } else if let Some(record) = next {
-                self.caches
-                    .insert(id.clone(), ProjectCache::new(record.clone()));
-            } else {
-                self.caches.remove(&id);
+                if let Some(cache) = self
+                    .caches
+                    .insert(id.clone(), ProjectCache::new(record.clone()))
+                {
+                    self.retained_cache_bytes = self
+                        .retained_cache_bytes
+                        .saturating_sub(cache.retained_bytes());
+                }
+            } else if let Some(cache) = self.caches.remove(&id) {
+                self.retained_cache_bytes = self
+                    .retained_cache_bytes
+                    .saturating_sub(cache.retained_bytes());
             }
             let ends_subscription = match (previous, next) {
                 (Some(a), Some(b)) => a.path != b.path || (a.enabled && !b.enabled),
@@ -204,10 +213,25 @@ impl Server {
             };
             if ends_subscription {
                 self.end_project_subscriptions(&id, "project_removed");
+                let was_deferred = self
+                    .deferred_snapshots
+                    .iter()
+                    .any(|project_id| project_id == &id);
+                self.deferred_snapshots
+                    .retain(|project_id| project_id != &id);
                 if let Some(active) = self.active.get(&id) {
                     active.cancelled.store(true, Ordering::Release);
                 }
                 self.dirty.remove(&id);
+                if was_deferred
+                    && next.is_some_and(|record| record.enabled)
+                    && self
+                        .waiters
+                        .get(&id)
+                        .is_some_and(|waiters| !waiters.is_empty())
+                {
+                    restart_deferred.push(id.clone());
+                }
             }
             let event_record = next.or(previous).expect("changed registry id exists");
             self.broadcast_event(
@@ -220,6 +244,9 @@ impl Server {
             );
         }
         self.projects = projects;
+        for project_id in restart_deferred {
+            self.start_snapshot(&project_id);
+        }
         self.watch_retry_due =
             (!self.pending_watches.is_empty()).then_some(self.now() + WATCH_RETRY_INTERVAL);
     }

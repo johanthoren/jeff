@@ -73,6 +73,8 @@ pub enum SnapshotFailure {
     InvalidInvocation(String),
     #[error("failed to start snapshot command: {0}")]
     Spawn(String),
+    #[error("failed to launch snapshot worker: {0}")]
+    Launch(String),
     #[error("snapshot command timed out")]
     Timeout,
     #[error("snapshot command cancelled")]
@@ -83,6 +85,8 @@ pub enum SnapshotFailure {
     Output(String),
     #[error("failed to read snapshot output: {0}")]
     OutputTooLarge(String),
+    #[error("retained snapshot cache is full: {0}")]
+    CacheFull(String),
 }
 
 impl SnapshotFailure {
@@ -143,12 +147,43 @@ pub(crate) fn run_snapshot_with_cancel(
     let stderr = child.stderr.take().expect("captured stderr");
     let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
     let (stderr_tx, stderr_rx) = mpsc::sync_channel(1);
-    thread::spawn(move || {
-        let _ = stdout_tx.send(read_bounded_output(stdout, output_limit));
-    });
-    thread::spawn(move || {
-        let _ = stderr_tx.send(read_bounded(stderr, STDERR_LIMIT));
-    });
+    let stdout_handle = if injected_thread_failure(&project.id, "stdout") {
+        Err(io::Error::other("injected stdout reader launch failure"))
+    } else {
+        thread::Builder::new()
+            .name("jeffd-snapshot-stdout".to_owned())
+            .spawn(move || {
+                let _ = stdout_tx.send(read_bounded_output(stdout, output_limit));
+            })
+    };
+    let stdout_handle = match stdout_handle {
+        Ok(handle) => handle,
+        Err(error) => {
+            terminate_group(process_group, &mut child);
+            return Err(SnapshotFailure::Launch(format!(
+                "stdout reader thread: {error}"
+            )));
+        }
+    };
+    let stderr_handle = if injected_thread_failure(&project.id, "stderr") {
+        Err(io::Error::other("injected stderr reader launch failure"))
+    } else {
+        thread::Builder::new()
+            .name("jeffd-snapshot-stderr".to_owned())
+            .spawn(move || {
+                let _ = stderr_tx.send(read_bounded(stderr, STDERR_LIMIT));
+            })
+    };
+    let stderr_handle = match stderr_handle {
+        Ok(handle) => handle,
+        Err(error) => {
+            terminate_group(process_group, &mut child);
+            let _ = stdout_handle.join();
+            return Err(SnapshotFailure::Launch(format!(
+                "stderr reader thread: {error}"
+            )));
+        }
+    };
     let result = (|| {
         let started = Instant::now();
         let mut status = None;
@@ -206,7 +241,20 @@ pub(crate) fn run_snapshot_with_cancel(
     if result.is_err() {
         terminate_group(process_group, &mut child);
     }
+    let _ = stdout_handle.join();
+    let _ = stderr_handle.join();
     result
+}
+
+#[cfg(debug_assertions)]
+fn injected_thread_failure(project_id: &str, reader: &str) -> bool {
+    std::env::var("_JEFFD_TEST_SNAPSHOT_THREAD_FAILURE")
+        .is_ok_and(|failure| failure == format!("{project_id}:{reader}"))
+}
+
+#[cfg(not(debug_assertions))]
+fn injected_thread_failure(_: &str, _: &str) -> bool {
+    false
 }
 
 fn terminate_group(process_group: i32, child: &mut std::process::Child) {
