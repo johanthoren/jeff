@@ -62,8 +62,7 @@ impl Server {
         let timeout = self.config.snapshot_timeout();
         let output_limit = self.limits.snapshot_bytes;
         thread::spawn(move || {
-            let result =
-                run_snapshot_with_cancel(&run.record, timeout, cancelled, output_limit);
+            let result = run_snapshot_with_cancel(&run.record, timeout, cancelled, output_limit);
             let _ = sender.send(OwnerMessage::SnapshotDone { run, result });
         });
     }

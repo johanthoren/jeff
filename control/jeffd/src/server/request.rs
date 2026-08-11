@@ -138,11 +138,8 @@ impl Server {
             .cloned();
         let subscription_id = format!("s-{}-{}", connection, self.next_subscription);
         self.next_subscription += 1;
-        if !self.try_register_subscription(
-            connection,
-            project_id.clone(),
-            subscription_id.clone(),
-        ) {
+        if !self.try_register_subscription(connection, project_id.clone(), subscription_id.clone())
+        {
             self.close_connection(connection);
             return;
         }

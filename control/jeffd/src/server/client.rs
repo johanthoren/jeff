@@ -14,9 +14,7 @@ impl Server {
         let connections: HashSet<_> = self
             .subscriptions
             .values()
-            .filter(|subscription| {
-                subscription.returned && subscription.project_id == project_id
-            })
+            .filter(|subscription| subscription.returned && subscription.project_id == project_id)
             .map(|subscription| subscription.connection)
             .collect();
         for connection in connections {

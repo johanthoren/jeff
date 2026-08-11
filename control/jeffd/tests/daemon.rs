@@ -3026,10 +3026,7 @@ impl RecoveryGate {
         [
             ("_JEFFD_TEST_OWNER_ARM", self.arm_path.as_path()),
             ("_JEFFD_TEST_OWNER_READY", self.ready_path.as_path()),
-            (
-                "_JEFFD_TEST_OWNER_RELEASE",
-                self.release_path.as_path(),
-            ),
+            ("_JEFFD_TEST_OWNER_RELEASE", self.release_path.as_path()),
         ]
     }
 
@@ -3247,20 +3244,14 @@ fn task_236_contract_terminal_capacity_survives_global_ordinary_bytes() {
 fn task_236_contract_snapshot_output_bound_retains_last_good_and_healthy_progress() {
     let mut fixture = Fixture::new(true);
     fixture.write_registry(json!([fixture.default_record()]));
-    fixture.start_with_env(&[(
-        "_JEFFD_TEST_LIMITS",
-        Path::new("snapshot_bytes=1024"),
-    )]);
+    fixture.start_with_env(&[("_JEFFD_TEST_LIMITS", Path::new("snapshot_bytes=1024"))]);
     let mut subscriber = fixture.client();
     let first = subscriber.request(
         "warm-sub",
         "snapshot.subscribe",
         json!({"projectId": "project-a"}),
     );
-    assert_eq!(
-        assert_ok(&first)["snapshot"]["tasks"][0]["title"],
-        "first"
-    );
+    assert_eq!(assert_ok(&first)["snapshot"]["tasks"][0]["title"], "first");
 
     fixture.set_snapshot("2026-08-11T10:00:00Z", &"x".repeat(2048));
     fixture.touch_project(&fixture.project, "oversized-snapshot");
@@ -3290,11 +3281,7 @@ fn task_236_contract_per_connection_subscription_limit_releases_on_unsubscribe()
         Path::new("connection_subscriptions=1,global_subscriptions=8"),
     )]);
     let mut client = fixture.client();
-    assert_ok(&client.request(
-        "warm",
-        "snapshot.get",
-        json!({"projectId": "project-a"}),
-    ));
+    assert_ok(&client.request("warm", "snapshot.get", json!({"projectId": "project-a"})));
     let first = client.request(
         "first-sub",
         "snapshot.subscribe",
@@ -3339,11 +3326,7 @@ fn task_236_contract_global_subscription_limit_releases_on_disconnect() {
         Path::new("connection_subscriptions=4,global_subscriptions=1"),
     )]);
     let mut warm = fixture.client();
-    assert_ok(&warm.request(
-        "warm",
-        "snapshot.get",
-        json!({"projectId": "project-a"}),
-    ));
+    assert_ok(&warm.request("warm", "snapshot.get", json!({"projectId": "project-a"})));
     let mut owner = bounded_raw_client(&fixture.socket);
     let mut owner_reader = BufReader::new(owner.try_clone().expect("clone subscription owner"));
     raw_send(
