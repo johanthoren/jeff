@@ -3573,6 +3573,541 @@ fn task_236_contract_watcher_callback_returns_while_owner_ingress_is_full() {
     assert!(!fixture.socket.exists());
 }
 
+#[test]
+fn task_236_replan_contract_wrapped_snapshot_overflow_retains_last_good_projection() {
+    const CEILING: usize = 1024;
+
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("frame_bytes=1024,snapshot_bytes=1024"),
+    )]);
+    let mut subscriber = fixture.client();
+    let first = subscriber.request(
+        "first-sub",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    assert_eq!(assert_ok(&first)["snapshot"]["tasks"][0]["title"], "first");
+
+    let title = "x".repeat(700);
+    let raw = support::snapshot("2026-08-12T10:00:00Z", &title);
+    assert!(
+        raw.len() <= CEILING,
+        "raw snapshot must causally fit its admission ceiling: {}",
+        raw.len()
+    );
+    let snapshot: Value = serde_json::from_str(&raw).expect("parse near-ceiling snapshot fixture");
+    let projection = json!({
+        "projectId": "project-a",
+        "path": fixture.project,
+        "schemaVersion": snapshot["schemaVersion"],
+        "generatedAt": snapshot["generatedAt"],
+        "mode": snapshot["mode"],
+        "tasks": snapshot["tasks"],
+        "degraded": []
+    });
+    let complete_response = json!({
+        "v": 1,
+        "kind": "res",
+        "id": "retained",
+        "ok": true,
+        "result": projection
+    });
+    assert!(
+        serde_json::to_vec(&complete_response)
+            .expect("serialize complete response fixture")
+            .len()
+            > CEILING,
+        "the admitted raw snapshot must grow beyond the complete response ceiling"
+    );
+
+    fixture.set_raw_snapshot(&raw);
+    fixture.touch_project(&fixture.project, "wrapped-overflow");
+    let failure = subscriber.recv_until(|frame| frame["name"] == "snapshot.failed");
+    assert_eq!(failure["payload"]["projectId"], "project-a");
+    let retained = subscriber.request(
+        "retained",
+        "snapshot.get",
+        json!({"projectId": "project-a"}),
+    );
+    assert_eq!(assert_ok(&retained)["tasks"][0]["title"], "first");
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_replan_contract_oversized_stdout_terminates_and_reaps_live_process_group() {
+    let root = tempfile::tempdir().expect("create oversized-child fixture");
+    let project = root.path().join("project");
+    fs::create_dir_all(project.join(".jeff")).expect("create oversized-child project");
+    let response = root.path().join("oversized.stdout");
+    fs::write(&response, vec![b'x'; MAX_FRAME_BYTES + 1])
+        .expect("write bounded oversized stdout fixture");
+    let pid_file = root.path().join("child.pid");
+    let script = root.path().join("oversized-live-child");
+    let mut gates = FifoPair::new(root.path());
+    write_executable(
+        &script,
+        r#"#!/bin/sh
+response=$1
+pid_file=$2
+ready=$3
+release=$4
+printf '%s\n' "$$" > "$pid_file"
+cat "$response"
+exec 1>&- 2>&-
+printf 'run\n' > "$ready"
+IFS= read -r _release < "$release"
+"#,
+    );
+    let record = ProjectRecord {
+        id: "project-a".to_owned(),
+        path: project,
+        name: "Project A".to_owned(),
+        enabled: true,
+        cook: Some(vec![
+            script.to_string_lossy().into_owned(),
+            response.to_string_lossy().into_owned(),
+            pid_file.to_string_lossy().into_owned(),
+            gates.ready_path.to_string_lossy().into_owned(),
+            gates.release_path.to_string_lossy().into_owned(),
+        ]),
+    };
+    let (result_tx, result_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        result_tx
+            .send(run_snapshot(&record, Duration::from_secs(5)))
+            .expect("send oversized-child result");
+    });
+    gates.wait_for_run();
+    let pid: i32 = fs::read_to_string(&pid_file)
+        .expect("read oversized child pid")
+        .trim()
+        .parse()
+        .expect("parse oversized child pid");
+    let result = result_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("oversized closed stdout returns before command timeout");
+    worker.join().expect("join oversized snapshot worker");
+    assert!(
+        matches!(result, Err(SnapshotFailure::OutputTooLarge(_))),
+        "oversized stdout must retain its specific failure: {result:?}"
+    );
+
+    let process_group_alive = unsafe { libc::kill(-pid, 0) } == 0;
+    gates.release();
+    if process_group_alive {
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid, &mut status, 0) },
+            pid,
+            "reap deliberately released oversized child"
+        );
+    }
+    assert!(
+        !process_group_alive,
+        "an oversized child that closed stdout must be terminated and reaped before failure returns"
+    );
+}
+
+#[test]
+fn task_236_replan_contract_pending_unsubscribe_cannot_return_an_unowned_subscription() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([
+        fixture.default_record(),
+        fixture.path_cook_record()
+    ]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut gates = FifoPair::new(&root);
+    fixture.start_with_env(&[
+        ("FAKE_READY_FIFO", gates.ready_path.as_path()),
+        ("FAKE_RELEASE_FIFO", gates.release_path.as_path()),
+    ]);
+    let mut client = fixture.client();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "prime",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    gates.wait_for_run();
+    gates.release();
+    assert_ok(&client.recv_until(|frame| frame["id"] == "prime"));
+    let returned = client.request(
+        "known-sub",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    let returned_id = assert_ok(&returned)["subscriptionId"]
+        .as_str()
+        .expect("known subscription id");
+    let (prefix, ordinal) = returned_id
+        .rsplit_once('-')
+        .expect("subscription id has an ordinal");
+    let pending_id = format!(
+        "{prefix}-{}",
+        ordinal
+            .parse::<u64>()
+            .expect("subscription ordinal is numeric")
+            + 1
+    );
+
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "pending-sub",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-b"}
+    }));
+    gates.wait_for_run();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "pending-unsubscribe",
+        "method": "snapshot.unsubscribe",
+        "params": {"subscriptionId": pending_id}
+    }));
+    let unsubscribe = client.recv_until(|frame| frame["id"] == "pending-unsubscribe");
+    gates.release();
+    let subscribe = client.recv_until(|frame| frame["id"] == "pending-sub");
+    assert!(
+        unsubscribe["ok"] != true || subscribe["ok"] != true,
+        "a successful pending unsubscribe and later successful subscribe would return an unowned stream: unsubscribe={unsubscribe}, subscribe={subscribe}"
+    );
+    if subscribe["ok"] == true {
+        assert_ok(&client.request(
+            "remove-returned",
+            "snapshot.unsubscribe",
+            json!({"subscriptionId": pending_id}),
+        ));
+    }
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_replan_contract_notify_full_coalesces_registry_replacement() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut owner_gate = RecoveryGate::new(&root, "notify-owner");
+    let mut callback_gate = RecoveryGate::new(&root, "notify-callback");
+    let mut full_gate = RecoveryGate::new(&root, "notify-registry-full");
+    let mut recovered_gate = RecoveryGate::new(&root, "notify-overflow-recovered");
+    let mut environment = owner_gate.environment().to_vec();
+    environment.extend([
+        (
+            "_JEFFD_TEST_NOTIFY_RETURNED",
+            callback_gate.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_NOTIFY_REGISTRY_FULL",
+            full_gate.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_NOTIFY_OVERFLOW_RECOVERED",
+            recovered_gate.ready_path.as_path(),
+        ),
+        ("_JEFFD_TEST_LIMITS", Path::new("ingress=1,in_flight=8")),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+    let mut client = fixture.client();
+    assert_ok(&client.request("accepted", "server.hello", json!({})));
+
+    owner_gate.arm();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "pause-owner",
+        "method": "server.hello",
+        "params": {}
+    }));
+    owner_gate.wait();
+    fixture.touch_project(&fixture.project, "fills-notify-ingress");
+    callback_gate.wait();
+    fixture.write_registry(json!([fixture.path_cook_record()]));
+    full_gate.wait();
+    owner_gate.release();
+    recovered_gate.wait();
+
+    let listed = client.request("replacement-list", "project.list", json!({}));
+    let projects = assert_ok(&listed)["projects"]
+        .as_array()
+        .expect("replacement project list");
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0]["id"], "project-b");
+    assert_eq!(projects[0]["path"], json!(fixture.other_project));
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_replan_contract_subscription_permits_reuse_after_cold_failure_and_replacement() {
+    {
+        let mut fixture = Fixture::new(true);
+        fixture.write_registry(json!([fixture.default_record()]));
+        fixture.set_failure(7, "cold failed");
+        fixture.start_with_env(&[(
+            "_JEFFD_TEST_LIMITS",
+            Path::new("connection_subscriptions=1,global_subscriptions=1"),
+        )]);
+        let mut client = fixture.client();
+        let failed = client.request(
+            "failed-cold-sub",
+            "snapshot.subscribe",
+            json!({"projectId": "project-a"}),
+        );
+        assert_eq!(failed["ok"], false);
+        assert_eq!(failed["error"]["code"], "unavailable");
+        fixture.set_snapshot("2026-08-12T11:00:00Z", "after failure");
+        let replacement = client.request(
+            "after-cold-failure",
+            "snapshot.subscribe",
+            json!({"projectId": "project-a"}),
+        );
+        assert!(
+            assert_ok(&replacement)["subscriptionId"].is_string(),
+            "cold failure must return both one-slot permits"
+        );
+        assert!(fixture.stop_and_wait().status.success());
+    }
+
+    {
+        let mut fixture = Fixture::new(true);
+        fixture.write_registry(json!([fixture.default_record()]));
+        let root = fixture.home.parent().expect("fixture root").to_path_buf();
+        let mut gates = FifoPair::new(&root);
+        fixture.start_with_env(&[
+            ("FAKE_READY_FIFO", gates.ready_path.as_path()),
+            ("FAKE_RELEASE_FIFO", gates.release_path.as_path()),
+            (
+                "_JEFFD_TEST_LIMITS",
+                Path::new("connection_subscriptions=1,global_subscriptions=1"),
+            ),
+        ]);
+        let mut client = fixture.client();
+        client.send(&json!({
+            "v": 1,
+            "kind": "req",
+            "id": "replaced-pending-sub",
+            "method": "snapshot.subscribe",
+            "params": {"projectId": "project-a"}
+        }));
+        gates.wait_for_run();
+        fixture.write_registry(json!([{
+            "id": "project-a",
+            "path": fixture.other_project,
+            "name": "Replacement",
+            "enabled": true,
+            "cook": [fixture.fake_cook, "--fixture"]
+        }]));
+        let mut saw_updated = false;
+        let mut saw_terminal = false;
+        while !saw_updated || !saw_terminal {
+            let frame = client.recv();
+            saw_updated |= frame["name"] == "project.updated";
+            saw_terminal |= frame["id"] == "replaced-pending-sub"
+                && frame["ok"] == false
+                && frame["error"]["code"] == "unavailable";
+        }
+        client.send(&json!({
+            "v": 1,
+            "kind": "req",
+            "id": "after-replacement",
+            "method": "snapshot.subscribe",
+            "params": {"projectId": "project-a"}
+        }));
+        gates.wait_for_run();
+        gates.release();
+        let replacement = client.recv_until(|frame| frame["id"] == "after-replacement");
+        assert!(
+            assert_ok(&replacement)["subscriptionId"].is_string(),
+            "registry replacement must return both one-slot permits"
+        );
+        assert!(fixture.stop_and_wait().status.success());
+    }
+}
+
+#[test]
+fn task_236_replan_contract_accept_budget_preserves_owner_progress_and_shutdown() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut owner_gate = RecoveryGate::new(&root, "accept-owner");
+    let mut yield_gate = RecoveryGate::new(&root, "accept-yield");
+    let mut environment = owner_gate.environment().to_vec();
+    environment.extend([
+        (
+            "_JEFFD_TEST_ACCEPT_YIELD_ARM",
+            yield_gate.arm_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_ACCEPT_YIELDED",
+            yield_gate.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_LIMITS",
+            Path::new("connections=2,ingress=8,in_flight=8,accepts_per_turn=1"),
+        ),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+    let mut owner = fixture.client();
+    assert_ok(&owner.request("accepted", "server.hello", json!({})));
+
+    owner_gate.arm();
+    owner.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "pause-before-backlog",
+        "method": "server.hello",
+        "params": {}
+    }));
+    owner_gate.wait();
+    let queued = (0..4)
+        .map(|_| UnixStream::connect(&fixture.socket).expect("queue accepted socket backlog"))
+        .collect::<Vec<_>>();
+    owner.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "owner-progress",
+        "method": "server.hello",
+        "params": {}
+    }));
+    yield_gate.arm();
+    owner_gate.release();
+    yield_gate.wait();
+    assert_eq!(
+        assert_ok(&owner.recv_until(|frame| frame["id"] == "owner-progress"))["protocolVersion"],
+        1
+    );
+    fixture.signal(libc::SIGTERM);
+    fixture.wait_for_exit();
+    assert!(!fixture.socket.exists());
+    drop(queued);
+}
+
+fn bounded_start_outcome(fixture: &Fixture) -> (bool, std::process::Output) {
+    let mut command = fixture.command();
+    let child = command
+        .arg("start")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn unsafe-registry daemon");
+    let pid = child.id() as i32;
+    let (result_tx, result_rx) = mpsc::channel();
+    thread::spawn(move || {
+        result_tx
+            .send(child.wait_with_output())
+            .expect("send unsafe-registry start result");
+    });
+    match result_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(result) => (true, result.expect("wait for rejected unsafe registry")),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            assert_eq!(
+                unsafe { libc::kill(pid, libc::SIGKILL) },
+                0,
+                "kill daemon that failed to reject unsafe registry"
+            );
+            (
+                false,
+                result_rx
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("killed unsafe-registry daemon exits")
+                    .expect("wait for killed unsafe-registry daemon"),
+            )
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("unsafe-registry waiter disconnected")
+        }
+    }
+}
+
+#[test]
+fn task_236_replan_contract_external_socket_rejects_unsafe_registry_directory_and_file() {
+    let directory_outcome = {
+        let fixture = Fixture::new(true);
+        let marker = fixture
+            .home
+            .parent()
+            .expect("fixture root")
+            .join("directory-attacker-ran");
+        let attacker = fixture
+            .home
+            .parent()
+            .expect("fixture root")
+            .join("directory-attacker");
+        write_executable(
+            &attacker,
+            &format!("#!/bin/sh\nprintf owned > '{}'\n", marker.display()),
+        );
+        fixture.write_registry(json!([{
+            "id": "project-a",
+            "path": fixture.project,
+            "name": "Unsafe Directory",
+            "enabled": true,
+            "cook": [attacker]
+        }]));
+        fs::set_permissions(
+            fixture.registry_path().parent().expect("registry parent"),
+            fs::Permissions::from_mode(0o777),
+        )
+        .expect("make registry parent replaceable");
+        let outcome = bounded_start_outcome(&fixture);
+        (outcome, marker.exists())
+    };
+
+    let file_outcome = {
+        let fixture = Fixture::new(true);
+        let marker = fixture
+            .home
+            .parent()
+            .expect("fixture root")
+            .join("file-attacker-ran");
+        let attacker = fixture
+            .home
+            .parent()
+            .expect("fixture root")
+            .join("file-attacker");
+        write_executable(
+            &attacker,
+            &format!("#!/bin/sh\nprintf owned > '{}'\n", marker.display()),
+        );
+        fixture.write_registry(json!([{
+            "id": "project-a",
+            "path": fixture.project,
+            "name": "Unsafe File",
+            "enabled": true,
+            "cook": [attacker]
+        }]));
+        fs::set_permissions(
+            fixture.registry_path(),
+            fs::Permissions::from_mode(0o666),
+        )
+        .expect("make registry file replaceable");
+        let outcome = bounded_start_outcome(&fixture);
+        (outcome, marker.exists())
+    };
+
+    for (label, ((exited, output), attacker_ran)) in [
+        ("unsafe registry directory", directory_outcome),
+        ("unsafe registry file", file_outcome),
+    ] {
+        assert!(
+            exited && !output.status.success(),
+            "{label} must fail closed before binding the external socket: exited={exited}, status={}, stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !attacker_ran,
+            "{label} must be rejected before registered attacker code executes"
+        );
+    }
+}
+
 const LIFECYCLE_WRITE_INTERPOSER: &str = r#"
 #define _GNU_SOURCE
 #include <dlfcn.h>
