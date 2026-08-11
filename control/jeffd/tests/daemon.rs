@@ -4105,6 +4105,428 @@ fn task_236_replan_contract_external_socket_rejects_unsafe_registry_directory_an
     }
 }
 
+fn task_236_project_record(fixture: &Fixture, project_id: &str) -> Value {
+    let path = fixture
+        .home
+        .parent()
+        .expect("fixture root")
+        .join(project_id);
+    fs::create_dir_all(path.join(".jeff")).expect("create bounded project fixture");
+    json!({
+        "id": project_id,
+        "path": path,
+        "name": project_id,
+        "enabled": true,
+        "cook": [fixture.fake_cook, "--fixture"]
+    })
+}
+
+fn serialized_len(value: &Value) -> usize {
+    serde_json::to_vec(value)
+        .expect("serialize bounded contract fixture")
+        .len()
+}
+
+#[test]
+fn task_236_surviving_contract_long_id_cannot_poison_retained_snapshot_service() {
+    const FRAME_BYTES: usize = 32 * 1024;
+    const RESPONSE_ID_BYTES: usize = 4 * 1024;
+
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("frame_bytes=32768,snapshot_bytes=32768"),
+    )]);
+    let mut client = fixture.client();
+    let subscribed = client.request(
+        "prime",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    assert_eq!(
+        assert_ok(&subscribed)["snapshot"]["tasks"][0]["title"],
+        "first"
+    );
+
+    let empty_snapshot: Value =
+        serde_json::from_str(&support::snapshot("2026-08-12T12:00:00Z", ""))
+            .expect("parse empty-title snapshot");
+    let empty_projection = json!({
+        "projectId": "project-a",
+        "path": fixture.project,
+        "schemaVersion": empty_snapshot["schemaVersion"],
+        "generatedAt": empty_snapshot["generatedAt"],
+        "mode": empty_snapshot["mode"],
+        "tasks": empty_snapshot["tasks"],
+        "degraded": ["snapshot_stale"]
+    });
+    let empty_probe_bytes = [
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "res",
+            "id": "",
+            "ok": true,
+            "result": &empty_projection
+        })),
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "res",
+            "id": "",
+            "ok": true,
+            "result": {
+                "subscriptionId": format!("s-{}-{}", usize::MAX, u64::MAX),
+                "snapshot": &empty_projection
+            }
+        })),
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "event",
+            "name": "snapshot.replaced",
+            "payload": {"projectId": "project-a", "snapshot": &empty_projection}
+        })),
+    ]
+    .into_iter()
+    .max()
+    .expect("retained admission has probes");
+    let title = "x".repeat(
+        FRAME_BYTES
+            .checked_sub(empty_probe_bytes)
+            .expect("empty retained envelope fits the frame"),
+    );
+    let raw = support::snapshot("2026-08-12T12:00:00Z", &title);
+    assert!(
+        raw.len() <= FRAME_BYTES,
+        "raw snapshot must fit its input ceiling: {}",
+        raw.len()
+    );
+    let snapshot: Value = serde_json::from_str(&raw).expect("parse boundary snapshot");
+    let stale_projection = json!({
+        "projectId": "project-a",
+        "path": fixture.project,
+        "schemaVersion": snapshot["schemaVersion"],
+        "generatedAt": snapshot["generatedAt"],
+        "mode": snapshot["mode"],
+        "tasks": snapshot["tasks"],
+        "degraded": ["snapshot_stale"]
+    });
+    let largest_empty_probe = [
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "res",
+            "id": "",
+            "ok": true,
+            "result": &stale_projection
+        })),
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "res",
+            "id": "",
+            "ok": true,
+            "result": {
+                "subscriptionId": format!("s-{}-{}", usize::MAX, u64::MAX),
+                "snapshot": &stale_projection
+            }
+        })),
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "event",
+            "name": "snapshot.replaced",
+            "payload": {"projectId": "project-a", "snapshot": &stale_projection}
+        })),
+    ]
+    .into_iter()
+    .max()
+    .expect("retained admission has probes");
+    assert_eq!(
+        largest_empty_probe, FRAME_BYTES,
+        "fixture must sit on the exact empty-ID admission boundary"
+    );
+
+    let worst_id = "\0".repeat(RESPONSE_ID_BYTES);
+    let encoded_id = serde_json::to_string(&worst_id).expect("serialize worst legal response ID");
+    assert_eq!(encoded_id.len(), RESPONSE_ID_BYTES * 6 + 2);
+    assert!(
+        encoded_id.as_bytes()[1..encoded_id.len() - 1]
+            .chunks_exact(6)
+            .all(|escape| escape == br"\u0000"),
+        "every decoded NUL byte must use the worst legal six-byte JSON escape"
+    );
+    let retained_projection = json!({
+        "projectId": "project-a",
+        "path": fixture.project,
+        "schemaVersion": snapshot["schemaVersion"],
+        "generatedAt": snapshot["generatedAt"],
+        "mode": snapshot["mode"],
+        "tasks": snapshot["tasks"],
+        "degraded": []
+    });
+    assert!(
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "res",
+            "id": &worst_id,
+            "ok": true,
+            "result": retained_projection
+        })) > FRAME_BYTES,
+        "the actual legal ID must overflow the frame accepted by the empty-ID probe"
+    );
+    assert!(
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "req",
+            "id": &worst_id,
+            "method": "snapshot.get",
+            "params": {"projectId": "project-a"}
+        })) <= FRAME_BYTES,
+        "the worst-serialized legal ID must still fit an admitted request"
+    );
+
+    fixture.set_raw_snapshot(&raw);
+    fixture.touch_project(&fixture.project, "long-id-boundary");
+    let update = client.recv();
+    let retained = client.request(&worst_id, "snapshot.get", json!({"projectId": "project-a"}));
+    assert_eq!(
+        assert_ok(&retained)["tasks"][0]["title"],
+        "first",
+        "a rejected boundary projection must leave last-good serviceable"
+    );
+    assert_eq!(
+        update["name"], "snapshot.failed",
+        "the boundary projection must be rejected before cache replacement"
+    );
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_surviving_contract_active_snapshot_budget_is_fair_and_responsive() {
+    let ids = ["bounded-a", "bounded-b", "bounded-c", "bounded-d"];
+    let launched_before_shutdown = {
+        let mut fixture = Fixture::new(true);
+        let records: Vec<_> = ids
+            .iter()
+            .map(|project_id| task_236_project_record(&fixture, project_id))
+            .collect();
+        fixture.write_registry(json!(records));
+        let root = fixture.home.parent().expect("fixture root").to_path_buf();
+        let mut gates = FifoPair::new(&root);
+        let mut saturated = RecoveryGate::new(&root, "active-saturated");
+        fixture.start_with_env(&[
+            ("FAKE_READY_FIFO", gates.ready_path.as_path()),
+            ("FAKE_RELEASE_FIFO", gates.release_path.as_path()),
+            (
+                "_JEFFD_TEST_ACTIVE_SNAPSHOTS_SATURATED",
+                saturated.ready_path.as_path(),
+            ),
+            ("_JEFFD_TEST_LIMITS", Path::new("active_snapshots=2")),
+        ]);
+        let mut client = fixture.client();
+        for project_id in ids {
+            client.send(&json!({
+                "v": 1,
+                "kind": "req",
+                "id": format!("get-{project_id}"),
+                "method": "snapshot.get",
+                "params": {"projectId": project_id}
+            }));
+        }
+        let owner = client.request("owner-responsive", "server.hello", json!({}));
+        assert_eq!(assert_ok(&owner)["protocolVersion"], 1);
+        saturated.wait();
+        gates.wait_for_run();
+        gates.wait_for_run();
+        fixture.signal(libc::SIGTERM);
+        fixture.wait_for_exit();
+        assert!(!fixture.socket.exists());
+        fixture.invocations().len()
+    };
+
+    {
+        let mut fixture = Fixture::new(true);
+        let records: Vec<_> = ids
+            .iter()
+            .map(|project_id| task_236_project_record(&fixture, project_id))
+            .collect();
+        fixture.write_registry(json!(records));
+        let root = fixture.home.parent().expect("fixture root").to_path_buf();
+        let mut gates = FifoPair::new(&root);
+        let mut saturated = RecoveryGate::new(&root, "fair-saturated");
+        fixture.start_with_env(&[
+            ("FAKE_READY_FIFO", gates.ready_path.as_path()),
+            ("FAKE_RELEASE_FIFO", gates.release_path.as_path()),
+            (
+                "_JEFFD_TEST_ACTIVE_SNAPSHOTS_SATURATED",
+                saturated.ready_path.as_path(),
+            ),
+            ("_JEFFD_TEST_LIMITS", Path::new("active_snapshots=2")),
+        ]);
+        let mut client = fixture.client();
+        for project_id in ids {
+            client.send(&json!({
+                "v": 1,
+                "kind": "req",
+                "id": format!("fair-{project_id}"),
+                "method": "snapshot.get",
+                "params": {"projectId": project_id}
+            }));
+        }
+        let owner = client.request("fair-owner-responsive", "server.hello", json!({}));
+        assert_eq!(assert_ok(&owner)["protocolVersion"], 1);
+        saturated.wait();
+
+        gates.wait_for_run();
+        gates.wait_for_run();
+        gates.release();
+        gates.release();
+        gates.wait_for_run();
+        gates.wait_for_run();
+        gates.release();
+        gates.release();
+
+        let mut completed = BTreeSet::new();
+        while completed.len() < ids.len() {
+            let frame = client.recv();
+            if let Some(project_id) = frame["id"].as_str().and_then(|id| id.strip_prefix("fair-")) {
+                assert_ok(&frame);
+                completed.insert(project_id.to_owned());
+            }
+        }
+        assert_eq!(
+            completed,
+            ids.into_iter().map(str::to_owned).collect(),
+            "every deferred project must eventually make progress"
+        );
+        assert!(fixture.stop_and_wait().status.success());
+    }
+
+    assert_eq!(
+        launched_before_shutdown, 2,
+        "shutdown may observe no more than the configured active snapshot budget"
+    );
+}
+
+#[test]
+fn task_236_surviving_contract_snapshot_thread_launch_failure_releases_active_ownership() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([
+        task_236_project_record(&fixture, "failure-a"),
+        task_236_project_record(&fixture, "failure-b")
+    ]));
+    fixture.start_with_env(&[
+        ("_JEFFD_TEST_LIMITS", Path::new("active_snapshots=1")),
+        (
+            "_JEFFD_TEST_SNAPSHOT_THREAD_FAILURE",
+            Path::new("failure-a:stdout"),
+        ),
+    ]);
+    let mut client = fixture.client();
+    let failure = client.request(
+        "injected-reader-launch-failure",
+        "snapshot.get",
+        json!({"projectId": "failure-a"}),
+    );
+    let recovered = client.request(
+        "after-reader-launch-failure",
+        "snapshot.get",
+        json!({"projectId": "failure-b"}),
+    );
+    let recovered_ok = recovered["ok"] == true;
+    let stopped = fixture.stop_and_wait().status.success();
+
+    assert!(
+        failure["ok"] == false
+            && failure["error"]["code"] == "unavailable"
+            && recovered_ok
+            && stopped,
+        "injected reader-launch failure must release active ownership: failure={failure}, recovered={recovered_ok}, stopped={stopped}"
+    );
+}
+
+#[test]
+fn task_236_surviving_contract_aggregate_cache_budget_rejects_newest_and_retains_last_good() {
+    let mut fixture = Fixture::new(true);
+    let ids = ["cache-a", "cache-b", "cache-c"];
+    let records: Vec<_> = ids
+        .iter()
+        .map(|project_id| task_236_project_record(&fixture, project_id))
+        .collect();
+    fixture.write_registry(json!(records));
+
+    let initial: Value = serde_json::from_str(&support::snapshot("2026-08-10T10:00:00Z", "first"))
+        .expect("parse initial cache fixture");
+    let retained_cost = |project_id: &str| {
+        serialized_len(&json!({
+            "projectId": project_id,
+            "path": fixture
+                .home
+                .parent()
+                .expect("fixture root")
+                .join(project_id),
+            "schemaVersion": initial["schemaVersion"],
+            "generatedAt": initial["generatedAt"],
+            "mode": initial["mode"],
+            "tasks": initial["tasks"],
+            "degraded": ["snapshot_stale"]
+        }))
+    };
+    let cache_budget = retained_cost("cache-a") + retained_cost("cache-b");
+    let limits = format!("frame_bytes=4096,snapshot_bytes=4096,cache_bytes={cache_budget}");
+    fixture.start_with_env(&[("_JEFFD_TEST_LIMITS", Path::new(&limits))]);
+    let mut client = fixture.client();
+
+    let first = client.request(
+        "cache-a-first",
+        "snapshot.get",
+        json!({"projectId": "cache-a"}),
+    );
+    assert_eq!(assert_ok(&first)["tasks"][0]["title"], "first");
+    let subscribed = client.request(
+        "cache-a-subscribe",
+        "snapshot.subscribe",
+        json!({"projectId": "cache-a"}),
+    );
+    assert_eq!(
+        assert_ok(&subscribed)["snapshot"]["tasks"][0]["title"],
+        "first"
+    );
+    let second = client.request(
+        "cache-b-first",
+        "snapshot.get",
+        json!({"projectId": "cache-b"}),
+    );
+    assert_eq!(assert_ok(&second)["tasks"][0]["title"], "first");
+    let newest = client.request(
+        "cache-c-over-budget",
+        "snapshot.get",
+        json!({"projectId": "cache-c"}),
+    );
+
+    fixture.set_snapshot(
+        "2026-08-12T13:00:00Z",
+        "replacement grows beyond the retained aggregate budget",
+    );
+    let cache_a = fixture.home.parent().expect("fixture root").join("cache-a");
+    fixture.touch_project(&cache_a, "aggregate-budget-replacement");
+    let replacement = client.recv();
+    let retained = client.request(
+        "cache-a-retained",
+        "snapshot.get",
+        json!({"projectId": "cache-a"}),
+    );
+    let retained_projection = assert_ok(&retained);
+
+    let bounded = newest["ok"] == false
+        && newest["error"]["code"] == "unavailable"
+        && replacement["name"] == "snapshot.failed"
+        && retained_projection["tasks"][0]["title"] == "first"
+        && retained_projection["degraded"] == json!(["snapshot_stale"]);
+    assert!(
+        bounded,
+        "aggregate admission must reject the newest cold cache and preserve last-good on replacement: newest={newest}, replacement={replacement}, retained={retained_projection}"
+    );
+    assert!(fixture.stop_and_wait().status.success());
+}
+
 const LIFECYCLE_WRITE_INTERPOSER: &str = r#"
 #define _GNU_SOURCE
 #include <dlfcn.h>
