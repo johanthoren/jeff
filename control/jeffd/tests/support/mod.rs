@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::process::{Child, ChildStderr, Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -240,6 +240,27 @@ impl Fixture {
         assert!(status.success(), "foreground daemon exit was {status}");
     }
 
+    pub fn take_stderr(&mut self) -> BufReader<ChildStderr> {
+        BufReader::new(
+            self.child
+                .as_mut()
+                .expect("daemon child exists")
+                .stderr
+                .take()
+                .expect("daemon stderr is piped"),
+        )
+    }
+
+    pub fn signal(&self, signal: i32) {
+        let pid = self.child.as_ref().expect("daemon child exists").id() as i32;
+        assert_eq!(
+            unsafe { libc::kill(pid, signal) },
+            0,
+            "signal daemon process: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+
     pub fn set_snapshot(&self, generated_at: &str, title: &str) {
         fs::write(&self.response, snapshot(generated_at, title)).expect("replace snapshot fixture");
         fs::write(&self.stderr, "").expect("clear cook stderr");
@@ -346,6 +367,28 @@ impl Client {
         let mut byte = [0_u8; 1];
         let count = self.reader.read(&mut byte).expect("read connection EOF");
         assert_eq!(count, 0, "server must close the protocol connection");
+    }
+
+    pub fn read_one_byte(&mut self) -> usize {
+        let mut byte = [0_u8; 1];
+        self.reader
+            .read(&mut byte)
+            .expect("read one response byte or EOF")
+    }
+    pub fn recv_all_until_eof(&mut self, maximum_frames: usize) -> Vec<Value> {
+        let mut frames = Vec::new();
+        for _ in 0..maximum_frames {
+            let mut line = String::new();
+            let bytes = self
+                .reader
+                .read_line(&mut line)
+                .expect("read response, event, or EOF");
+            if bytes == 0 {
+                return frames;
+            }
+            frames.push(serde_json::from_str(&line).expect("server emitted one JSON document"));
+        }
+        panic!("connection did not close within {maximum_frames} frames");
     }
 }
 

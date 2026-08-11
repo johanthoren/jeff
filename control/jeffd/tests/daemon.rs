@@ -3,7 +3,7 @@
 mod support;
 
 use jeff_project::ProjectRecord;
-use jeffd::{run_snapshot, SnapshotFailure};
+use jeffd::{load_registry, run_snapshot, SnapshotFailure};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -13,7 +13,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -400,17 +400,53 @@ fn shutdown_ends_subscriptions_and_terminates_an_active_snapshot_process_group()
     client.send(&json!({
         "v": 1,
         "kind": "req",
-        "id": "sub",
-        "method": "snapshot.subscribe",
+        "id": "cold-get",
+        "method": "snapshot.get",
         "params": {"projectId": "project-a"}
     }));
     gates.wait_for_run();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "cold-sub",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-a"}
+    }));
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "accepted",
+        "method": "server.hello",
+        "params": {}
+    }));
+    let accepted = client.recv();
+    assert_eq!(accepted["id"], "accepted");
+    assert_eq!(assert_ok(&accepted)["protocolVersion"], 1);
 
     let stop = fixture.run(&["stop"]);
     assert!(stop.status.success(), "stop failed: {stop:?}");
-    let ended = client.recv_until(|frame| frame["name"] == "subscription.ended");
-    assert_eq!(ended["payload"]["reason"], "shutdown");
+    let frames = client.recv_all_until_eof(8);
     fixture.wait_for_exit();
+
+    for request_id in ["cold-get", "cold-sub"] {
+        let terminal = frames
+            .iter()
+            .filter(|frame| frame["kind"] == "res" && frame["id"] == request_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal.len(),
+            1,
+            "accepted {request_id} must receive exactly one terminal response through EOF: {frames:?}"
+        );
+        assert_eq!(terminal[0]["ok"], false);
+        assert_eq!(terminal[0]["error"]["code"], "unavailable");
+    }
+    assert!(
+        frames
+            .iter()
+            .all(|frame| frame["name"] != "subscription.ended"),
+        "shutdown must not expose an internal subscription id that no response returned: {frames:?}"
+    );
     assert!(!fixture.socket.exists());
 }
 
@@ -916,10 +952,33 @@ fn review_contract_inherited_capture_pipes_remain_timeout_and_shutdown_bounded()
             "params": {"projectId": "project-a"}
         }));
         gates.wait_for_run();
+        client.send(&json!({
+            "v": 1,
+            "kind": "req",
+            "id": "accepted",
+            "method": "server.hello",
+            "params": {}
+        }));
+        let accepted = client.recv();
+        assert_eq!(accepted["id"], "accepted");
+        assert_eq!(assert_ok(&accepted)["protocolVersion"], 1);
         let stop = fixture.run(&["stop"]);
         assert!(stop.status.success(), "stop failed: {stop:?}");
-        let ended = client.recv_until(|frame| frame["name"] == "subscription.ended");
-        assert_eq!(ended["payload"]["reason"], "shutdown");
+        let terminal_frames = client.recv_all_until_eof(8);
+        let coherent_terminal = terminal_frames
+            .iter()
+            .filter(|frame| frame["kind"] == "res" && frame["id"] == "sub")
+            .count()
+            == 1
+            && terminal_frames.iter().any(|frame| {
+                frame["kind"] == "res"
+                    && frame["id"] == "sub"
+                    && frame["ok"] == false
+                    && frame["error"]["code"] == "unavailable"
+            })
+            && terminal_frames
+                .iter()
+                .all(|frame| frame["name"] != "subscription.ended");
 
         let (exit_tx, exit_rx) = mpsc::channel();
         let waiter = thread::spawn(move || {
@@ -934,7 +993,7 @@ fn review_contract_inherited_capture_pipes_remain_timeout_and_shutdown_bounded()
                 .expect("daemon exits after pipe holder release");
         }
         waiter.join().expect("join daemon exit waiter");
-        bounded
+        (bounded, coherent_terminal)
     };
 
     assert!(
@@ -942,13 +1001,17 @@ fn review_contract_inherited_capture_pipes_remain_timeout_and_shutdown_bounded()
         "snapshot timeout stopped after the direct child exited"
     );
     assert!(
-        shutdown_enforced,
+        shutdown_enforced.0,
         "daemon shutdown waited for inherited capture pipes"
+    );
+    assert!(
+        shutdown_enforced.1,
+        "accepted cold subscribe must receive unavailable before inherited-pipe shutdown: {shutdown_enforced:?}"
     );
 }
 
 #[test]
-fn second_recovery_contract_replacement_accounts_for_the_ended_cold_subscription() {
+fn second_recovery_contract_replacement_does_not_expose_an_unreturned_subscription() {
     let mut fixture = Fixture::new(true);
     let root = fixture.home.parent().expect("fixture root").to_path_buf();
     let script = root.join("path-aware-cook");
@@ -1044,36 +1107,30 @@ exit 0
         replacement_frames.push(client.recv());
     }
 
-    let ended = replacement_frames
-        .iter()
-        .find(|frame| frame["name"] == "subscription.ended")
-        .expect("replacement emits the pending subscription's ended frame");
-    assert_eq!(ended["payload"]["reason"], "project_removed");
-    let ended_subscription_id = ended["payload"]["subscriptionId"]
-        .as_str()
-        .expect("ended frame carries the pending subscription id")
-        .to_owned();
     let updated = replacement_frames
         .iter()
         .find(|frame| frame["name"] == "project.updated")
         .expect("replacement emits project.updated");
     assert_eq!(updated["payload"]["projectId"], "project-a");
-    let old_response = replacement_frames
-        .iter()
-        .find(|frame| frame["id"] == "old-sub")
-        .expect("pending subscribe receives a terminal response")
-        .clone();
 
-    let ownership = client.request(
-        "old-owner",
-        "snapshot.unsubscribe",
-        json!({"subscriptionId": ended_subscription_id}),
-    );
-    let current = client.request(
-        "new-get",
-        "snapshot.get",
-        json!({"path": fixture.other_project}),
-    );
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "new-get",
+        "method": "snapshot.get",
+        "params": {"path": fixture.other_project}
+    }));
+    while !replacement_frames
+        .iter()
+        .any(|frame| frame["kind"] == "res" && frame["id"] == "new-get")
+    {
+        replacement_frames.push(client.recv());
+    }
+    let current = replacement_frames
+        .iter()
+        .find(|frame| frame["kind"] == "res" && frame["id"] == "new-get")
+        .expect("replacement path receives a current response")
+        .clone();
     let projection = assert_ok(&current);
     assert_eq!(projection["path"], json!(fixture.other_project));
     assert_eq!(projection["tasks"][0]["title"], "new path");
@@ -1084,22 +1141,28 @@ exit 0
             fixture.other_project.to_string_lossy().into_owned()
         ]
     );
-    assert!(fixture.stop_and_wait().status.success());
 
+    let stop = fixture.run(&["stop"]);
+    assert!(stop.status.success(), "stop failed: {stop:?}");
+    replacement_frames.extend(client.recv_all_until_eof(8));
+    fixture.wait_for_exit();
+
+    let terminal = replacement_frames
+        .iter()
+        .filter(|frame| frame["kind"] == "res" && frame["id"] == "old-sub")
+        .collect::<Vec<_>>();
     assert_eq!(
-        (
-            old_response["ok"].clone(),
-            old_response["error"]["code"].clone(),
-            ownership["ok"].clone(),
-            ownership["error"]["code"].clone(),
-        ),
-        (
-            json!(false),
-            json!("unavailable"),
-            json!(false),
-            json!("unknown_subscription"),
-        ),
-        "an ended cold subscription must fail once and remain unowned"
+        terminal.len(),
+        1,
+        "the pending cold subscribe must fail exactly once: {replacement_frames:?}"
+    );
+    assert_eq!(terminal[0]["ok"], false);
+    assert_eq!(terminal[0]["error"]["code"], "unavailable");
+    assert!(
+        replacement_frames
+            .iter()
+            .all(|frame| frame["name"] != "subscription.ended"),
+        "a subscription id may be ended only after its successful response was delivered: {replacement_frames:?}"
     );
 }
 
@@ -1173,7 +1236,11 @@ fn review_contract_cold_subscribe_emits_only_subsequent_replacements() {
     }));
     gates.wait_for_run();
     gates.release();
-    let subscribed = client.recv_until(|frame| frame["id"] == "cold-sub");
+    let subscribed = client.recv();
+    assert_eq!(
+        subscribed["id"], "cold-sub",
+        "the subscribe response must be the first cold-subscription frame: {subscribed}"
+    );
     assert_eq!(
         assert_ok(&subscribed)["snapshot"]["tasks"][0]["title"],
         "first"
@@ -1183,7 +1250,8 @@ fn review_contract_cold_subscribe_emits_only_subsequent_replacements() {
     fixture.touch_project(&fixture.project, "subsequent-trigger");
     gates.wait_for_run();
     gates.release();
-    let next = client.recv_until(|frame| frame["name"] == "snapshot.replaced");
+    let next = client.recv();
+    assert_eq!(next["name"], "snapshot.replaced");
     assert_eq!(
         next["payload"]["snapshot"]["tasks"][0]["title"], "subsequent",
         "the cold snapshot must not be duplicated as a replacement event"
@@ -1533,21 +1601,29 @@ exit 0
         )]
     );
 
-    let registry_path = fixture.registry_path();
-    fs::remove_file(&registry_path).expect("replace registry with invalid FIFO payload");
-    make_race_fifo(&registry_path);
-    let fifo_for_open = registry_path.clone();
-    let (writer_tx, writer_rx) = mpsc::channel();
-    let opener = thread::spawn(move || {
-        writer_tx
-            .send(OpenOptions::new().write(true).open(fifo_for_open))
-            .expect("send registry FIFO writer");
+    let mut daemon_stderr = fixture.take_stderr();
+    let (reload_tx, reload_rx) = mpsc::channel();
+    let reload_reader = thread::spawn(move || loop {
+        let mut line = String::new();
+        let bytes = daemon_stderr
+            .read_line(&mut line)
+            .expect("read daemon registry diagnostic");
+        assert_ne!(bytes, 0, "daemon stderr closed before registry rejection");
+        if line.contains("registry reload ignored") {
+            reload_tx
+                .send(())
+                .expect("signal invalid registry rejection");
+            break;
+        }
     });
-    let mut invalid_registry = writer_rx
+    fs::write(fixture.registry_path(), b"{invalid runtime registry")
+        .expect("write invalid regular registry");
+    reload_rx
         .recv_timeout(Duration::from_secs(10))
-        .expect("daemon opens the runtime registry FIFO")
-        .expect("open runtime registry FIFO writer");
-    opener.join().expect("join registry FIFO opener");
+        .expect("daemon rejects the invalid regular registry");
+    reload_reader
+        .join()
+        .expect("join registry diagnostic reader");
     retained_client.send(&json!({
         "v": 1,
         "kind": "req",
@@ -1555,14 +1631,6 @@ exit 0
         "method": "project.list",
         "params": {}
     }));
-    invalid_registry
-        .write_all(b"{invalid runtime registry")
-        .expect("write invalid runtime registry");
-    invalid_registry
-        .flush()
-        .expect("flush invalid runtime registry");
-    drop(invalid_registry);
-    fs::remove_file(&registry_path).expect("remove consumed registry FIFO");
     fixture.write_registry(registry_a.clone());
 
     let listed = retained_client.recv_until(|frame| frame["id"] == "list-after-invalid");
@@ -1724,9 +1792,16 @@ fn second_recovery_contract_disabled_rows_and_typed_selectors_fail_without_hidde
 
 #[test]
 fn second_recovery_contract_shutdown_interrupts_a_blocked_connection_writer() {
+    const RESPONSE_TITLE_BYTES: usize = MAX_FRAME_BYTES / 64;
+    const RESPONSE_COUNT: usize = 128;
+
     let mut fixture = Fixture::new(true);
-    fixture.write_registry(json!([]));
-    fixture.start();
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.set_snapshot("2026-08-10T14:00:00Z", &"x".repeat(RESPONSE_TITLE_BYTES));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("ingress=256,in_flight=256,egress_frames=256,egress_bytes=67108864"),
+    )]);
     let socket = fixture.socket.clone();
     let mut stalled = UnixStream::connect(&socket).expect("connect stalled output client");
     stalled
@@ -1750,21 +1825,22 @@ fn second_recovery_contract_shutdown_interrupts_a_blocked_connection_writer() {
         "shrink stalled client receive buffer: {}",
         std::io::Error::last_os_error()
     );
-    let large_id = "x".repeat(MAX_FRAME_BYTES / 2);
-    raw_send(
-        &mut stalled,
-        &json!({
-            "v": 1,
-            "kind": "req",
-            "id": large_id,
-            "method": "server.hello",
-            "params": {}
-        }),
-    );
+    for sequence in 0..RESPONSE_COUNT {
+        raw_send(
+            &mut stalled,
+            &json!({
+                "v": 1,
+                "kind": "req",
+                "id": format!("blocked-snapshot-{sequence}"),
+                "method": "snapshot.get",
+                "params": {"projectId": "project-a"}
+            }),
+        );
+    }
     let mut first_response_byte = [0_u8; 1];
     stalled
         .read_exact(&mut first_response_byte)
-        .expect("server begins the oversized hello response");
+        .expect("server begins the bounded repeated snapshot responses");
 
     let stop = fixture.run(&["stop"]);
     assert!(stop.status.success(), "stop failed: {stop:?}");
@@ -1788,3 +1864,519 @@ fn second_recovery_contract_shutdown_interrupts_a_blocked_connection_writer() {
     );
     assert!(!socket.exists(), "bounded shutdown removes the listener");
 }
+
+struct LifecycleWriteBarrier {
+    library: PathBuf,
+    ready_path: PathBuf,
+    release_path: PathBuf,
+    ready: mpsc::Receiver<String>,
+    release: File,
+}
+
+impl LifecycleWriteBarrier {
+    fn new(root: &Path) -> Self {
+        let source = root.join("lifecycle-write-interpose.c");
+        let library = root.join(if cfg!(target_os = "macos") {
+            "lifecycle-write-interpose.dylib"
+        } else {
+            "lifecycle-write-interpose.so"
+        });
+        let ready_path = root.join("lifecycle-write-ready.fifo");
+        let release_path = root.join("lifecycle-write-release.fifo");
+        make_race_fifo(&ready_path);
+        make_race_fifo(&release_path);
+        fs::write(&source, LIFECYCLE_WRITE_INTERPOSER).expect("write lifecycle write interposer");
+        let compiler = env::var_os("CC").unwrap_or_else(|| "cc".into());
+        let mut command = Command::new(compiler);
+        if cfg!(target_os = "macos") {
+            command.arg("-dynamiclib");
+        } else {
+            command.args(["-shared", "-fPIC"]);
+        }
+        let output = command
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .expect("compile lifecycle write interposer");
+        assert!(
+            output.status.success(),
+            "lifecycle write interposer failed to compile: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let ready_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&ready_path)
+            .expect("open lifecycle ready FIFO");
+        let (ready_tx, ready) = mpsc::channel();
+        thread::spawn(move || {
+            let mut reader = BufReader::new(ready_file);
+            for _ in 0..2 {
+                let mut line = String::new();
+                reader
+                    .read_line(&mut line)
+                    .expect("read blocked lifecycle request signal");
+                ready_tx
+                    .send(line)
+                    .expect("forward blocked lifecycle request signal");
+            }
+        });
+        Self {
+            library,
+            ready_path: ready_path.clone(),
+            release_path: release_path.clone(),
+            ready,
+            release: OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(release_path)
+                .expect("open lifecycle release FIFO"),
+        }
+    }
+
+    fn install(&self, command: &mut Command) {
+        command
+            .env("JEFFD_TEST_LIFECYCLE_READY", &self.ready_path)
+            .env("JEFFD_TEST_LIFECYCLE_RELEASE", &self.release_path);
+        if cfg!(target_os = "macos") {
+            command
+                .env("DYLD_INSERT_LIBRARIES", &self.library)
+                .env("DYLD_FORCE_FLAT_NAMESPACE", "1");
+        } else {
+            command.env("LD_PRELOAD", &self.library);
+        }
+    }
+
+    fn wait_for_request(&self) {
+        assert_eq!(
+            self.ready
+                .recv_timeout(Duration::from_secs(10))
+                .expect("lifecycle command reaches the blocked request write"),
+            "run\n"
+        );
+    }
+
+    fn release(&mut self) {
+        self.release
+            .write_all(b"x")
+            .expect("release lifecycle request");
+        self.release.flush().expect("flush lifecycle release");
+    }
+}
+
+fn spawn_blocked_lifecycle(
+    fixture: &Fixture,
+    barrier: &LifecycleWriteBarrier,
+    command_name: &str,
+) -> std::process::Child {
+    let mut command = fixture.command();
+    command.arg(command_name);
+    barrier.install(&mut command);
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn blocked lifecycle command")
+}
+
+#[test]
+fn council_recovery_contract_lifecycle_demultiplexes_project_events_before_hello() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    fixture.start();
+    let mut observer = fixture.client();
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut barrier = LifecycleWriteBarrier::new(&root);
+
+    let status = spawn_blocked_lifecycle(&fixture, &barrier, "status");
+    barrier.wait_for_request();
+    fixture.write_registry(json!([fixture.default_record()]));
+    let status_event = observer.recv_until(|frame| frame["name"] == "project.updated");
+    assert_eq!(status_event["payload"]["projectId"], "project-a");
+    barrier.release();
+    let status = status
+        .wait_with_output()
+        .expect("wait for interleaved status command");
+
+    let stop = spawn_blocked_lifecycle(&fixture, &barrier, "stop");
+    barrier.wait_for_request();
+    fixture.write_registry(json!([]));
+    let stop_event = observer.recv_until(|frame| frame["name"] == "project.updated");
+    assert_eq!(stop_event["payload"]["projectId"], "project-a");
+    barrier.release();
+    let stop = stop
+        .wait_with_output()
+        .expect("wait for interleaved stop command");
+    if !stop.status.success() {
+        fixture.signal(libc::SIGTERM);
+    }
+    fixture.wait_for_exit();
+
+    assert!(
+        status.status.success(),
+        "status must skip the permitted event and match its lifecycle response: {status:?}"
+    );
+    assert!(
+        stop.status.success(),
+        "stop must skip the permitted event, match its lifecycle response, and signal the daemon: {stop:?}"
+    );
+    assert!(!fixture.socket.exists());
+}
+
+#[test]
+fn council_recovery_contract_maximum_legal_request_cannot_expand_outbound() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    fixture.start();
+    let mut client = fixture.client();
+    let prefix = br#"{"v":1,"kind":"req","id":""#;
+    let suffix = br#"","method":"server.hello","params":{}}"#;
+    let id_bytes = MAX_FRAME_BYTES
+        .checked_sub(prefix.len() + suffix.len())
+        .expect("request envelope fits frame limit");
+    let mut frame = Vec::with_capacity(MAX_FRAME_BYTES + 1);
+    frame.extend_from_slice(prefix);
+    frame.resize(frame.len() + id_bytes, b'x');
+    frame.extend_from_slice(suffix);
+    assert_eq!(frame.len(), MAX_FRAME_BYTES);
+    frame.push(b'\n');
+
+    client.write_raw(&frame);
+    let outbound_bytes = client.read_one_byte();
+    let stop = fixture.stop_and_wait();
+
+    assert_eq!(
+        outbound_bytes, 0,
+        "an unechoable maximum-size request id must close without any oversized outbound frame"
+    );
+    assert!(stop.status.success(), "daemon remains responsive: {stop:?}");
+}
+
+#[test]
+fn council_recovery_contract_connection_and_retained_buffer_caps_preserve_progress() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("connections=3,frame_bytes=256"),
+    )]);
+    let mut healthy = fixture.client();
+    let mut retained_a =
+        UnixStream::connect(&fixture.socket).expect("connect first retained reader");
+    let mut retained_b =
+        UnixStream::connect(&fixture.socket).expect("connect second retained reader");
+    retained_a
+        .write_all(&vec![b' '; 256])
+        .expect("fill first bounded reader buffer");
+    retained_b
+        .write_all(&vec![b' '; 256])
+        .expect("fill second bounded reader buffer");
+    let mut overflow = fixture.client();
+    overflow.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "over-connection-cap",
+        "method": "server.hello",
+        "params": {}
+    }));
+    let overflow_bytes = overflow.read_one_byte();
+    let healthy_hello = healthy.request("healthy", "server.hello", json!({}));
+    drop(retained_a);
+    drop(retained_b);
+    let stop = fixture.stop_and_wait();
+
+    assert_eq!(
+        overflow_bytes, 0,
+        "the connection beyond the injected finite cap must close"
+    );
+    assert_eq!(assert_ok(&healthy_hello)["protocolVersion"], 1);
+    assert!(stop.status.success());
+}
+
+#[test]
+fn council_recovery_contract_inflight_and_waiter_caps_close_only_the_offender() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut gates = FifoPair::new(&root);
+    fixture.start_with_env(&[
+        ("FAKE_READY_FIFO", &gates.ready_path),
+        ("FAKE_RELEASE_FIFO", &gates.release_path),
+        (
+            "_JEFFD_TEST_LIMITS",
+            Path::new("ingress=2,in_flight=2,cold_waiters=2"),
+        ),
+    ]);
+    let mut offender = fixture.client();
+    offender.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "cold-get-1",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    gates.wait_for_run();
+    offender.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "cold-sub-2",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-a"}
+    }));
+    offender.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "accepted-two",
+        "method": "server.hello",
+        "params": {}
+    }));
+    let accepted = offender.recv();
+    assert_eq!(accepted["id"], "accepted-two");
+    assert_eq!(assert_ok(&accepted)["protocolVersion"], 1);
+    offender.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "cold-get-over-limit",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+
+    let mut healthy = fixture.client();
+    let healthy_hello = healthy.request("healthy", "server.hello", json!({}));
+    gates.release();
+    let offender_bytes = offender.read_one_byte();
+    let stop = fixture.stop_and_wait();
+
+    assert_eq!(
+        offender_bytes, 0,
+        "the request beyond the ingress, in-flight, and waiter caps must close its connection"
+    );
+    assert_eq!(assert_ok(&healthy_hello)["protocolVersion"], 1);
+    assert!(stop.status.success());
+}
+
+#[test]
+fn council_recovery_contract_egress_byte_budget_closes_only_the_offender() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("egress_frames=1,egress_bytes=256"),
+    )]);
+    let mut offender = fixture.client();
+    offender.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "projection-exceeds-egress-budget",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    let offender_bytes = offender.read_one_byte();
+    let mut healthy = fixture.client();
+    let healthy_hello = healthy.request("healthy", "server.hello", json!({}));
+    let stop = fixture.stop_and_wait();
+
+    assert_eq!(
+        offender_bytes, 0,
+        "a response beyond the injected outstanding-byte budget must close its connection"
+    );
+    assert_eq!(assert_ok(&healthy_hello)["protocolVersion"], 1);
+    assert!(stop.status.success());
+}
+
+#[test]
+fn council_recovery_contract_registry_rejects_symlinks_and_non_regular_entries() {
+    let root = tempfile::tempdir().expect("create isolated registry root");
+    let regular = root.path().join("regular.json");
+    let symlinked = root.path().join("symlinked.json");
+    let directory = root.path().join("directory");
+    fs::write(&regular, "[]").expect("write regular registry target");
+    symlink(&regular, &symlinked).expect("create registry symlink");
+    fs::create_dir(&directory).expect("create non-regular registry directory");
+
+    let symlink_error = load_registry(&symlinked)
+        .err()
+        .map(|error| error.to_string());
+    let directory_error = load_registry(&directory)
+        .err()
+        .map(|error| error.to_string());
+
+    assert!(
+        symlink_error
+            .as_deref()
+            .is_some_and(|error| error.contains("regular file")),
+        "a registry symlink must be rejected before its target is opened: {symlink_error:?}"
+    );
+    assert!(
+        directory_error
+            .as_deref()
+            .is_some_and(|error| error.contains("regular file")),
+        "a registry directory must be rejected before it is opened: {directory_error:?}"
+    );
+}
+
+#[test]
+fn council_recovery_contract_registry_fifo_is_rejected_without_blocking() {
+    let root = tempfile::tempdir().expect("create isolated registry root");
+    let fifo = root.path().join("projects.json");
+    let encoded =
+        CString::new(fifo.as_os_str().as_encoded_bytes()).expect("FIFO path has no NUL byte");
+    assert_eq!(
+        unsafe { libc::mkfifo(encoded.as_ptr(), 0o600) },
+        0,
+        "create registry FIFO: {}",
+        std::io::Error::last_os_error()
+    );
+    let worker_fifo = fifo.clone();
+    let (result_tx, result_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        result_tx
+            .send(load_registry(&worker_fifo))
+            .expect("send registry load result");
+    });
+
+    let bounded = result_rx.recv_timeout(Duration::from_millis(250));
+    let rejected_without_blocking = matches!(
+        &bounded,
+        Ok(Err(error)) if error.to_string().contains("regular file")
+    );
+    if bounded.is_err() {
+        let mut writer = OpenOptions::new()
+            .write(true)
+            .open(&fifo)
+            .expect("release the currently blocking registry reader");
+        writer
+            .write_all(b"[]")
+            .expect("write cleanup registry payload");
+        drop(writer);
+        let cleanup = result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("registry reader exits after cleanup");
+        assert!(
+            cleanup.is_ok(),
+            "current reader must consume the cleanup registry payload"
+        );
+    }
+    worker.join().expect("join registry reader");
+
+    assert!(
+        rejected_without_blocking,
+        "a FIFO must be rejected from metadata without waiting for a writer"
+    );
+}
+
+#[test]
+fn council_recovery_contract_registry_has_a_finite_one_mibibyte_input_bound() {
+    const REGISTRY_LIMIT_BYTES: usize = 1024 * 1024;
+    let root = tempfile::tempdir().expect("create isolated registry root");
+    let registry = root.path().join("projects.json");
+    let oversized = json!([{
+        "id": "demo",
+        "path": root.path().join("project"),
+        "name": "x".repeat(REGISTRY_LIMIT_BYTES),
+        "enabled": false,
+        "cook": null
+    }]);
+    fs::write(
+        &registry,
+        serde_json::to_vec(&oversized).expect("serialize bounded oversized registry"),
+    )
+    .expect("write bounded oversized registry");
+
+    let message = match load_registry(&registry) {
+        Ok(_) => String::new(),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        message.contains("exceeds") && message.contains("1048576"),
+        "registry rejection must name its finite byte limit: {message}"
+    );
+}
+
+const LIFECYCLE_WRITE_INTERPOSER: &str = r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <sys/socket.h>
+
+static int claimed = 0;
+
+static int contains_lifecycle(const void *buffer, size_t count) {
+    const char target[] = "lifecycle";
+    const unsigned char *bytes = buffer;
+    if (count < sizeof(target) - 1) return 0;
+    for (size_t index = 0; index + sizeof(target) - 1 <= count; index++) {
+        if (memcmp(bytes + index, target, sizeof(target) - 1) == 0) return 1;
+    }
+    return 0;
+}
+
+static ssize_t next_write(int descriptor, const void *buffer, size_t count) {
+#ifdef __APPLE__
+    return (ssize_t)syscall(SYS_write, descriptor, buffer, count);
+#else
+    ssize_t (*next)(int, const void *, size_t) = dlsym(RTLD_NEXT, "write");
+    return next(descriptor, buffer, count);
+#endif
+}
+
+static ssize_t next_send(int descriptor, const void *buffer, size_t count, int flags) {
+#ifdef __APPLE__
+    return (ssize_t)syscall(SYS_sendto, descriptor, buffer, count, flags, NULL, 0);
+#else
+    ssize_t (*next)(int, const void *, size_t, int) = dlsym(RTLD_NEXT, "send");
+    return next(descriptor, buffer, count, flags);
+#endif
+}
+
+static void rendezvous(void) {
+    char byte;
+    int ready = open(getenv("JEFFD_TEST_LIFECYCLE_READY"), O_WRONLY);
+    if (ready >= 0) {
+        next_write(ready, "run\n", 4);
+        close(ready);
+    }
+    int release = open(getenv("JEFFD_TEST_LIFECYCLE_RELEASE"), O_RDONLY);
+    if (release >= 0) {
+        read(release, &byte, 1);
+        close(release);
+    }
+}
+
+static ssize_t hook_write(int descriptor, const void *buffer, size_t count) {
+    if (contains_lifecycle(buffer, count) && __sync_bool_compare_and_swap(&claimed, 0, 1)) {
+        rendezvous();
+    }
+    return next_write(descriptor, buffer, count);
+}
+
+static ssize_t hook_send(int descriptor, const void *buffer, size_t count, int flags) {
+    if (contains_lifecycle(buffer, count) && __sync_bool_compare_and_swap(&claimed, 0, 1)) {
+        rendezvous();
+    }
+    return next_send(descriptor, buffer, count, flags);
+}
+
+#ifdef __APPLE__
+#define DYLD_INTERPOSE(replacement, replacee) \
+    __attribute__((used)) static struct { const void *replacement; const void *replacee; } \
+    _interpose_##replacee __attribute__((section("__DATA,__interpose"))) = { \
+        (const void *)(unsigned long)&replacement, (const void *)(unsigned long)&replacee \
+    }
+DYLD_INTERPOSE(hook_write, write);
+DYLD_INTERPOSE(hook_send, send);
+#else
+ssize_t write(int descriptor, const void *buffer, size_t count) {
+    return hook_write(descriptor, buffer, count);
+}
+
+ssize_t send(int descriptor, const void *buffer, size_t count, int flags) {
+    return hook_send(descriptor, buffer, count, flags);
+}
+#endif
+"#;

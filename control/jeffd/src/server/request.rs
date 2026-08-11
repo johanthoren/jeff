@@ -1,4 +1,4 @@
-use super::{Server, Subscription, WaitKind, Waiter};
+use super::{Limits, Server, WaitKind, Waiter};
 use crate::config::{PROTOCOL_VERSION, SNAPSHOT_SCHEMA_MAX, SNAPSHOT_SCHEMA_MIN};
 use crate::protocol::ConnectionId;
 use crate::state::ProjectCache;
@@ -7,11 +7,12 @@ use serde_json::{json, Value};
 
 impl Server {
     pub(super) fn handle_request(&mut self, connection: ConnectionId, frame: Value) {
-        let safe_id = frame
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
+        let safe_id = frame.get("id").and_then(Value::as_str).unwrap_or("");
+        if safe_id.len() > Limits::RESPONSE_ID_BYTES {
+            self.close_connection(connection);
+            return;
+        }
+        let safe_id = safe_id.to_owned();
         let request = serde_json::from_value::<Envelope>(frame);
         let (version, id, method, params) = match request {
             Ok(Envelope::Request {
@@ -30,6 +31,10 @@ impl Server {
                 return;
             }
         };
+        if id.len() > Limits::RESPONSE_ID_BYTES {
+            self.close_connection(connection);
+            return;
+        }
         if version != PROTOCOL_VERSION {
             self.send_error(
                 connection,
@@ -50,22 +55,24 @@ impl Server {
             return;
         }
         match method {
-            Method::ServerHello => self.send_result(
-                connection,
-                &id,
-                json!({
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "serverVersion": env!("CARGO_PKG_VERSION"),
-                    "snapshotSchemaMin": SNAPSHOT_SCHEMA_MIN,
-                    "snapshotSchemaMax": SNAPSHOT_SCHEMA_MAX
-                }),
-            ),
+            Method::ServerHello => {
+                self.send_result(
+                    connection,
+                    &id,
+                    json!({
+                        "protocolVersion": PROTOCOL_VERSION,
+                        "serverVersion": env!("CARGO_PKG_VERSION"),
+                        "snapshotSchemaMin": SNAPSHOT_SCHEMA_MIN,
+                        "snapshotSchemaMax": SNAPSHOT_SCHEMA_MAX
+                    }),
+                );
+            }
             Method::ProjectList => self.list_projects(connection, &id),
             Method::SnapshotGet => self.snapshot_get(connection, id, &params),
             Method::SnapshotSubscribe => self.snapshot_subscribe(connection, id, &params),
             Method::SnapshotUnsubscribe => self.snapshot_unsubscribe(connection, &id, &params),
             Method::Unknown(_) => {
-                self.send_error(connection, &id, "unknown_method", "unknown request method")
+                self.send_error(connection, &id, "unknown_method", "unknown request method");
             }
         }
     }
@@ -102,14 +109,17 @@ impl Server {
             self.send_result(connection, &request_id, json!(projection));
             return;
         }
-        self.waiters
-            .entry(project_id.clone())
-            .or_default()
-            .push(Waiter {
+        if !self.try_add_waiter(
+            project_id.clone(),
+            Waiter {
                 connection,
                 request_id,
                 kind: WaitKind::Get,
-            });
+            },
+        ) {
+            self.close_connection(connection);
+            return;
+        }
         self.start_snapshot(&project_id);
     }
 
@@ -123,36 +133,32 @@ impl Server {
         };
         let subscription_id = format!("s-{}-{}", connection, self.next_subscription);
         self.next_subscription += 1;
-        self.subscriptions.insert(
-            subscription_id.clone(),
-            Subscription {
-                connection,
-                project_id: project_id.clone(),
-            },
-        );
-        if let Some(client) = self.connections.get_mut(&connection) {
-            client.subscriptions.insert(subscription_id.clone());
-        }
         if let Some(projection) = self
             .caches
             .get(&project_id)
             .and_then(ProjectCache::projection)
         {
-            self.send_result(
+            if self.send_result(
                 connection,
                 &request_id,
                 json!({"subscriptionId": subscription_id, "snapshot": projection}),
-            );
+            ) {
+                self.register_subscription(connection, project_id, subscription_id.clone());
+                self.mark_subscription_returned(&subscription_id);
+            }
             return;
         }
-        self.waiters
-            .entry(project_id.clone())
-            .or_default()
-            .push(Waiter {
+        if !self.try_add_waiter(
+            project_id.clone(),
+            Waiter {
                 connection,
                 request_id,
                 kind: WaitKind::Subscribe(subscription_id),
-            });
+            },
+        ) {
+            self.close_connection(connection);
+            return;
+        }
         self.start_snapshot(&project_id);
     }
 

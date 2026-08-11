@@ -8,7 +8,7 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -98,9 +98,10 @@ impl Drop for OwnedSocket {
 
 pub fn probe(socket: &Path) -> Result<(), LifecycleError> {
     let mut stream = UnixStream::connect(socket).map_err(LifecycleError::NotRunning)?;
-    let timeout = Some(Duration::from_secs(2));
-    stream.set_read_timeout(timeout)?;
-    stream.set_write_timeout(timeout)?;
+    let timeout = Duration::from_secs(2);
+    let deadline = Instant::now() + timeout;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
     let request = json!({
         "v": PROTOCOL_VERSION,
         "kind": "req",
@@ -112,17 +113,33 @@ pub fn probe(socket: &Path) -> Result<(), LifecycleError> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     stream.write_all(b"\n")?;
     stream.flush()?;
-    let frame = read_bounded_frame(&mut stream, 64 * 1024)?;
-    let response: Value =
-        serde_json::from_slice(&frame).map_err(|_| LifecycleError::InvalidHello)?;
-    if response["kind"] == "res"
-        && response["id"] == "lifecycle"
-        && response["ok"] == true
-        && response["result"]["protocolVersion"] == PROTOCOL_VERSION
-    {
-        Ok(())
-    } else {
-        Err(LifecycleError::InvalidHello)
+
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or(LifecycleError::InvalidHello)?;
+        stream.set_read_timeout(Some(remaining))?;
+        let frame = read_bounded_frame(&mut stream, 64 * 1024)?;
+        let response: Value =
+            serde_json::from_slice(&frame).map_err(|_| LifecycleError::InvalidHello)?;
+        if response["kind"] == "event"
+            && response["v"] == PROTOCOL_VERSION
+            && response["name"].is_string()
+            && response.get("payload").is_some()
+        {
+            continue;
+        }
+        if response["kind"] == "res" && response["id"] != "lifecycle" {
+            continue;
+        }
+        if response["kind"] == "res"
+            && response["id"] == "lifecycle"
+            && response["ok"] == true
+            && response["result"]["protocolVersion"] == PROTOCOL_VERSION
+        {
+            return Ok(());
+        }
+        return Err(LifecycleError::InvalidHello);
     }
 }
 

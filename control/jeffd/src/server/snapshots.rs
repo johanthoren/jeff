@@ -145,7 +145,7 @@ impl Server {
     }
 
     fn answer_waiters(&mut self, project_id: &str) {
-        let waiters = self.waiters.remove(project_id).unwrap_or_default();
+        let waiters = self.take_waiters(project_id);
         let projection = self
             .caches
             .get(project_id)
@@ -161,31 +161,31 @@ impl Server {
                 continue;
             }
             if let Some(projection) = &projection {
-                let result = match waiter.kind {
-                    WaitKind::Get => Some(json!(projection)),
-                    WaitKind::Subscribe(subscription_id)
-                        if self.subscriptions.contains_key(&subscription_id) =>
-                    {
-                        Some(json!({
-                            "subscriptionId": subscription_id,
-                            "snapshot": projection
-                        }))
+                match waiter.kind {
+                    WaitKind::Get => {
+                        self.send_result(waiter.connection, &waiter.request_id, json!(projection));
                     }
-                    WaitKind::Subscribe(_) => None,
-                };
-                if let Some(result) = result {
-                    self.send_result(waiter.connection, &waiter.request_id, result);
-                } else {
-                    self.send_error(
-                        waiter.connection,
-                        &waiter.request_id,
-                        "unavailable",
-                        "subscription is no longer active",
-                    );
+                    WaitKind::Subscribe(subscription_id) => {
+                        if self.send_result(
+                            waiter.connection,
+                            &waiter.request_id,
+                            json!({
+                                "subscriptionId": subscription_id,
+                                "snapshot": projection
+                            }),
+                        ) {
+                            self.register_subscription(
+                                waiter.connection,
+                                project_id.to_owned(),
+                                subscription_id.clone(),
+                            );
+                            self.mark_subscription_returned(&subscription_id);
+                        }
+                    }
                 }
             } else {
-                if let WaitKind::Subscribe(subscription_id) = waiter.kind {
-                    self.remove_subscription(&subscription_id);
+                if let WaitKind::Subscribe(subscription_id) = &waiter.kind {
+                    self.remove_subscription(subscription_id);
                 }
                 let message = failure
                     .as_ref()
