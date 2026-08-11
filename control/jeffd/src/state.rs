@@ -2,6 +2,8 @@ use jeff_project::{GraphProjection, ProjectRecord, Snapshot};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+pub(crate) const SNAPSHOT_STALE: &str = "snapshot_stale";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CacheFailure {
     pub message: String,
@@ -47,7 +49,7 @@ impl ProjectCache {
 
     pub fn fail(&mut self, message: String, exit_code: Option<i32>) {
         if let Some(projection) = self.projection.as_mut() {
-            projection.degraded = vec!["snapshot_stale".to_owned()];
+            projection.degraded = vec![SNAPSHOT_STALE.to_owned()];
         }
         self.last_error = Some(CacheFailure { message, exit_code });
     }

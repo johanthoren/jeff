@@ -149,60 +149,64 @@ pub(crate) fn run_snapshot_with_cancel(
     thread::spawn(move || {
         let _ = stderr_tx.send(read_bounded(stderr, STDERR_LIMIT));
     });
-    let started = Instant::now();
-    let mut status = None;
-    let mut stdout = None;
-    let mut stderr = None;
+    let result = (|| {
+        let started = Instant::now();
+        let mut status = None;
+        let mut stdout = None;
+        let mut stderr = None;
 
-    loop {
-        if cancelled.load(Ordering::Acquire) {
-            terminate_group(process_group, &mut child);
-            return Err(SnapshotFailure::Cancelled);
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(SnapshotFailure::Cancelled);
+            }
+            if started.elapsed() >= timeout {
+                return Err(SnapshotFailure::Timeout);
+            }
+            if status.is_none() {
+                status = child
+                    .try_wait()
+                    .map_err(|error| SnapshotFailure::Output(error.to_string()))?;
+            }
+            if stdout.is_none() {
+                stdout = receive_output(&stdout_rx, "stdout")?;
+            }
+            if stderr.is_none() {
+                stderr = receive_output(&stderr_rx, "stderr")?;
+            }
+            if status.is_some() && stdout.is_some() && stderr.is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
         }
-        if started.elapsed() >= timeout {
-            terminate_group(process_group, &mut child);
-            return Err(SnapshotFailure::Timeout);
-        }
-        if status.is_none() {
-            status = child
-                .try_wait()
-                .map_err(|error| SnapshotFailure::Output(error.to_string()))?;
-        }
-        if stdout.is_none() {
-            stdout = receive_output(&stdout_rx, "stdout")?;
-        }
-        if stderr.is_none() {
-            stderr = receive_output(&stderr_rx, "stderr")?;
-        }
-        if status.is_some() && stdout.is_some() && stderr.is_some() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(5));
-    }
-    let status =
-        status.ok_or_else(|| SnapshotFailure::Output("missing child status".to_owned()))?;
-    let stdout =
-        stdout.ok_or_else(|| SnapshotFailure::Output("missing stdout output".to_owned()))?;
-    let stderr =
-        stderr.ok_or_else(|| SnapshotFailure::Output("missing stderr output".to_owned()))?;
-    if status.success() {
-        parse_snapshot_output(&stdout)
-    } else {
-        let code = status.code();
-        let diagnostic = String::from_utf8_lossy(&stderr).trim().to_owned();
-        let lower = diagnostic.to_ascii_lowercase();
-        let message = if lower.contains("unknown command") || lower.contains("usage:") {
-            format!("older jeff missing snapshot: {diagnostic}")
-        } else if diagnostic.is_empty() {
-            format!(
-                "cook exited {}",
-                code.map_or_else(|| "without a code".to_owned(), |v| v.to_string())
-            )
+        let status =
+            status.ok_or_else(|| SnapshotFailure::Output("missing child status".to_owned()))?;
+        let stdout =
+            stdout.ok_or_else(|| SnapshotFailure::Output("missing stdout output".to_owned()))?;
+        let stderr =
+            stderr.ok_or_else(|| SnapshotFailure::Output("missing stderr output".to_owned()))?;
+        if status.success() {
+            parse_snapshot_output(&stdout)
         } else {
-            diagnostic
-        };
-        Err(SnapshotFailure::Exit { message, code })
+            let code = status.code();
+            let diagnostic = String::from_utf8_lossy(&stderr).trim().to_owned();
+            let lower = diagnostic.to_ascii_lowercase();
+            let message = if lower.contains("unknown command") || lower.contains("usage:") {
+                format!("older jeff missing snapshot: {diagnostic}")
+            } else if diagnostic.is_empty() {
+                format!(
+                    "cook exited {}",
+                    code.map_or_else(|| "without a code".to_owned(), |v| v.to_string())
+                )
+            } else {
+                diagnostic
+            };
+            Err(SnapshotFailure::Exit { message, code })
+        }
+    })();
+    if result.is_err() {
+        terminate_group(process_group, &mut child);
     }
+    result
 }
 
 fn terminate_group(process_group: i32, child: &mut std::process::Child) {

@@ -1,8 +1,9 @@
 use super::{ActiveSnapshot, Server, WaitKind};
+use crate::config::PROTOCOL_VERSION;
 use crate::protocol::{OwnerMessage, SnapshotRun};
 use crate::snapshot::{run_snapshot_with_cancel, SnapshotFailure};
-use crate::state::ProjectCache;
-use jeff_project::ProjectRecord;
+use crate::state::{ProjectCache, SNAPSHOT_STALE};
+use jeff_project::{GraphProjection, ProjectRecord, Snapshot};
 use serde_json::json;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -103,6 +104,16 @@ impl Server {
             }
             return;
         }
+        let retained_limit = self.limits.snapshot_bytes.min(self.limits.frame_bytes);
+        let result = result.and_then(|snapshot| {
+            if retained_snapshot_fits(&run.record, &snapshot, retained_limit) {
+                Ok(snapshot)
+            } else {
+                Err(SnapshotFailure::OutputTooLarge(format!(
+                    "retained snapshot exceeds {retained_limit} bytes"
+                )))
+            }
+        });
 
         let had_good = self
             .caches
@@ -202,4 +213,35 @@ impl Server {
             }
         }
     }
+}
+
+fn retained_snapshot_fits(record: &ProjectRecord, snapshot: &Snapshot, limit: usize) -> bool {
+    let projection = GraphProjection {
+        project_id: record.id.clone(),
+        path: record.path.clone(),
+        snapshot: snapshot.clone(),
+        degraded: vec![SNAPSHOT_STALE.to_owned()],
+    };
+    let fits = |frame| super::client::serialize_bounded(&frame, limit).is_some();
+    fits(json!({
+        "v": PROTOCOL_VERSION,
+        "kind": "res",
+        "id": "",
+        "ok": true,
+        "result": &projection
+    })) && fits(json!({
+        "v": PROTOCOL_VERSION,
+        "kind": "res",
+        "id": "",
+        "ok": true,
+        "result": {
+            "subscriptionId": format!("s-{}-{}", usize::MAX, u64::MAX),
+            "snapshot": &projection
+        }
+    })) && fits(json!({
+        "v": PROTOCOL_VERSION,
+        "kind": "event",
+        "name": "snapshot.replaced",
+        "payload": {"projectId": record.id, "snapshot": &projection}
+    }))
 }

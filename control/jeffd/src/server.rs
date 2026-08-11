@@ -36,6 +36,7 @@ pub(crate) struct Limits {
     pub(crate) snapshot_bytes: usize,
     pub(crate) connection_subscriptions: usize,
     global_subscriptions: usize,
+    accepts_per_turn: usize,
 }
 
 impl Limits {
@@ -54,6 +55,7 @@ impl Limits {
             snapshot_bytes: frame_bytes,
             connection_subscriptions: 64,
             global_subscriptions: 512,
+            accepts_per_turn: 64,
         };
         #[cfg(debug_assertions)]
         limits.apply_test_overrides();
@@ -90,6 +92,7 @@ impl Limits {
                 "snapshot_bytes" => self.snapshot_bytes = value,
                 "connection_subscriptions" => self.connection_subscriptions = value,
                 "global_subscriptions" => self.global_subscriptions = value,
+                "accepts_per_turn" => self.accepts_per_turn = value,
                 _ => {}
             }
         }
@@ -148,15 +151,22 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
     let (notify_tx, notify_rx) = mpsc::sync_channel(limits.ingress);
     let notify_overflow = Arc::new(AtomicBool::new(false));
     let callback_overflow = notify_overflow.clone();
-    let mut watcher = notify::recommended_watcher(move |event| {
-        match notify_tx.try_send(event) {
-            Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => {}
-            Err(mpsc::TrySendError::Full(_)) => {
-                callback_overflow.store(true, Ordering::Release);
+    let callback_registry = config.registry.clone();
+    let mut watcher =
+        notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            match notify_tx.try_send(event) {
+                Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => {}
+                Err(mpsc::TrySendError::Full(event)) => {
+                    callback_overflow.store(true, Ordering::Release);
+                    if event.as_ref().is_ok_and(|event| {
+                        event.paths.iter().any(|path| path == &callback_registry)
+                    }) {
+                        signal_test_fifo("_JEFFD_TEST_NOTIFY_REGISTRY_FULL");
+                    }
+                }
             }
-        }
-        signal_test_fifo("_JEFFD_TEST_NOTIFY_RETURNED");
-    })?;
+            signal_test_fifo("_JEFFD_TEST_NOTIFY_RETURNED");
+        })?;
     watcher.watch(
         config
             .registry
@@ -284,13 +294,15 @@ impl Server {
     }
 
     fn accept_connections(&mut self) -> Result<(), ServerError> {
-        loop {
+        for _ in 0..self.limits.accepts_per_turn {
             match self.socket.listener.accept() {
                 Ok((stream, _)) => self.add_connection(stream)?,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
                 Err(error) => return Err(error.into()),
             }
         }
+        self.signal_accept_yield_if_armed();
+        Ok(())
     }
 
     fn add_connection(&mut self, stream: UnixStream) -> Result<(), ServerError> {
@@ -479,6 +491,19 @@ impl Server {
             subscription.returned = true;
         }
     }
+
+    #[cfg(debug_assertions)]
+    fn signal_accept_yield_if_armed(&self) {
+        let Ok(arm) = std::env::var("_JEFFD_TEST_ACCEPT_YIELD_ARM") else {
+            return;
+        };
+        if std::fs::remove_file(arm).is_ok() {
+            signal_test_fifo("_JEFFD_TEST_ACCEPT_YIELDED");
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn signal_accept_yield_if_armed(&self) {}
 
     #[cfg(debug_assertions)]
     fn pause_owner_if_armed(&self) {

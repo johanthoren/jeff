@@ -49,6 +49,7 @@ impl Server {
         for project_id in enabled {
             self.dirty.mark_dirty(&project_id, now);
         }
+        super::signal_test_fifo("_JEFFD_TEST_NOTIFY_OVERFLOW_RECOVERED");
     }
 
     pub(super) fn reload_registry_if_due(&mut self) {

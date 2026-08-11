@@ -29,6 +29,8 @@ pub enum ConfigError {
     MissingSocketParent,
     #[error("unsafe socket directory {0}")]
     UnsafeDirectory(PathBuf),
+    #[error("unsafe project registry {0}")]
+    UnsafeRegistry(PathBuf),
     #[error("cannot prepare socket directory: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -88,7 +90,11 @@ impl DaemonConfig {
             validate_owned_directory(parent)?;
             fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
         }
-        validate_private_directory(parent)
+        validate_private_directory(parent)?;
+        if parent != default_parent {
+            validate_private_directory(&default_parent)?;
+        }
+        validate_private_registry(&self.registry)
     }
 
     pub fn snapshot_timeout(&self) -> Duration {
@@ -122,5 +128,17 @@ fn validate_owned_directory(path: &Path) -> Result<(), ConfigError> {
         Ok(())
     } else {
         Err(ConfigError::UnsafeDirectory(path.to_path_buf()))
+    }
+}
+
+fn validate_private_registry(path: &Path) -> Result<(), ConfigError> {
+    let metadata = fs::symlink_metadata(path)?;
+    let safe = metadata.file_type().is_file()
+        && metadata.uid() == unsafe { libc::geteuid() }
+        && metadata.permissions().mode() & 0o022 == 0;
+    if safe {
+        Ok(())
+    } else {
+        Err(ConfigError::UnsafeRegistry(path.to_path_buf()))
     }
 }

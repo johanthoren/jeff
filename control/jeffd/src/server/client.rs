@@ -263,7 +263,7 @@ impl Write for BoundedBuffer {
     }
 }
 
-fn serialize_bounded(frame: &Value, limit: usize) -> Option<Vec<u8>> {
+pub(super) fn serialize_bounded(frame: &Value, limit: usize) -> Option<Vec<u8>> {
     let mut output = BoundedBuffer {
         bytes: Vec::new(),
         limit,

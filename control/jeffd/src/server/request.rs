@@ -184,10 +184,9 @@ impl Server {
             );
             return;
         };
-        let owned = self
-            .subscriptions
-            .get(subscription_id)
-            .is_some_and(|subscription| subscription.connection == connection);
+        let owned = self.subscriptions.get(subscription_id).is_some_and(
+            |subscription| subscription.connection == connection && subscription.returned,
+        );
         if !owned {
             self.send_error(
                 connection,
