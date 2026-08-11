@@ -12,7 +12,10 @@ use std::thread;
 impl Server {
     pub(super) fn start_snapshot(&mut self, project_id: &str) {
         if self.active.contains_key(project_id)
-            || self.deferred_snapshots.iter().any(|queued| queued == project_id)
+            || self
+                .deferred_snapshots
+                .iter()
+                .any(|queued| queued == project_id)
             || !self.dirty.start_now(project_id)
         {
             return;
@@ -284,8 +287,7 @@ fn retained_snapshot_fits(record: &ProjectRecord, snapshot: &Snapshot, limit: us
     let response_limit = limit
         .checked_sub(Limits::MAX_SERIALIZED_RESPONSE_ID_BYTES)
         .unwrap_or(limit);
-    let response_fits =
-        |frame| super::client::serialize_bounded(&frame, response_limit).is_some();
+    let response_fits = |frame| super::client::serialize_bounded(&frame, response_limit).is_some();
     response_fits(json!({
         "v": PROTOCOL_VERSION,
         "kind": "res",
