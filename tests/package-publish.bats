@@ -280,7 +280,7 @@ select_dist_tag() {
   [ "$status" -eq 0 ] || { printf '%s\n' "$output"; false; }
 }
 
-@test "README publishes verified install and update commands for every first-class host" {
+@test "README publishes verified install, update, and inventory commands for every first-class host" {
   local command
   local commands=(
     'pi install npm:@johanthoren/jeff'
@@ -292,11 +292,27 @@ select_dist_tag() {
     'codex plugin marketplace add johanthoren/jeff'
     'codex plugin add jeff@jeff'
     'codex plugin marketplace upgrade jeff'
+    'grok plugin install johanthoren/jeff --trust'
+    'grok plugin update jeff'
+  )
+  local inventory_commands=(
+    'pi list'
+    'omp plugin list'
+    'claude plugin details jeff@jeff'
+    'codex plugin list'
+    'grok plugin details jeff'
   )
 
   for command in "${commands[@]}"; do
     grep -Fxq -- "$command" "$REPO/README.md" || {
       printf 'README missing verified command: %s\n' "$command"
+      return 1
+    }
+  done
+
+  for command in "${inventory_commands[@]}"; do
+    grep -Fq -- "\`$command\`" "$REPO/README.md" || {
+      printf 'README missing verified inventory command: %s\n' "$command"
       return 1
     }
   done
