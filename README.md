@@ -1,218 +1,328 @@
 # jeff
 
-> Nothing leaves the kitchen until Jeff says so.
+> A model-native quality control plane for agentic software work.
 
-![jeff](assets/jeff.png)
+![Jeff, the sous chef](assets/jeff.png)
 
-Meet your new sous chef. The brigade quivers; Jeff delivers.
+Jeff turns software work by frontier models into an inspectable engineering
+process. A thin orchestrator routes atomic tasks through fresh specialist
+contexts; builders never approve their own work; evidence survives outside the
+chat; and a checked control plane decides whether each task is actually done.
 
-Jeff is a **model-native quality control plane** for software work. Fresh
-specialist contexts carry each stage; enforced separation keeps builders from
-signing off their own work; durable evidence records what happened; and
-deterministic gates decide whether the plate can leave the pass.
+The method is the product. Jeff supplies the quality lifecycle inside the
+coding clients, model providers, and runtime systems you already use, while its
+plain-file ledger keeps the process inspectable across sessions.
 
-Jeff is a cooperative workflow protocol for one trusted operator and friendly
-agents, not a security sandbox. It validates the ledger and stage contracts; it
-does not claim to confine tools supplied by every host.
+Five invariants carry the system:
 
-You run the kitchen: you call the order, you get the last word. Jeff works the
-pass: takes the order, fires the line, holds the standard, lets nothing out
-until it's worthy. A plan, a failing test, the smallest change to green. A
-named plan opportunity or surviving review/audit finding can owe refactor; an
-older plan without an explicit disposition conservatively owes it. Then an
-independent review, and an audit when the dish calls for it. The cooks answer
-to him; he answers to you, Chef.
+1. **Fresh context per stage.** Planning, implementation, review, verification,
+   and audit do not inherit a long, degraded conversation.
+2. **Builder is not judge.** Test author, implementer, reviewer, executor, and
+   verifier identities are mechanically separated where their roles conflict.
+3. **Evidence is durable.** Task state, findings, approvals, test results, and
+   dispatch provenance live in an inspectable ledger, not only in a transcript.
+4. **Gates are deterministic.** Checked JavaScript validates legal stage graphs,
+   identity separation, required evidence, convergence bounds, and completion.
+5. **Disagreement is bounded.** Typed kickbacks, independent refutation, and one
+   task-wide council converge without letting the orchestrator waive a failure.
 
-## The brigade
+Jeff is a cooperative protocol for one trusted operator and friendly agents,
+not a security sandbox or hostile-child containment system. It validates the
+method's state and contracts; tool isolation remains a property of each host.
 
-You give the order. Jeff runs it down the line, one specialist to a station,
-and brings back the plate only when it's worthy.
+## Architecture
 
+The kitchen is the interface, not the mechanism. You are the Chef. Jeff is the
+sous chef that routes the order and holds the pass. The brigade consists of
+fresh specialists, one station at a time.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/architecture-dark.svg">
+  <img src="docs/img/architecture-light.svg" width="900" alt="Jeff system architecture: the operator and thin orchestrator route work through capture, builder contexts, independent judgment, a plain-file ledger, and a done gate that derives completion from recorded evidence.">
+</picture>
+
+The control plane is deliberately boring. `src/cli/cook.js` is the sole
+operational entry point. The authoritative validator imports only Node's
+standard library and `src/core/*`; there is no build step or runtime package
+dependency inside the validation boundary. Models supply judgment. Checked
+code supplies legality.
+
+## Two closed completion graphs
+
+Capture locks a task by its primary outcome. Code and operations then follow
+different graphs:
+
+```text
+code       capture → plan + tests → implement → conditional refactor
+                                      → review + conditional audit → done
+
+operation  capture → plan → execute → verify + conditional audit → done
 ```
-Capture > Plan + Tests > Implement > (Refactor if owed) > Review > (Audit if risky) > Done
-```
 
-For bounded operation tasks, the alternate path is:
+Code planning owns the proof and starts RED when behavior changes. A separate
+implementer makes it green. Jeff then binds one full-suite run to an immutable
+checkpoint before independent judgment. Operation planning instead defines a
+bounded runbook, recovery boundary, exact approval boundary when needed, and
+deterministic postconditions. A separate verifier observes every postcondition
+in order. Executor evidence never substitutes for verification.
 
-`capture → plan → execute → verify → conditional audit → done`
+No active specialist can declare the whole task done. The validator derives
+that result from the ledger.
 
-Operation tasks do not use code-task test scaffolding, implementation, refactor,
-review, or the full-suite gate. Done retains the operation plan and requires
-nonempty execution evidence, exact ordered independent verification of every
-planned postcondition, and an audit pass when audit is required. When a plan
-requires approval, the executor stops with the exact operator-facing request.
-After you approve it, Jeff records the matching grant through host-neutral
-`cook approve <id> <operator>` and re-fires execute. Execute and verify otherwise
-use ordinary host-native stage dispatch. Host tool differences are not a
-cross-host security guarantee, and executor evidence never replaces independent
-verification.
+## Graph Engineering
 
-- **Capture:** Jeff pins the order down with you: what *done* means, what's out
-  of scope, before a pan gets hot.
-- **Plan + tests:** one fresh cook designs the approach and proof, then puts the
-  tests on the line first, all red. On purpose.
-- **Implement:** the smallest change that turns them green. Nothing fancier.
-- **Refactor:** a named plan opportunity or surviving review/audit finding can
-  owe refactor; an older plan without an explicit disposition conservatively
-  owes it. Tidy the station while the tests stay green: simpler, deduped, up to
-  standard.
-- **Review:** a fresh cook who never touched the dish checks it against your
-  standard.
-- **Audit:** when the dish is risky, a security pass before it leaves.
-- **Code done:** only when the full suite is green and the order is met. Not "should
-  work." Does work.
+Jeff 6.0 applied graph-engineering semantics to the work itself without
+adopting a graph runtime or weakening a quality gate:
 
-Every station is a fresh cook: no one works off a half-remembered chat. The cook
-who plated a dish never reviews it, and the palate on the pass outranks the one
-on the line. When review and the line can't agree, Jeff calls a tasting: three
-palates, blind, two to sustain or the plate goes back. Nothing leaves the
-kitchen until it's worthy, and the last word is always yours, Chef.
+- **Expose real width.** Capture applies a fake-edge test and splits
+  independently shippable outcomes into atomic tasks. `deps` alone schedules;
+  `discoveredFrom` records provenance without inventing dependencies.
+- **Drain the task DAG.** `cook ready`, `claim`, `claims`, and `release` provide
+  deterministic ready-set and atomic-claim primitives. Full-mode `cook all`
+  runs independent lanes in isolated worktrees, then serializes integration
+  against a gated checkpoint with an expected-old ref update.
+- **Remove false serialization.** Independent judgments and source-bound
+  refutations fan out concurrently.
+- **Carry facts, not conclusions.** An optional facts-only `context.md` gives
+  each cold specialist a verified repository map while keeping judgment
+  independent.
+- **Make resume deterministic.** An append-only `journal.jsonl` writes intent
+  before specialist dispatches and external effects, so interruption does not
+  become ambiguous replay.
+- **Repair the failed node.** Typed findings identify the exact file and stage
+  owed. A file-confined repair can retain an independently passing sibling
+  judgment, while the full-suite gate always reruns.
+- **Scale escalation with evidence.** A shrinking, confined blocker set can
+  earn one bounded bonus cycle. Divergence still reaches a three-member
+  council, and the validator re-derives the bound.
+- **Project state safely.** `cook snapshot --json` exposes an additive,
+  versioned, read-only machine projection for graph clients and other
+  observers, even when the underlying store is invalid.
 
-**Model-era stamp (July 2026):** current dogfood runs on GPT-5.6 Sol. That is
-execution evidence, not a compatibility floor, routing rule, alias, or fallback.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/graph-engineering-dark.svg">
+  <img src="docs/img/graph-engineering-light.svg" width="900" alt="Jeff Graph Engineering: a task DAG drains through a deterministic ready set, atomic claims, three isolated worktree lanes, serialized integration, an immutable checkpoint, a full-suite gate, independent judgment, and an expected-old ref update.">
+</picture>
 
-Full method in [AGENTS.md](AGENTS.md).
+### Bounded convergence
+
+Blocking findings follow a bounded path: one independent refute before a typed
+kickback, a bounded per-source retry cap, one task-wide council, and at most one
+scoped recovery cycle. Fresh judgment after that cycle either completes the task
+or returns it to the Chef.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/convergence-dark.svg">
+  <img src="docs/img/convergence-light.svg" width="900" alt="Jeff bounded convergence: a blocking finding receives independent refutation, typed repair, capped retries, a three-member council, and one scoped recovery cycle before fresh judgment completes the task or returns it to the Chef.">
+</picture>
+
+The detailed contracts and tradeoffs are recorded in the
+[6.0 Graph Engineering slate](https://github.com/johanthoren/jeff/blob/main/docs/specs/graph-slate-6.0.md). The
+[machine projection](skills/cook/reference/jeff-state-schema.md#snapshot-projection)
+is also the boundary for the planned standalone `jeff graph` client.
+
+## Position in the ecosystem
+
+Jeff is designed to sit beside existing clients and orchestration systems. Each
+keeps ownership of the layer it is built to solve.
+
+| Adjacent system | Primary concern | Jeff's boundary |
+|---|---|---|
+| Claude Code, Codex, Grok Build, Pi, and Oh My Pi | Interactive coding and native specialist execution | Jeff supplies one host-neutral method, ledger, and done-gate across their different dispatch mechanics. |
+| Claude, GPT, and Grok model families | Reasoning and software-engineering judgment | Jeff inherits the orchestrator's active model by default and records actual provider, model, and effort as execution evidence. |
+| LangGraph, Microsoft Agent Framework, Mastra, and Pydantic AI | Application-level agent graphs and runtime orchestration | These systems retain runtime ownership; Jeff controls the quality lifecycle of repository tasks. |
+| Temporal, Restate, and DBOS | Durable execution and distributed workflow recovery | Jeff uses a local append-only journal and plain-file state for a narrower, single-operator engineering protocol. |
+| Gas Town, beads, OpenHands, and fleet orchestrators | Task coordination, agent fleets, and throughput | Jeff borrows ready-set, claim, isolation, and projection semantics while retaining mechanical builder/judge separation and completion proof. |
+
+The mid-2026 field survey positioned Jeff around one specific combination:
+fresh-context judgment, mechanically enforced builder/judge separation, durable
+task evidence, and a deterministic completion gate. Adjacent systems lead in
+execution, durability, observability, and throughput. See the
+[survey and design record](https://github.com/johanthoren/jeff/blob/main/docs/specs/graph-slate-6.0.md).
+
+## Hosts and models
+
+Claude Code, Codex, Grok Build, and Pi are first-class Jeff hosts. Oh My Pi
+installs the Pi package and uses its dispatch bridge. Grok Build consumes
+Jeff's Claude Code-compatible plugin surface, including its agents, skills,
+hooks, and marketplace metadata. The adapters differ; the method, specialist
+contracts, checked core, and evidence model remain shared.
+
+Grok Build and Grok models occupy different layers. Grok Build is the coding
+client; Grok 4.5 is a peer model-family design target alongside Claude Opus 5
+and GPT-5.6 Sol. Jeff defaults specialist model selection to the orchestrator's
+active provider and model and records the actual provider, model, and effort as
+execution evidence.
+
+Current dogfood is stamped GPT-5.6 Sol, July 2026. The stamp records operating
+experience while compatibility remains host-neutral and model-open.
+
+Host-native effort behavior remains explicit:
+
+- Pi and Claude Code apply role-frontmatter effort where supported.
+- Grok Build consumes the Claude Code-compatible agent definitions through its
+  native subagent runtime.
+- Codex specialists inherit orchestrator effort.
 
 ## Install
 
-Jeff is one versioned package with separate host install paths. Its operational
-commands run through the bundled Node CLI and require no `jq`. The Pi install
-also brings the dispatch SDK used when the host does not inject `pi.pi`.
-Node.js `>=22.19.0` is required by the bundled Pi dispatch SDK.
+Jeff is one versioned package with first-class install surfaces for each host.
+Node.js `>=22.19.0` is required by the Pi dispatch SDK.
 
-### Pi: recommended stable path
+### Claude Code
 
-Use the npm package for normal Pi installs. This gives you semver releases.
-
-```
-pi install npm:@johanthoren/jeff
-```
-
-Update the stable package with the same source id:
-
-```
-pi update npm:@johanthoren/jeff
-```
-
-To pin a release:
-
-```
-pi install npm:@johanthoren/jeff@X.Y.Z
-```
-
-For dogfooding or dev/edge installs from the live repository:
-
-```
-pi install git:github.com/johanthoren/jeff
-```
-
-Use the git path only when you intentionally want latest commit behavior instead
-of a stable release.
-
-### Oh My Pi
-
-Install the same npm package through OMP's plugin command:
-
-```
-omp plugin install @johanthoren/jeff
-```
-
-The orchestrator chooses each Jeff specialist's model; the default is active
-provider/model inheritance. Specialists do not inherit OMP orchestration,
-extensions, custom or MCP tools, advisor,
-memory/autolearn, or model fallback behavior.
-
-OMP user- and project-level `SYSTEM.md` instructions remain applicable to
-specialists by design: like other applicable user, host, and repository
-instructions, they may tighten or specialize Jeff's bundled first-party
-standards floor, never weaken it.
-
-### Claude Code: recommended path
-
-Use Claude Code's plugin CLI flow:
-
-```
+```sh
 claude plugin marketplace add johanthoren/jeff
 claude plugin install jeff@jeff
 ```
 
-Update the installed plugin, then restart Claude Code:
+Update the plugin, then restart Claude Code:
 
-```
+```sh
 claude plugin update jeff@jeff
 ```
 
-### Codex: recommended path
+### Codex
 
-Add the Git marketplace, then install Jeff:
-
-```
+```sh
 codex plugin marketplace add johanthoren/jeff
 codex plugin add jeff@jeff
 ```
 
-To update, refresh the marketplace snapshot and reinstall:
+Refresh the marketplace snapshot and reinstall to update:
 
-```
+```sh
 codex plugin marketplace upgrade jeff
 codex plugin add jeff@jeff
 ```
 
-Restart Codex Desktop and start a new task so it loads the updated skills.
+Restart Codex Desktop and begin a new task so it loads the updated skills.
 
-Plain `npm install @johanthoren/jeff` only downloads the artifact into
-`node_modules`; it does not activate Jeff in Pi, Claude Code, or Codex.
+### Grok Build
+
+Grok Build supports Claude Code-compatible plugins and can install Jeff
+directly from GitHub. Git installs require an explicit trust decision. Review
+the repository, then:
+
+```sh
+grok plugin install johanthoren/jeff --trust
+```
+
+Update Jeff:
+
+```sh
+grok plugin update jeff
+```
+
+An `already up to date` response means no change was needed.
+
+### Pi
+
+Install the stable npm release:
+
+```sh
+pi install npm:@johanthoren/jeff
+```
+
+Update or pin it:
+
+```sh
+pi update npm:@johanthoren/jeff
+pi install npm:@johanthoren/jeff@X.Y.Z
+```
+
+For deliberate development installs from the live repository:
+
+```sh
+pi install git:github.com/johanthoren/jeff
+```
+
+### Oh My Pi
+
+Install the stable npm release:
+
+```sh
+omp plugin install @johanthoren/jeff
+```
+
+Re-run the same command to update an npm-installed copy. `omp plugin upgrade`
+is for `name@marketplace` installations.
+
+OMP specialists do not inherit orchestration extensions, custom or MCP tools,
+advisor behavior, memory/autolearn, or model fallback. Applicable user and
+project `SYSTEM.md` instructions still tighten or specialize Jeff's bundled
+standards floor.
+
+### Verify installation
+
+After an update, start a new host session, then inspect the loaded package with
+the host's read-only inventory command:
+
+| Host | Command |
+|---|---|
+| Claude Code | `claude plugin details jeff@jeff` |
+| Codex | `codex plugin list` |
+| Grok Build | `grok plugin details jeff` |
+| Pi | `pi list` |
+| Oh My Pi | `omp plugin list` |
+
+Plain `npm install @johanthoren/jeff` downloads the package into
+`node_modules`; it does not activate Jeff in any host.
 
 ## Set up
 
-Activate Jeff per repo, once. Two modes:
+Activate Jeff once per repository:
 
-- **Full:** your own repo. "Jeff, set up here." The task registry lives in a
-  committed `.jeff/`, and the full pipeline runs with its registry checks.
-  (`cook init`.)
-- **Lite:** a shared or public repo whose work already lives elsewhere, in
-  GitHub issues or a plan file. "Jeff, set up lite here." The registry stays
-  local and git-excluded; your tracker owns the work. Start an issue with
-  "Jeff, work issue #42." (`cook lite`, then either `cook #42` or
-  `cook on #42`; lookup and local ledger wiring are automatic.)
+- **Full mode:** for a repository whose task registry Jeff owns. Ask to set up
+  Jeff, or run `cook init`. The committed `.jeff/` store carries the registry
+  and full dependency graph.
+- **Lite mode:** for a shared repository whose team already owns planning and
+  integration. Ask to set up Jeff Lite, or run `cook lite`. The local ledger is
+  git-excluded and the configured issue or plan store remains authoritative.
 
 ## Use
 
-Just say what you want done. In an active project, the normal host agent first
-assesses ordinary intent without making a durable change. Disposable work, such
-as a throwaway experiment, comparison, local evidence collector, or one-off
-helper, goes directly to ad-hoc route A with no A/B/C interrupt. It is not
-pipeline-verified and is deleted or explicitly kept local when finished.
+Describe the work normally. In an active project, the host first assesses it
+without making a durable change.
 
-- **Explore:** keep quick, reversible work in the current context.
-- **Remember:** an explicit Remember request is the consent to write durable memory without creating work. Full mode uses `.jeff/memory/`; elsewhere Jeff prefers a suitable existing tracked memory, decisions, learnings, or handoff file and preserves its purpose and format, then falls back to local `.jeff/memory/`. Without an explicit Remember (or other persistence) request, ordinary Explore work does not write durable memory. Never use `AGENTS.md`, a README, or ordinary product documentation as a memory dump.
-- **Record:** create pending future work without starting it. In lite mode, Jeff
-  also registers the external item as an idempotent local pending ledger. This
-  internal bookkeeping does not start execution.
-- **Start:** explicitly ask Jeff to begin or resume a recorded item and run it
-  through the pipeline. `cook <id>` and `cook on <id>` are equivalent start forms.
+- **Explore:** disposable experiments and local evidence stay ad hoc.
+- **Remember:** an explicit Remember request is the consent to write durable memory without creating work.
+  Full mode uses `.jeff/memory/`; elsewhere Jeff
+  prefers a suitable tracked memory, decisions, learnings, or handoff file and
+  preserves its purpose and format, then falls back to local `.jeff/memory/`.
+  Without explicit Remember or another persistence request, ordinary work does not write durable memory.
+  `AGENTS.md`, READMEs, and product documentation are not memory stores.
+- **Record:** create pending future work without starting it.
+- **Start:** `cook <id>` and `cook on <ref>` are equivalent forms to start or resume a recorded task through the quality pipeline.
 
-A risk floor always restores the pause for production behavior, user data, data
-migration, security boundaries, accessibility basics, irreversible or shared
-state, releases, and durable build or deploy infrastructure. Other durable work
-pauses before its first write when it changes the method, harness, skills,
-agents, validator, or dispatch; changes the shipped payload or cuts a version
-or tag; is multi-file or cross-cutting behavior; needs crisp acceptance criteria
-or independent review; or should survive another session. Jeff then asks you to
-choose A (ad-hoc minimal ship), B (record pending), or C (record and start
-capture), and holds all durable writes until you choose.
+Before the first durable write on consequential work, Jeff offers a clear
+choice: ad-hoc local ship, record pending, or record and start capture. Risky
+production, data, security, accessibility, release, and shared-state work
+always restores that boundary.
 
-Jeff suggests tracking only when a meaningful obligation emerges, and explains
-what to track, why structure helps, and how to record or start it. Recording and
-starting are separate choices. Once tracked work starts, Jeff becomes the thin
-orchestrator and every quality gate above still applies.
+Once tracked work starts, Jeff becomes the thin orchestrator. It routes and
+records. Fresh specialists plan, build, simplify, judge, and audit. The
+mechanical gate, not momentum in the conversation, decides done.
 
 Re-fire until it's worthy.
 
----
+## Read deeper
 
-Prefer plain talk? Set your voice once with the `JEFF_FLAVOR` environment
-variable (`plain` or `kitchen`); it applies to every jeff repo. A per-repo
-`"flavor"` in `.jeff/config.json` overrides it. Precedence: a live in-chat
-request > per-repo `flavor` > `JEFF_FLAVOR` > the default kitchen voice. Either
-way the work is identical.
+- [Design rationale](docs/specs/jeff-design.md): system boundaries, invariants,
+  pipeline graphs, and checked control plane.
+- [6.0 Graph Engineering slate](docs/specs/graph-slate-6.0.md): field survey,
+  throughput mechanisms, targeted repair, DAG drain, and projection contracts.
+- [Visual system atlas](docs/img/atlas-light.svg): architecture, Graph
+  Engineering, and bounded convergence in one sheet
+  ([dark theme](docs/img/atlas-dark.svg)).
+- [State schema](skills/cook/reference/jeff-state-schema.md): persisted records
+  and validator-derived invariants.
+- [Operational method](skills/cook/SKILL.md): the complete orchestration loop.
+- [Maintenance stance](docs/maintaining-jeff.md): pace layers, model drift, and
+  design for deletion.
+- [Kitchen voice](docs/brand.md): the persona as a render layer over a fixed
+  technical substrate.
+
+Prefer plain talk? Set `JEFF_FLAVOR=plain`. A per-repository `"flavor"` value
+in `.jeff/config.json` overrides the environment, and a live conversation
+choice overrides both. The work and evidence are identical.

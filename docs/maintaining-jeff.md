@@ -41,6 +41,17 @@ first-party standards floor and explicit validation plus CI. Treat ambient
 instruction files, hooks, dispatch, and effort mechanics as host adapters used
 only when applicable, and label host-specific guidance.
 
+## Treat install commands as compatibility contracts
+
+The README's host commands are public interfaces. When touching installation
+guidance or preparing a release, verify each command against the current host
+`--help` output and one real install, update, or inventory path. Keep lifecycle
+differences explicit rather than inventing a universal command that no host
+actually implements.
+
+`tests/package-publish.bats` keeps the verified command set attached to the
+README. Update the documentation and its guard in the same change.
+
 ## Two drifts; watch model drift
 
 A long-lived agent system is squeezed between two moving things. **World drift**

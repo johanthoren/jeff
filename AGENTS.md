@@ -1,6 +1,19 @@
 # AGENTS.md: jeff
 
-**jeff** is a model-native quality control plane, distributed as **Claude Code and Codex plugins** and a **Pi package**. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. It is a cooperative workflow protocol for one trusted Chef and friendly frontier agents, not a security sandbox; host tool isolation is not a cross-host invariant.
+**jeff** is a model-native quality control plane, distributed as **Claude Code and Codex plugins** and a **Pi package**. **Grok Build** consumes the Claude Code-compatible plugin surface directly. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. It is a cooperative workflow protocol for one trusted Chef and friendly frontier agents, not a security sandbox; host tool isolation is not a cross-host invariant.
+
+Claude Code, Codex, Grok Build, and Pi are first-class hosts over the same
+method and checked core; Oh My Pi installs the Pi package and uses its dispatch
+bridge. Grok Build is the coding client, while Grok is also a model family
+alongside Claude and GPT. Host mechanics differ; the method semantics stay
+shared.
+
+Jeff 6.0 adds Graph Engineering at the work layer: fake-edge decomposition,
+task-DAG ready sets and atomic claims, isolated parallel lanes, facts-only
+context packets, write-ahead journaling, typed targeted repair,
+evidence-scaled convergence, and a versioned read-only projection. The
+implementation record and adjacent-system survey live in the
+[6.0 Graph Engineering slate](https://github.com/johanthoren/jeff/blob/main/docs/specs/graph-slate-6.0.md).
 
 - Design spec: `docs/specs/jeff-design.md`
 - State schema: `skills/cook/reference/jeff-state-schema.md`
@@ -48,7 +61,7 @@ A task locks `category` at capture by its primary outcome. `code` is the default
 
 1. **Thin orchestrator.** Route + transcribe; never self-judge; never override a `needs-work`. Every judgment happens in a fresh specialist context. Only `capture` is orchestrator-led; every other active stage is dispatched.
 2. **Separation.** The party that builds a thing never signs it off. The binding identity invariants for both categories are owned by `skills/cook/reference/jeff-state-schema.md` (separation invariants) and enforced by `cook validate`.
-3. **Model is the orchestrator's judgment; effort is host-native.** Specialist model selection follows the dispatch rules owned by `skills/cook/SKILL.md` (§Dispatch), default inherit. Pi and Claude Code apply role-frontmatter effort where supported; Codex inherits orchestrator effort. The settled per-stage values are owned by `agents/cook-*.md` frontmatter.
+3. **Model is the orchestrator's judgment; effort is host-native.** Specialist model selection follows the dispatch rules owned by `skills/cook/SKILL.md` (§Dispatch), default inherit. Pi and Claude Code apply role-frontmatter effort where supported; Grok Build consumes the Claude Code-compatible agent definitions through its native subagent runtime; Codex inherits orchestrator effort. The settled per-stage values are owned by `agents/cook-*.md` frontmatter.
 4. **State on disk.** Write `.jeff/**` as plain files. `cook validate` gates (orchestrator before each commit; CI on push). No external state service.
 5. **Git.** Unverified task work never reaches trunk, and a completed task lands there as one green task commit. The gate order, the checkpoint contract, the commit-message shape, the `complexity` call, and the mode-specific terminal are owned by `skills/cook/SKILL.md` (§Git).
 6. **Standards.** jeff's bundled first-party skills are the portable baseline quality floor for all code, and no third-party skill or built-in tool drives behavior. The floor and its override precedence are owned by `skills/cook/SKILL.md` (§Standards).

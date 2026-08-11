@@ -13,11 +13,59 @@ Reliable long-running autonomous sessions that solve **atomic tasks one at a tim
 
 This is **not** a trust, anti-forgery, or hostile-child containment system. Host tool isolation is not a cross-host invariant. It is a **separation-and-completeness** system: the right-sized fresh-context specialist performs each stage, a *different* fresh-context specialist judges it, and a mechanical validator guarantees the recorded separation and completeness are real.
 
+### 1.1 Position in the ecosystem
+
+Jeff owns one narrow layer between coding clients and repository integration:
+the quality lifecycle of an atomic task. Coding clients host the work, models
+supply judgment, agent runtimes execute application graphs, and durable
+workflow engines own distributed recovery.
+
+Claude Code, Codex, Grok Build, and Pi are first-class hosts over the same
+method, specialist contracts, checked-JS core, and evidence model. Grok Build
+consumes the Claude Code-compatible plugin surface. Oh My Pi installs the Pi
+package and uses the same dispatch bridge. Grok Build is the coding client;
+Claude, GPT, and Grok are model families. The default dispatch rule inherits
+the active orchestrator provider and model.
+
+Adjacent systems solve complementary problems:
+
+| System class | Representative systems | Primary concern | Jeff's distinction |
+|---|---|---|---|
+| Coding clients | Claude Code, Codex, Grok Build, Pi, Oh My Pi | Interactive software work and host-native agent execution | One portable quality method and ledger across host-specific dispatch mechanics |
+| Agent runtimes | LangGraph, Microsoft Agent Framework, Mastra, Pydantic AI | Application-level graph execution, state, and tool orchestration | Repository-task completion proof while the runtime retains application execution |
+| Durable execution | Temporal, Restate, DBOS | Distributed workflow recovery and long-lived process guarantees | A local, single-operator protocol with plain-file state and a bounded write-ahead journal |
+| Task and fleet coordination | Gas Town, beads, OpenHands, fleet orchestrators | Work allocation, agent fleets, isolation, and throughput | Mechanical builder/judge separation, fresh-context judgment, and deterministic done-gates |
+
+The mid-2026 survey behind `docs/specs/graph-slate-6.0.md` positions Jeff
+around fresh-context judgment, mechanically enforced builder/judge separation,
+durable task evidence, and a deterministic completion gate. The surveyed
+adjacent systems lead in execution, durability, observability, and throughput.
+
+### 1.2 Graph Engineering in 6.0
+
+Version 6.0 imported graph-engineering semantics without adopting a graph
+runtime or weakening the quality anchors. The graph is the work and its
+evidence, not a framework dependency:
+
+| Mechanism | Graph-engineering move | Preserved anchor |
+|---|---|---|
+| Capture decomposition + `deps` | Remove fake edges and expose independently shippable width | Capture still locks atomic acceptance criteria; dependencies alone schedule |
+| Parallel DAG drain | Deterministic ready set, atomic claims, isolated worktree lanes, serialized integration | Each lane still reaches the same immutable checkpoint, full-suite, review, and audit gates |
+| Parallel judgments and refutes | Fan out independent nodes instead of serializing them | Every judge remains fresh, source-bound, and identity-separated |
+| Facts-only context packet | Cache verified repository topology across cold stages | Conclusions and fixes remain local to the specialist that owns them |
+| Append-only journal | Write intent before dispatch or an external effect | Resume can replay deterministically without treating an orphan as completed evidence |
+| Typed targeted repair | Address the failed node and retain a proven sibling judgment only when the file delta is confined | The full-suite gate always reruns and the validator proves retention legality |
+| Evidence-scaled convergence | Let shrinking, confined findings buy one bounded cycle | Divergence still reaches the fixed council and no source becomes unbounded |
+| `cook snapshot --json` | Add a versioned projection boundary for graph clients and observers | Projection is read-only, additive, and separate from validation |
+
+The [6.0 Graph Engineering slate](https://github.com/johanthoren/jeff/blob/main/docs/specs/graph-slate-6.0.md) owns the design and field-survey record.
+`skills/cook/reference/jeff-state-schema.md` owns the persisted contracts.
+
 ## 2. Principles
 
 1. **Thin orchestrator that never judges.** The main session routes work and transcribes specialist verdicts; it never decides "good enough." Every act of judgment happens in a fresh specialist context. Jeff may not override a `needs-work`.
 2. **Separation by fresh context.** Code separates test author, implementer, and reviewers. Operations separate executor and verifier. Audit is an additional conditional judgment.
-3. **Model is the orchestrator's judgment; effort is host-native.** Specialist model selection follows the dispatch rules in `skills/cook/SKILL.md` (§Dispatch), default inherit. Pi and Claude Code apply role-frontmatter effort where supported; Codex inherits orchestrator effort.
+3. **Model is the orchestrator's judgment; effort is host-native.** Specialist model selection follows the dispatch rules in `skills/cook/SKILL.md` (§Dispatch), default inherit. Pi and Claude Code apply role-frontmatter effort where supported; Grok Build consumes the Claude Code-compatible agent definitions through its native subagent runtime; Codex inherits orchestrator effort.
 4. **Category-specific completion.** Code reaches done only through its test/review/audit gate. Operation reaches done only through execution evidence, independent postcondition verification, and conditional audit. Kickbacks remain within the locked category.
 5. **Durable truth on disk.** State lives in git-tracked files, re-read each loop, never trusted to Jeff's context. Survives compaction and restarts.
 6. **Lean method, borrowed craft.** The craft (capture, TDD, review) is native to frontier models; we supply framing + conventions and use jeff's bundled first-party standards as a portable floor. Applicable user, host, repository, and language instructions may tighten or specialize it, never weaken it. No dependency on method-imposing third-party packs.
@@ -49,7 +97,7 @@ Operation execute and verify use ordinary host-native stage dispatch. Role contr
 
 ## 5. Model selection and effort
 
-Model selection for each specialist follows the dispatch rules owned by `skills/cook/SKILL.md` (§Dispatch). Pi and Claude Code apply the per-stage effort values owned by `agents/cook-*.md` frontmatter; Codex children inherit orchestrator effort. Dispatch reports actual provider/model/effort as evidence.
+Model selection for each specialist follows the dispatch rules owned by `skills/cook/SKILL.md` (§Dispatch). Pi and Claude Code apply the per-stage effort values owned by `agents/cook-*.md` frontmatter; Grok Build consumes those Claude Code-compatible agent definitions through its native subagent runtime; Codex children inherit orchestrator effort. Dispatch reports actual provider/model/effort as evidence.
 
 ## 6. State & schema
 

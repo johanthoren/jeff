@@ -20,8 +20,8 @@ plus the repository is the complete input.
 Jeff today is excellent inside one host chat session and one project checkout.
 It is weak as an operator surface:
 
-1. **No live multi-project picture.** The Chef tab-dances across Kitty tabs
-   (OMP, Claude Code, other projects) to notice interruptions.
+1. **No live multi-project picture.** The Chef tab-dances across terminal
+   sessions in Claude Code, Codex, Grok Build, Pi, or OMP to notice interruptions.
 2. **No shared attention channel.** Approvals, capture forks, blocked
    handoffs, and freeform steering live inside whichever session happened to
    raise them.
@@ -35,7 +35,7 @@ surface** that can sit beside them.
 
 ## 2. North star
 
-Keep cooking in **OMP and Claude Code** (and Pi/Codex when used). Beside them
+Keep cooking in **Claude Code, Codex, Grok Build, Pi, or OMP**. Beside them
 runs a local **Jeff Control** stack:
 
 - a multi-project terminal control client (TUI) with live task graphs; a web
@@ -93,7 +93,7 @@ parallel claim system.
 
 Parked non-goals for this vision:
 
-- replacing OMP/Claude/Pi/Codex as specialist hosts
+- replacing Claude Code, Codex, Grok Build, Pi, or OMP as specialist hosts
 - multi-user auth, teams, or a hosted SaaS control plane
 - beads/Dolt/LangGraph/Temporal as the task substrate
 - per-subagent model pickers (reopens a settled method rule)
@@ -105,8 +105,8 @@ Parked non-goals for this vision:
 | Topic | Decision |
 |---|---|
 | Product role | Hybrid: disk truth; optional managed drain; host sessions remain first-class |
-| Orchestrator home | Host-neutral contracts: OMP, Claude Code, Pi, Codex, or a jeff-owned drain driver |
-| OMP | Preferred dogfood host later; not required for projection-only use; terminals and autodrain side by side |
+| Orchestrator home | Host-neutral contracts: Claude Code, Codex, Grok Build, Pi, OMP, or a jeff-owned drain driver |
+| Current dogfood | OMP is one local dogfood environment; every supported host remains first-class |
 | Graph | Linked views: project task DAG + per-task stage pipeline |
 | Inbox | Full two-way Chef↔Jeff chat, with structured decision cards |
 | Inbox identity | Project inbox is canonical and standalone; optional global attention/chat overlays all active projects |
@@ -124,32 +124,33 @@ Parked non-goals for this vision:
 | Input (2026-08-02 follow-up) | Mouse and keyboard both first-class: click selection, tab cycling, fuzzy-find jump to any task/project/card |
 | Code home (2026-08-02 follow-up) | Rust workspace folder `control/` in this repo, outside the npm `files` allowlist; CLI-only boundary enforced by the language wall and the item 8 contract |
 
-## 5. Field survey: steal semantics, not dependencies
+## 5. Field survey: learn from adjacent systems
 
-Mid-2026 adjacent systems were surveyed for operator-surface patterns. Jeff’s
-niche (mechanically enforced quality gates with builder/judge separation)
-remains unoccupied. Useful semantics:
+Mid-2026 adjacent systems were surveyed for operator-surface patterns. Within
+that bounded set, none centered Jeff's exact combination of mechanically
+enforced quality gates, fresh-context judgment, and builder/judge separation.
+The systems below lead in concerns Jeff does not try to own:
 
-| Pattern | Sources | Steal for Jeff Control |
+| Pattern | Sources | Applied in Jeff Control |
 |---|---|---|
-| Atomic task claim, not global mutex | Beads / Gas Town; jeff item 7 | One holder per task via `.claim` |
+| Atomic task claim, not global mutex | beads / Gas Town; jeff item 7 | One holder per task via `.claim` |
 | Worktree isolation per concurrent task | Gas Town, Bernstein, item 7 | Already specified in the slate |
 | Unified human inbox for permissions and interrupts | octomux, Codecast | One attention surface for decisions + steer |
 | Persistent coordinator persona beside workers | Gas Town Mayor | Project Jeff in the inbox |
 | Graph view + interrupt payloads | LangGraph/LangSmith Studio; Temporal HITL | Task DAG, stage graph, decision cards with exact resume actions |
-| Session fleet / multi-project switcher | Jean, octomux | Live “who holds what” without replacing the terminal |
+| Session fleet / multi-project switcher | Jean, octomux | Live "who holds what" without replacing the terminal |
 | Deterministic ready-set; LLM only inside a claimed unit | Bernstein; item 7 `cook ready` | Mechanical drain loop; Jeff routes within a claim |
 | Durable wait for human input | Temporal signals/approvals | Parked lane + inbox card; no busy loop |
 
-Explicit non-adoptions from the same survey (already settled in the graph
-slate): beads/Dolt as substrate; LangGraph-style graph runtimes; Temporal as
-the execution engine. Steal behavior; keep plain files and jeff’s validator.
+The survey also settled several boundaries: no beads/Dolt state substrate, no
+LangGraph-style graph runtime, and no Temporal execution engine inside Jeff.
+Adopt useful semantics while keeping plain files and Jeff's validator.
 
 ## 6. Product surfaces
 
 ### 6.1 Terminal host (unchanged class of tool)
 
-OMP, Claude Code, Pi, or Codex running Jeff interactively.
+Claude Code, Codex, Grok Build, Pi, or OMP running Jeff interactively.
 
 - deep capture and hard calls
 - ad-hoc explore work under ambient entry rules
@@ -448,7 +449,7 @@ history, durable open decisions, and project-local storage.
 | Role | Writes task progress? | Notes |
 |---|---|---|
 | Observer (dashboard/backend projection) | no | FS watch + API |
-| Interactive driver (host Jeff session) | yes, for claimed tasks | OMP/Claude/Pi/Codex |
+| Interactive driver (host Jeff session) | yes, for claimed tasks | Claude Code / Codex / Grok Build / Pi / OMP |
 | Drain supervisor | yes, for claimed tasks | optional per project |
 | Lane worker / specialist | yes, under a claim | fresh contexts as today |
 
@@ -462,7 +463,7 @@ Successful multi-agent systems converge on **claim the unit of work**, not
 3. A second claim on the same task fails; UI shows the holder label.
 4. Claims never auto-break. Stale claims (item 7: aged with no journal
    progress) escalate to the inbox for Chef action.
-5. “Open in OMP/Claude” from the dashboard:
+5. "Open in configured host" from the dashboard:
    - if the Chef/session already holds the claim → launch/attach in that
      worktree
    - if free → claim, then launch host bound to the task
@@ -531,12 +532,13 @@ Specialists keep the settled method rule, owned by `skills/cook/SKILL.md` (§Dis
 
 - model selection is the orchestrator's judgment, default inherit
 - Pi and Claude Code apply role-frontmatter effort where supported
+- Grok Build consumes the Claude Code-compatible agent definitions through its native subagent runtime
 - Codex children inherit orchestrator effort
 
 No per-stage model matrix in this vision. Profile presets (named bundles of
 driver model/effort) are an optional UX sugar over the same levers.
 
-## 12. OMP and other hosts
+## 12. Host adapters
 
 End state the Chef wants:
 
@@ -544,18 +546,19 @@ End state the Chef wants:
   drain
 - surface operator escalations and questions through the project inbox
   (and optional global joint chat)
-- still start OMP or Claude Code on a task manually
-- interactive and autonomous modes live side by side
+- still start any configured interactive host on a task manually
+- keep interactive and autonomous modes side by side
 
-Host adapters are a thin launch + specialist-dispatch boundary, same philosophy
-as `src/pi/` today:
+Host adapters are a thin launch and specialist-dispatch boundary, the same
+philosophy as `src/pi/` today. All adapters remain peers:
 
 | Host | Role in control plane |
 |---|---|
-| OMP | Preferred local dogfood host for launch + dispatch when chosen |
-| Claude Code | Peer interactive host and launch target |
-| Pi | Peer host; existing `cook_dispatch` bridge remains relevant |
-| Codex | Peer host; inherits orchestrator effort as today |
+| Claude Code | First-class interactive host and launch target |
+| Codex | First-class interactive host; inherits orchestrator effort |
+| Grok Build | First-class interactive host using the Claude Code-compatible plugin surface |
+| Pi | First-class host; existing `cook_dispatch` bridge remains relevant |
+| OMP | First-class Pi-based host and current local dogfood environment |
 
 Projection-only dashboard use must work with **no** host binary beyond what
 the Chef already uses for interactive work. Autodrain requires at least one
@@ -588,8 +591,9 @@ configured host adapter capable of running Jeff lanes.
          └─────────┬──────────┘   └────────┬────────┘
                    │                       │
          ┌─────────▼──────────┐   ┌────────▼────────┐
-         │ OMP / Claude / …   │   │ drain lane host │
-         │ interactive Jeff   │   │ (optional)      │
+         │ interactive host   │   │ drain lane host │
+         │ Claude/Codex/Grok/ │   │ (optional)      │
+         │ Pi/OMP             │   │                 │
          └────────────────────┘   └─────────────────┘
 ```
 
@@ -607,7 +611,7 @@ When implementation is unblocked, the smallest complete system is:
 4. `.jeff/inbox/` transcript + open decision cards + project chat UI
 5. optional global attention bar + joint chat as a merge view
 6. drain supervisor calling item-7 CLI loop with hybrid standby brain
-7. host launch = claim + exec OMP/Claude in the right worktree
+7. host launch = claim + exec the configured client in the right worktree
 8. driver model/effort settings for managed runtimes only
 
 Everything else is deferred sugar.
@@ -737,10 +741,10 @@ blocking for their phases.
 - Packaging: the npm `files` allowlist ships `src/**/*.js`, so `jeffd` under
   `src/` would ship inside the method payload. Resolved: the Rust workspace
   lives in `control/`, which is never in the allowlist, so nothing ships.
-- OMP wording in section 12: today OMP is a Pi-SDK isolation mode inside
-  `role-session.js`, not a fourth adapter. Inventory reads: Claude Code
-  (Agent tool), Pi (`cook_dispatch`), Codex (native dispatch), OMP as a
-  Pi-family launch target.
+- Host inventory: Claude Code uses its Agent tool; Grok Build consumes the
+  Claude Code-compatible plugin surface through native subagents; Pi uses
+  `cook_dispatch`; Codex uses native dispatch; OMP is a Pi-family launch target
+  using the Pi-SDK isolation mode in `role-session.js`.
 - Method-side prerequisite for the backend contract: `cook snapshot --json`,
   slate item 8, shipped in `6.0.0-alpha.6`, so `jeffd` never learns the task
   schema.

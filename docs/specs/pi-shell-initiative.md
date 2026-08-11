@@ -7,9 +7,10 @@ package; it is not an active proposal or branch plan.
 ## 1. Outcome
 
 The initiative made Pi a first-class Jeff host from the same repository and
-package that serve Claude Code. Codex support subsequently joined the same
-architecture. Pi, Claude Code, and Codex are now first-class hosts for Jeff's
-model-native quality control plane.
+package that serve Claude Code. Codex and Grok Build subsequently joined the
+same architecture. Grok Build consumes the Claude Code-compatible plugin
+surface. Claude Code, Codex, Grok Build, and Pi are first-class Jeff hosts; Oh
+My Pi is a first-class Pi-based client.
 
 Each host presents the same method: fresh specialist contexts, enforced
 separation, durable evidence, and deterministic gates. Host-native adapters
@@ -28,7 +29,9 @@ as a bounded transition oracle while unchanged behavior moved to Node.
    package or marketplace flow, with no second runtime installation step.
 3. **One model, host-native effort.** Every specialist inherits the
    orchestrator provider and model. Pi and Claude Code apply role-frontmatter
-   effort where supported; Codex children inherit orchestrator effort.
+   effort where supported; Grok Build consumes the Claude Code-compatible agent
+   definitions through its native subagent runtime; Codex children inherit
+   orchestrator effort.
 4. **One authoritative core.** Checked-JS Node owns CLI and validation truth;
    transition-only shell parity machinery is not shipped.
 5. **One stage-effort definition.** `agents/cook-*.md` frontmatter owns role
@@ -40,10 +43,13 @@ not a compatibility floor, routing rule, or minimum-version promise.
 
 ## 3. Why the package has one root
 
-All three hosts discover their install metadata at the repository root:
+The first-class host surfaces discover their install metadata at the repository
+root:
 
 - Claude Code reads `.claude-plugin/` and the conventional `agents/`, `hooks/`,
   and `skills/` directories.
+- Grok Build discovers the same Claude Code marketplaces, plugins, agents,
+  skills, hooks, and instruction files directly.
 - Pi reads the root `package.json` and its `pi.extensions` and `pi.skills`
   entries.
 - Codex reads `.agents/plugins/marketplace.json`, `.codex-plugin/plugin.json`,
@@ -79,6 +85,7 @@ launch boundary.
 | --- | --- | --- |
 | Pi | `cook_dispatch` through `src/pi/role-session.js` | skills, role briefs, checked-JS core |
 | Claude Code | host-native Task/Agent dispatch with `agents/cook-*.md` | skills, role briefs, checked-JS core |
+| Grok Build | native subagents with Claude Code-compatible plugin agents | skills, role briefs, checked-JS core |
 | Codex | native child tasks with the role body injected | skills, role briefs, checked-JS core |
 
 Pi is the only host that needs a shipped dispatch bridge because it does not

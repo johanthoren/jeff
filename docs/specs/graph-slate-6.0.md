@@ -1,15 +1,16 @@
 # Graph slate: the jeff 6.0 design spec
 
-Status: approved design, ready to implement. Author of record: Johan (the Chef).
+Status: implemented in 6.0.0; retained as the design, field-survey, and rollout
+record. Author of record: Johan (the Chef).
 Baseline: jeff 5.0.0, commit `dfa9a31`, 2026-07-31.
 
-This spec is self-contained. It was produced from a full survey of the mid-2026
-graph-engineering field (LangGraph, Microsoft Agent Framework, Mastra, Pydantic
-AI, Temporal/Restate/DBOS, Gas Town + beads, GSD, OpenHands, and the fleet
-orchestrators). Conclusion of that survey: nothing replaces jeff; its niche
-(mechanically enforced quality gates with builder/judge separation) is unoccupied
-in the entire field. What the field does better is throughput. This slate
-imports the throughput mechanisms without weakening a single gate.
+This spec is self-contained. It was produced from a survey of the mid-2026
+graph-engineering field: LangGraph, Microsoft Agent Framework, Mastra, Pydantic
+AI, Temporal, Restate, DBOS, Gas Town with beads, GSD, OpenHands, and fleet
+orchestrators. The survey did not find a system centered on Jeff's exact
+combination of mechanically enforced quality gates and builder/judge
+separation. It did find stronger throughput mechanisms. This slate imports
+those mechanisms without weakening a gate.
 
 The two operator gripes this slate exists to fix:
 
@@ -33,8 +34,8 @@ Toolchain prerequisites: a POSIX system with git, Node.js ≥ 22.19, and `bats`
   through jeff's own pipeline in this repo (`.jeff/` here runs lite mode;
   `node src/cli/cook.js` is the CLI). Dogfood: cook item N on the pipeline as
   merged through item N-1.
-- Jeff dispatch has host adapters for Claude Code, Pi, and Codex. In any other
-  harness, the pipeline's discipline still applies and is followed manually,
+- Jeff dispatch has host adapters for Claude Code, Grok Build, Pi, and Codex.
+  In any other harness, the pipeline's discipline still applies and is followed manually,
   one fresh context (or failing that, one clearly separated pass) per stage:
   author the failing tests first and record the RED evidence; implement in a
   separate context from the test author; obtain an independent review pass
@@ -63,8 +64,8 @@ Toolchain prerequisites: a POSIX system with git, Node.js ≥ 22.19, and `bats`
 
 ### Binding constraints (violating any of these is a blocking defect)
 
-1. **Host-neutral.** Everything must work identically under Claude Code, Pi,
-   and Codex dispatch. No feature may depend on a Claude-Code-only tool.
+1. **Host-neutral.** Everything must work identically under Claude Code, Grok
+   Build, Pi, and Codex dispatch. No feature may depend on a Claude-Code-only tool.
 2. **State on disk, plain files.** No server, no daemon, no database. New state
    is files under `.jeff/`, human-readable.
 3. **Prose owns sequence, checked JS owns legality.** Any behavior that must
@@ -682,9 +683,13 @@ Audit: not required (read-only projection; no trust boundary crossed).
 - Trajectory-asserting eval fixtures for jeff's own regression testing.
 - Any adoption of beads/Dolt as a state substrate; any graph runtime
   (LangGraph or similar); any durable-execution engine. The survey verdicts
-  are settled: steal semantics, never dependencies.
+  are settled: adopt useful semantics, never dependencies.
 
 ## Release: 6.0.0
+
+All eight items shipped in 6.0.0. The remainder of this section preserves the
+alpha-era chronology and its then-current release procedure; present-tense
+statements below are historical unless explicitly marked otherwise.
 
 Alpha versions are allocated by **release order, not by slate item**, and
 allocation is a separate event from tagging. A merge takes the next unused
