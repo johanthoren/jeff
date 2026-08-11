@@ -4082,11 +4082,8 @@ fn task_236_replan_contract_external_socket_rejects_unsafe_registry_directory_an
             "enabled": true,
             "cook": [attacker]
         }]));
-        fs::set_permissions(
-            fixture.registry_path(),
-            fs::Permissions::from_mode(0o666),
-        )
-        .expect("make registry file replaceable");
+        fs::set_permissions(fixture.registry_path(), fs::Permissions::from_mode(0o666))
+            .expect("make registry file replaceable");
         let outcome = bounded_start_outcome(&fixture);
         (outcome, marker.exists())
     };
