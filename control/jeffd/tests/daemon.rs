@@ -2980,6 +2980,616 @@ fn council_recovery_contract_registry_has_a_finite_one_mibibyte_input_bound() {
     );
 }
 
+struct RecoveryGate {
+    arm_path: PathBuf,
+    ready_path: PathBuf,
+    release_path: PathBuf,
+    ready: mpsc::Receiver<String>,
+    release: File,
+}
+
+impl RecoveryGate {
+    fn new(root: &Path, name: &str) -> Self {
+        let arm_path = root.join(format!("{name}-arm"));
+        let ready_path = root.join(format!("{name}-ready.fifo"));
+        let release_path = root.join(format!("{name}-release.fifo"));
+        make_race_fifo(&ready_path);
+        make_race_fifo(&release_path);
+        let ready_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&ready_path)
+            .expect("open recovery ready FIFO");
+        let (ready_tx, ready) = mpsc::channel();
+        thread::spawn(move || {
+            let mut reader = BufReader::new(ready_file);
+            let mut line = String::new();
+            reader
+                .read_line(&mut line)
+                .expect("read recovery readiness");
+            ready_tx.send(line).expect("forward recovery readiness");
+        });
+        Self {
+            arm_path,
+            ready,
+            release: OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&release_path)
+                .expect("open recovery release FIFO"),
+            ready_path,
+            release_path,
+        }
+    }
+
+    fn environment(&self) -> [(&'static str, &Path); 3] {
+        [
+            ("_JEFFD_TEST_OWNER_ARM", self.arm_path.as_path()),
+            ("_JEFFD_TEST_OWNER_READY", self.ready_path.as_path()),
+            (
+                "_JEFFD_TEST_OWNER_RELEASE",
+                self.release_path.as_path(),
+            ),
+        ]
+    }
+
+    fn arm(&self) {
+        fs::write(&self.arm_path, b"armed").expect("arm recovery owner gate");
+    }
+
+    fn wait(&mut self) {
+        assert_eq!(
+            self.ready
+                .recv_timeout(Duration::from_secs(10))
+                .expect("daemon reaches the recovery synchronization point"),
+            "run\n"
+        );
+    }
+
+    fn release(&mut self) {
+        if let Err(error) = fs::remove_file(&self.arm_path) {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::NotFound,
+                "disarm recovery owner gate: {error}"
+            );
+        }
+        self.release
+            .write_all(b"continue\n")
+            .expect("release recovery owner gate");
+        self.release.flush().expect("flush recovery owner release");
+    }
+}
+
+#[test]
+fn task_236_contract_terminal_capacity_survives_connection_bytes_and_returned_subscription() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([
+        fixture.default_record(),
+        fixture.path_cook_record()
+    ]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut snapshot_gate = FifoPair::new(&root);
+    let mut write_barrier = EgressWriteBarrier::new(&root);
+    let blocked_id = "b".repeat(700);
+    let blocked_bytes = serde_json::to_vec(&json!({
+        "v": 1,
+        "kind": "res",
+        "id": blocked_id,
+        "ok": true,
+        "result": {
+            "protocolVersion": 1,
+            "serverVersion": env!("CARGO_PKG_VERSION"),
+            "snapshotSchemaMin": 1,
+            "snapshotSchemaMax": 1
+        }
+    }))
+    .expect("serialize exact blocked response")
+    .len();
+    let limits = PathBuf::from(format!(
+        "ingress=16,in_flight=16,egress_frames=1,egress_bytes={blocked_bytes},global_egress_bytes=8192"
+    ));
+    let mut environment = write_barrier.environment();
+    environment.extend([
+        ("FAKE_READY_FIFO", snapshot_gate.ready_path.as_path()),
+        ("FAKE_RELEASE_FIFO", snapshot_gate.release_path.as_path()),
+        ("_JEFFD_TEST_LIMITS", limits.as_path()),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+
+    let mut target = fixture.client();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "returned-subscription",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-a"}
+    }));
+    snapshot_gate.wait_for_run();
+    snapshot_gate.release();
+    let returned = target.recv_until(|frame| frame["id"] == "returned-subscription");
+    let returned_id = assert_ok(&returned)["subscriptionId"]
+        .as_str()
+        .expect("returned subscription id")
+        .to_owned();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "accepted-cold-get",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-b"}
+    }));
+    snapshot_gate.wait_for_run();
+
+    let mut terminal_barrier = fixture.client();
+    terminal_barrier.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "accepted-after-target",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-b"}
+    }));
+    terminal_barrier.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "barrier-accepted",
+        "method": "server.hello",
+        "params": {}
+    }));
+    assert_ok(&terminal_barrier.recv_until(|frame| frame["id"] == "barrier-accepted"));
+
+    write_barrier.arm();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": blocked_id,
+        "method": "server.hello",
+        "params": {}
+    }));
+    write_barrier.wait();
+    fixture.signal(libc::SIGTERM);
+    let barrier_terminal =
+        terminal_barrier.recv_until(|frame| frame["id"] == "accepted-after-target");
+    assert_eq!(barrier_terminal["error"]["code"], "unavailable");
+    write_barrier.release();
+    let target_frames = target.recv_all_until_eof(6);
+    terminal_barrier.recv_all_until_eof(4);
+    fixture.wait_for_exit();
+    let terminal = target_frames
+        .iter()
+        .filter(|frame| frame["id"] == "accepted-cold-get")
+        .collect::<Vec<_>>();
+    assert_eq!(terminal.len(), 1, "target frames: {target_frames:?}");
+    assert_eq!(terminal[0]["error"]["code"], "unavailable");
+    assert!(
+        target_frames.iter().any(|frame| {
+            frame["name"] == "subscription.ended"
+                && frame["payload"]["subscriptionId"] == returned_id
+        }),
+        "the same connection's returned subscription must end after its cold terminal response: {target_frames:?}"
+    );
+}
+
+#[test]
+fn task_236_contract_terminal_capacity_survives_global_ordinary_bytes() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.path_cook_record()]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut snapshot_gate = FifoPair::new(&root);
+    let mut write_barrier = EgressWriteBarrier::new(&root);
+    let mut shutdown_gate = RecoveryGate::new(&root, "shutdown-terminals");
+    let blocked_id = "g".repeat(700);
+    let blocked_bytes = serde_json::to_vec(&json!({
+        "v": 1,
+        "kind": "res",
+        "id": blocked_id,
+        "ok": true,
+        "result": {
+            "protocolVersion": 1,
+            "serverVersion": env!("CARGO_PKG_VERSION"),
+            "snapshotSchemaMin": 1,
+            "snapshotSchemaMax": 1
+        }
+    }))
+    .expect("serialize exact globally blocked response")
+    .len();
+    let limits = PathBuf::from(format!(
+        "ingress=16,in_flight=16,egress_frames=2,egress_bytes=8192,global_egress_bytes={blocked_bytes}"
+    ));
+    let mut environment = write_barrier.environment();
+    environment.extend([
+        ("FAKE_READY_FIFO", snapshot_gate.ready_path.as_path()),
+        ("FAKE_RELEASE_FIFO", snapshot_gate.release_path.as_path()),
+        (
+            "_JEFFD_TEST_SHUTDOWN_TERMINALS_DONE",
+            shutdown_gate.ready_path.as_path(),
+        ),
+        ("_JEFFD_TEST_LIMITS", limits.as_path()),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+
+    let mut target = fixture.client();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "accepted-global-cold",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-b"}
+    }));
+    snapshot_gate.wait_for_run();
+    let mut holder = fixture.client();
+    write_barrier.arm();
+    holder.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": blocked_id,
+        "method": "server.hello",
+        "params": {}
+    }));
+    write_barrier.wait();
+
+    fixture.signal(libc::SIGTERM);
+    shutdown_gate.wait();
+    write_barrier.release();
+    let frames = target.recv_all_until_eof(3);
+    fixture.wait_for_exit();
+    let terminal = frames
+        .iter()
+        .filter(|frame| frame["id"] == "accepted-global-cold")
+        .collect::<Vec<_>>();
+    assert_eq!(terminal.len(), 1, "target frames: {frames:?}");
+    assert_eq!(terminal[0]["error"]["code"], "unavailable");
+}
+
+#[test]
+fn task_236_contract_snapshot_output_bound_retains_last_good_and_healthy_progress() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("snapshot_bytes=1024"),
+    )]);
+    let mut subscriber = fixture.client();
+    let first = subscriber.request(
+        "warm-sub",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    assert_eq!(
+        assert_ok(&first)["snapshot"]["tasks"][0]["title"],
+        "first"
+    );
+
+    fixture.set_snapshot("2026-08-11T10:00:00Z", &"x".repeat(2048));
+    fixture.touch_project(&fixture.project, "oversized-snapshot");
+    let failure = subscriber.recv();
+    assert_eq!(
+        failure["name"], "snapshot.failed",
+        "oversized child output must be rejected before replacing the cache: {failure}"
+    );
+
+    let retained = subscriber.request(
+        "retained",
+        "snapshot.get",
+        json!({"projectId": "project-a"}),
+    );
+    assert_eq!(assert_ok(&retained)["tasks"][0]["title"], "first");
+    let hello = subscriber.request("healthy", "server.hello", json!({}));
+    assert_eq!(assert_ok(&hello)["protocolVersion"], 1);
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_contract_per_connection_subscription_limit_releases_on_unsubscribe() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("connection_subscriptions=1,global_subscriptions=8"),
+    )]);
+    let mut client = fixture.client();
+    assert_ok(&client.request(
+        "warm",
+        "snapshot.get",
+        json!({"projectId": "project-a"}),
+    ));
+    let first = client.request(
+        "first-sub",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    let first_id = assert_ok(&first)["subscriptionId"]
+        .as_str()
+        .expect("first subscription id")
+        .to_owned();
+    assert_ok(&client.request(
+        "remove-first",
+        "snapshot.unsubscribe",
+        json!({"subscriptionId": first_id}),
+    ));
+    let replacement = client.request(
+        "replacement-sub",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    assert!(assert_ok(&replacement)["subscriptionId"].is_string());
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "over-connection-limit",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-a"}
+    }));
+    assert_eq!(
+        client.read_one_byte(),
+        0,
+        "the newest subscription beyond the per-connection limit must be rejected by closing only that connection"
+    );
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_contract_global_subscription_limit_releases_on_disconnect() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.start_with_env(&[(
+        "_JEFFD_TEST_LIMITS",
+        Path::new("connection_subscriptions=4,global_subscriptions=1"),
+    )]);
+    let mut warm = fixture.client();
+    assert_ok(&warm.request(
+        "warm",
+        "snapshot.get",
+        json!({"projectId": "project-a"}),
+    ));
+    let mut owner = bounded_raw_client(&fixture.socket);
+    let mut owner_reader = BufReader::new(owner.try_clone().expect("clone subscription owner"));
+    raw_send(
+        &mut owner,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": "global-first",
+            "method": "snapshot.subscribe",
+            "params": {"projectId": "project-a"}
+        }),
+    );
+    let first = raw_recv_until(&mut owner_reader, |frame| frame["id"] == "global-first");
+    assert!(assert_ok(&first)["subscriptionId"].is_string());
+
+    let mut overflow = fixture.client();
+    overflow.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "global-overflow",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "project-a"}
+    }));
+    assert_eq!(
+        overflow.read_one_byte(),
+        0,
+        "the newest subscription beyond the global limit must be rejected"
+    );
+    owner
+        .shutdown(Shutdown::Write)
+        .expect("disconnect subscription owner");
+    let mut byte = [0_u8; 1];
+    assert_eq!(
+        owner_reader
+            .read(&mut byte)
+            .expect("observe subscription owner cleanup"),
+        0
+    );
+
+    let mut replacement = fixture.client();
+    let replaced = replacement.request(
+        "after-disconnect",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    assert!(
+        assert_ok(&replaced)["subscriptionId"].is_string(),
+        "disconnect cleanup must return global subscription capacity"
+    );
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_contract_global_cold_waiter_limit_spans_distinct_projects() {
+    let mut fixture = Fixture::new(true);
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let project_c = root.join("project-c");
+    fs::create_dir_all(project_c.join(".jeff")).expect("create third project");
+    fixture.write_registry(json!([
+        fixture.default_record(),
+        fixture.path_cook_record(),
+        {
+            "id": "project-c",
+            "path": project_c,
+            "name": "Project C",
+            "enabled": true,
+            "cook": [fixture.fake_cook, "--fixture"]
+        }
+    ]));
+    let mut gates = FifoPair::new(&root);
+    fixture.start_with_env(&[
+        ("FAKE_READY_FIFO", gates.ready_path.as_path()),
+        ("FAKE_RELEASE_FIFO", gates.release_path.as_path()),
+        (
+            "_JEFFD_TEST_LIMITS",
+            Path::new("ingress=16,in_flight=16,cold_waiters=2"),
+        ),
+    ]);
+    let mut first = fixture.client();
+    first.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "project-a-waiter",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    gates.wait_for_run();
+    let mut second = fixture.client();
+    second.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "project-b-waiter",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-b"}
+    }));
+    gates.wait_for_run();
+
+    let mut overflow = fixture.client();
+    overflow.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "project-c-overflow",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-c"}
+    }));
+    assert_eq!(
+        overflow.read_one_byte(),
+        0,
+        "one waiter on each project must still exhaust the separate global waiter limit"
+    );
+    let mut healthy = fixture.client();
+    assert_eq!(
+        assert_ok(&healthy.request("healthy", "server.hello", json!({})))["protocolVersion"],
+        1
+    );
+    gates.release();
+    gates.release();
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_contract_oversized_report_observes_a_full_owner_queue() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut owner_gate = RecoveryGate::new(&root, "owner-ingress");
+    let mut oversized_gate = RecoveryGate::new(&root, "oversized-report");
+    let mut environment = owner_gate.environment().to_vec();
+    environment.extend([
+        (
+            "_JEFFD_TEST_OVERSIZED_READY",
+            oversized_gate.ready_path.as_path(),
+        ),
+        ("_JEFFD_TEST_LIMITS", Path::new("ingress=1,in_flight=8")),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+    let mut accepted = fixture.client();
+    assert_ok(&accepted.request("accepted", "server.hello", json!({})));
+    let mut filler = bounded_raw_client(&fixture.socket);
+    let mut oversized = bounded_raw_client(&fixture.socket);
+
+    owner_gate.arm();
+    accepted.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "owner-gate-trigger",
+        "method": "server.hello",
+        "params": {}
+    }));
+    owner_gate.wait();
+    raw_send(
+        &mut filler,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": "fills-owner-queue",
+            "method": "server.hello",
+            "params": {}
+        }),
+    );
+    raw_send(
+        &mut filler,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": "proves-owner-queue-full",
+            "method": "server.hello",
+            "params": {}
+        }),
+    );
+    assert_eq!(raw_read_to_eof(&mut filler, 1), 0);
+
+    let mut oversized_frame = br#"{"v":1,"kind":"req","id":"oversized-full-owner","#.to_vec();
+    oversized_frame.resize(MAX_FRAME_BYTES + 1, b'x');
+    oversized
+        .write_all(&oversized_frame)
+        .expect("write bounded oversized frame");
+    oversized.flush().expect("flush bounded oversized frame");
+    oversized_gate.wait();
+    fixture.signal(libc::SIGTERM);
+    owner_gate.release();
+    fixture.wait_for_exit();
+    assert!(!fixture.socket.exists());
+}
+
+#[test]
+fn task_236_contract_watcher_callback_returns_while_owner_ingress_is_full() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut owner_gate = RecoveryGate::new(&root, "watch-owner");
+    let mut notify_gate = RecoveryGate::new(&root, "watch-callback");
+    let mut environment = owner_gate.environment().to_vec();
+    environment.extend([
+        (
+            "_JEFFD_TEST_NOTIFY_RETURNED",
+            notify_gate.ready_path.as_path(),
+        ),
+        ("_JEFFD_TEST_LIMITS", Path::new("ingress=1,in_flight=8")),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+    let mut accepted = fixture.client();
+    assert_ok(&accepted.request("accepted", "server.hello", json!({})));
+    let mut filler = bounded_raw_client(&fixture.socket);
+
+    owner_gate.arm();
+    accepted.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "owner-gate-trigger",
+        "method": "server.hello",
+        "params": {}
+    }));
+    owner_gate.wait();
+    raw_send(
+        &mut filler,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": "fills-owner-queue",
+            "method": "server.hello",
+            "params": {}
+        }),
+    );
+    raw_send(
+        &mut filler,
+        &json!({
+            "v": 1,
+            "kind": "req",
+            "id": "proves-owner-queue-full",
+            "method": "server.hello",
+            "params": {}
+        }),
+    );
+    assert_eq!(raw_read_to_eof(&mut filler, 1), 0);
+
+    fixture.touch_project(&fixture.project, "full-owner-notify");
+    notify_gate.wait();
+    fixture.signal(libc::SIGTERM);
+    owner_gate.release();
+    fixture.wait_for_exit();
+    assert!(!fixture.socket.exists());
+}
+
 const LIFECYCLE_WRITE_INTERPOSER: &str = r#"
 #define _GNU_SOURCE
 #include <dlfcn.h>

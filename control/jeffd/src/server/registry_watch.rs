@@ -30,6 +30,27 @@ impl Server {
         }
     }
 
+    pub(super) fn recover_notify_overflow(&mut self) {
+        if !self.notify_overflow.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        if let Ok(projects) = load_registry(&self.config.registry) {
+            if projects != self.projects {
+                self.replace_registry(projects);
+            }
+        }
+        let now = self.now();
+        let enabled: Vec<_> = self
+            .projects
+            .iter()
+            .filter(|project| project.enabled)
+            .map(|project| project.id.clone())
+            .collect();
+        for project_id in enabled {
+            self.dirty.mark_dirty(&project_id, now);
+        }
+    }
+
     pub(super) fn reload_registry_if_due(&mut self) {
         let Some(deadline) = self.registry_due else {
             return;

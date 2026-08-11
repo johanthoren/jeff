@@ -33,6 +33,9 @@ pub(crate) struct Limits {
     pub(crate) egress_frames: usize,
     pub(crate) egress_bytes: usize,
     pub(crate) global_egress_bytes: usize,
+    pub(crate) snapshot_bytes: usize,
+    pub(crate) connection_subscriptions: usize,
+    global_subscriptions: usize,
 }
 
 impl Limits {
@@ -48,6 +51,9 @@ impl Limits {
             egress_frames: 64,
             egress_bytes: 32 * 1024 * 1024,
             global_egress_bytes: 256 * 1024 * 1024,
+            snapshot_bytes: frame_bytes,
+            connection_subscriptions: 64,
+            global_subscriptions: 512,
         };
         #[cfg(debug_assertions)]
         limits.apply_test_overrides();
@@ -76,10 +82,11 @@ impl Limits {
                 "in_flight" => self.in_flight = value,
                 "cold_waiters" => self.cold_waiters = value,
                 "egress_frames" => self.egress_frames = value,
-                "egress_bytes" => {
-                    self.egress_bytes = value;
-                    self.global_egress_bytes = value;
-                }
+                "egress_bytes" => self.egress_bytes = value,
+                "global_egress_bytes" => self.global_egress_bytes = value,
+                "snapshot_bytes" => self.snapshot_bytes = value,
+                "connection_subscriptions" => self.connection_subscriptions = value,
+                "global_subscriptions" => self.global_subscriptions = value,
                 _ => {}
             }
         }
@@ -134,8 +141,16 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
     let limits = Limits::new(config.frame_limit());
     let (messages_tx, messages_rx) = mpsc::sync_channel(limits.ingress);
     let notify_tx = messages_tx.clone();
+    let notify_overflow = Arc::new(AtomicBool::new(false));
+    let callback_overflow = notify_overflow.clone();
     let mut watcher = notify::recommended_watcher(move |event| {
-        let _ = notify_tx.send(OwnerMessage::Notify(event));
+        match notify_tx.try_send(OwnerMessage::Notify(event)) {
+            Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                callback_overflow.store(true, Ordering::Release);
+            }
+        }
+        signal_test_fifo("_JEFFD_TEST_NOTIFY_RETURNED");
     })?;
     watcher.watch(
         config
@@ -179,6 +194,7 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         waiter_count: 0,
         active: HashMap::new(),
         pending_watches: HashSet::new(),
+        notify_overflow,
         watch_retry_due: None,
         next_connection: 1,
         next_subscription: 1,
@@ -213,6 +229,7 @@ struct Server {
     waiter_count: usize,
     active: HashMap<String, ActiveSnapshot>,
     pending_watches: HashSet<String>,
+    notify_overflow: Arc<AtomicBool>,
     watch_retry_due: Option<Duration>,
     next_connection: ConnectionId,
     next_subscription: u64,
@@ -225,8 +242,16 @@ struct Server {
 
 impl Server {
     fn event_loop(&mut self, shutdown: Arc<AtomicBool>) -> Result<(), ServerError> {
-        while !shutdown.load(Ordering::Acquire) {
+        loop {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
             self.accept_connections()?;
+            self.pause_owner_if_armed();
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            self.recover_notify_overflow();
             self.run_due_snapshots();
             self.poll_registry();
             self.reload_registry_if_due();
@@ -344,12 +369,13 @@ impl Server {
             .map(|(id, subscription)| (id.clone(), subscription.connection))
             .collect();
         for (subscription_id, connection) in subscriptions {
-            self.send_event(
+            self.send_shutdown_event(
                 connection,
                 "subscription.ended",
                 json!({"subscriptionId": subscription_id, "reason": "shutdown"}),
             );
         }
+        signal_test_fifo("_JEFFD_TEST_SHUTDOWN_TERMINALS_DONE");
         self.subscriptions.clear();
 
         while !self.active.is_empty() {
@@ -395,23 +421,30 @@ impl Server {
         waiters
     }
 
-    pub(super) fn register_subscription(
+    pub(super) fn try_register_subscription(
         &mut self,
         connection: ConnectionId,
         project_id: String,
         subscription_id: String,
-    ) {
+    ) -> bool {
+        let Some(client) = self.connections.get_mut(&connection) else {
+            return false;
+        };
+        if client.subscriptions.len() >= self.limits.connection_subscriptions
+            || self.subscriptions.len() >= self.limits.global_subscriptions
+        {
+            return false;
+        }
+        client.subscriptions.insert(subscription_id.clone());
         self.subscriptions.insert(
-            subscription_id.clone(),
+            subscription_id,
             Subscription {
                 connection,
                 project_id,
                 returned: false,
             },
         );
-        if let Some(client) = self.connections.get_mut(&connection) {
-            client.subscriptions.insert(subscription_id);
-        }
+        true
     }
 
     pub(super) fn mark_subscription_returned(&mut self, subscription_id: &str) {
@@ -419,4 +452,47 @@ impl Server {
             subscription.returned = true;
         }
     }
+
+    #[cfg(debug_assertions)]
+    fn pause_owner_if_armed(&self) {
+        use std::io::BufRead as _;
+
+        let Ok(arm) = std::env::var("_JEFFD_TEST_OWNER_ARM") else {
+            return;
+        };
+        if std::fs::remove_file(arm).is_err() {
+            return;
+        }
+        signal_test_fifo("_JEFFD_TEST_OWNER_READY");
+        let Ok(release) = std::env::var("_JEFFD_TEST_OWNER_RELEASE") else {
+            return;
+        };
+        let Ok(file) = std::fs::OpenOptions::new().read(true).open(release) else {
+            return;
+        };
+        let _ = std::io::BufReader::new(file).read_line(&mut String::new());
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn pause_owner_if_armed(&self) {}
 }
+
+#[cfg(debug_assertions)]
+pub(crate) fn signal_test_fifo(name: &str) {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let Ok(path) = std::env::var(name) else {
+        return;
+    };
+    if let Ok(mut fifo) = std::fs::OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+    {
+        let _ = fifo.write_all(b"run\n");
+    }
+}
+
+#[cfg(not(debug_assertions))]
+pub(crate) fn signal_test_fifo(_: &str) {}

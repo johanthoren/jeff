@@ -14,7 +14,9 @@ impl Server {
         let connections: HashSet<_> = self
             .subscriptions
             .values()
-            .filter(|subscription| subscription.project_id == project_id)
+            .filter(|subscription| {
+                subscription.returned && subscription.project_id == project_id
+            })
             .map(|subscription| subscription.connection)
             .collect();
         for connection in connections {
@@ -36,7 +38,11 @@ impl Server {
             .map(|(id, _)| id.clone())
             .collect();
         for subscription_id in &subscriptions {
-            if let Some(subscription) = self.subscriptions.get(subscription_id) {
+            if let Some(subscription) = self
+                .subscriptions
+                .get(subscription_id)
+                .filter(|subscription| subscription.returned)
+            {
                 self.send_event(
                     subscription.connection,
                     "subscription.ended",
@@ -104,7 +110,7 @@ impl Server {
         code: &str,
         message: &str,
     ) -> bool {
-        self.send_queued_frame(
+        self.send_terminal_frame(
             connection,
             json!({
                 "v": PROTOCOL_VERSION,
@@ -113,7 +119,18 @@ impl Server {
                 "ok": false,
                 "error": {"code": code, "message": message}
             }),
-            false,
+        )
+    }
+
+    pub(super) fn send_shutdown_event(
+        &self,
+        connection: ConnectionId,
+        name: &str,
+        payload: Value,
+    ) -> bool {
+        self.send_terminal_frame(
+            connection,
+            json!({"v": PROTOCOL_VERSION, "kind": "event", "name": name, "payload": payload}),
         )
     }
 
@@ -125,15 +142,10 @@ impl Server {
     }
 
     pub(super) fn send_frame(&self, connection: ConnectionId, frame: Value) -> bool {
-        self.send_queued_frame(connection, frame, true)
+        self.send_queued_frame(connection, frame)
     }
 
-    fn send_queued_frame(
-        &self,
-        connection: ConnectionId,
-        frame: Value,
-        uses_ordinary_slot: bool,
-    ) -> bool {
+    fn send_queued_frame(&self, connection: ConnectionId, frame: Value) -> bool {
         let Some(connection) = self.connections.get(&connection) else {
             return false;
         };
@@ -150,18 +162,30 @@ impl Server {
             let _ = connection.control_stream.shutdown(Shutdown::Both);
             return false;
         };
-        let frame = if uses_ordinary_slot {
-            let Some(frame) = frame
-                .reserve_writer_slot(connection.writer_frames.clone(), self.limits.egress_frames)
-            else {
-                let _ = connection.control_stream.shutdown(Shutdown::Both);
-                return false;
-            };
-            frame
-        } else {
-            frame
+        let Some(frame) =
+            frame.reserve_writer_slot(connection.writer_frames.clone(), self.limits.egress_frames)
+        else {
+            let _ = connection.control_stream.shutdown(Shutdown::Both);
+            return false;
         };
         match connection.writer.try_send(WriterMessage::Frame(frame)) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                let _ = connection.control_stream.shutdown(Shutdown::Both);
+                false
+            }
+        }
+    }
+
+    fn send_terminal_frame(&self, connection: ConnectionId, frame: Value) -> bool {
+        let Some(connection) = self.connections.get(&connection) else {
+            return false;
+        };
+        let Some(bytes) = serialize_bounded(&frame, self.limits.frame_bytes) else {
+            let _ = connection.control_stream.shutdown(Shutdown::Both);
+            return false;
+        };
+        match connection.writer.try_send(WriterMessage::Terminal(bytes)) {
             Ok(()) => true,
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
                 let _ = connection.control_stream.shutdown(Shutdown::Both);

@@ -131,20 +131,30 @@ impl Server {
                 return;
             }
         };
-        let subscription_id = format!("s-{}-{}", connection, self.next_subscription);
-        self.next_subscription += 1;
-        if let Some(projection) = self
+        let projection = self
             .caches
             .get(&project_id)
             .and_then(ProjectCache::projection)
-        {
+            .cloned();
+        let subscription_id = format!("s-{}-{}", connection, self.next_subscription);
+        self.next_subscription += 1;
+        if !self.try_register_subscription(
+            connection,
+            project_id.clone(),
+            subscription_id.clone(),
+        ) {
+            self.close_connection(connection);
+            return;
+        }
+        if let Some(projection) = projection {
             if self.send_result(
                 connection,
                 &request_id,
                 json!({"subscriptionId": subscription_id, "snapshot": projection}),
             ) {
-                self.register_subscription(connection, project_id, subscription_id.clone());
                 self.mark_subscription_returned(&subscription_id);
+            } else {
+                self.remove_subscription(&subscription_id);
             }
             return;
         }
@@ -153,9 +163,10 @@ impl Server {
             Waiter {
                 connection,
                 request_id,
-                kind: WaitKind::Subscribe(subscription_id),
+                kind: WaitKind::Subscribe(subscription_id.clone()),
             },
         ) {
+            self.remove_subscription(&subscription_id);
             self.close_connection(connection);
             return;
         }

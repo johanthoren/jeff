@@ -60,8 +60,10 @@ impl Server {
         );
         let sender = self.messages_tx.clone();
         let timeout = self.config.snapshot_timeout();
+        let output_limit = self.limits.snapshot_bytes;
         thread::spawn(move || {
-            let result = run_snapshot_with_cancel(&run.record, timeout, cancelled);
+            let result =
+                run_snapshot_with_cancel(&run.record, timeout, cancelled, output_limit);
             let _ = sender.send(OwnerMessage::SnapshotDone { run, result });
         });
     }
@@ -174,12 +176,9 @@ impl Server {
                                 "snapshot": projection
                             }),
                         ) {
-                            self.register_subscription(
-                                waiter.connection,
-                                project_id.to_owned(),
-                                subscription_id.clone(),
-                            );
                             self.mark_subscription_returned(&subscription_id);
+                        } else {
+                            self.remove_subscription(&subscription_id);
                         }
                     }
                 }

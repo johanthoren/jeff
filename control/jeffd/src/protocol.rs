@@ -76,6 +76,7 @@ impl OutboundFrame {
 
 pub enum WriterMessage {
     Frame(OutboundFrame),
+    Terminal(Vec<u8>),
     Close(mpsc::SyncSender<()>),
 }
 
@@ -104,6 +105,7 @@ pub fn spawn_connection(
     let writer_capacity = limits
         .egress_frames
         .saturating_add(limits.cold_waiters)
+        .saturating_add(limits.connection_subscriptions)
         .saturating_add(1);
     let (writer, writer_rx) = mpsc::sync_channel(writer_capacity);
     let writer_handle = thread::spawn(move || write_frames(writer_stream, writer_rx));
@@ -205,6 +207,7 @@ fn report_oversized(
     owner: &SyncSender<OwnerMessage>,
     closed: &AtomicBool,
 ) {
+    crate::server::signal_test_fifo("_JEFFD_TEST_OVERSIZED_READY");
     let request_id = (top_level_string_field(frame, b"kind", 16).as_deref() == Some("req"))
         .then(|| top_level_string_field(frame, b"id", Limits::RESPONSE_ID_BYTES))
         .flatten();
@@ -332,6 +335,14 @@ fn write_frames(mut stream: UnixStream, messages: Receiver<WriterMessage>) {
             WriterMessage::Frame(mut frame) => {
                 frame.begin_write();
                 if stream.write_all(&frame.bytes).is_err()
+                    || stream.write_all(b"\n").is_err()
+                    || stream.flush().is_err()
+                {
+                    break;
+                }
+            }
+            WriterMessage::Terminal(bytes) => {
+                if stream.write_all(&bytes).is_err()
                     || stream.write_all(b"\n").is_err()
                     || stream.flush().is_err()
                 {

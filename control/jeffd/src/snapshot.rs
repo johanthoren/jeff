@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 const STDERR_LIMIT: usize = 64 * 1024;
+const DEFAULT_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct SnapshotInvocation {
@@ -101,13 +102,19 @@ pub fn run_snapshot(
     project: &ProjectRecord,
     timeout: Duration,
 ) -> Result<Snapshot, SnapshotFailure> {
-    run_snapshot_with_cancel(project, timeout, Arc::new(AtomicBool::new(false)))
+    run_snapshot_with_cancel(
+        project,
+        timeout,
+        Arc::new(AtomicBool::new(false)),
+        DEFAULT_OUTPUT_LIMIT,
+    )
 }
 
 pub(crate) fn run_snapshot_with_cancel(
     project: &ProjectRecord,
     timeout: Duration,
     cancelled: Arc<AtomicBool>,
+    output_limit: usize,
 ) -> Result<Snapshot, SnapshotFailure> {
     let invocation = SnapshotInvocation::for_project(project)?;
     let mut command = Command::new(invocation.program());
@@ -135,7 +142,7 @@ pub(crate) fn run_snapshot_with_cancel(
     let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
     let (stderr_tx, stderr_rx) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let _ = stdout_tx.send(read_all(stdout));
+        let _ = stdout_tx.send(read_bounded_output(stdout, output_limit));
     });
     thread::spawn(move || {
         let _ = stderr_tx.send(read_bounded(stderr, STDERR_LIMIT));
@@ -203,10 +210,26 @@ fn terminate_group(process_group: i32, child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-fn read_all(mut reader: impl Read) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
-    Ok(bytes)
+fn read_bounded_output(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
+    let mut kept = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    let mut exceeded = false;
+    loop {
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            return if exceeded {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("snapshot output exceeds {limit} bytes"),
+                ))
+            } else {
+                Ok(kept)
+            };
+        }
+        let remaining = limit.saturating_sub(kept.len());
+        kept.extend_from_slice(&chunk[..read.min(remaining)]);
+        exceeded |= read > remaining;
+    }
 }
 
 fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
