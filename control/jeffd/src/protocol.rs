@@ -27,7 +27,6 @@ pub enum OwnerMessage {
         connection: ConnectionId,
         request_id: Option<String>,
     },
-    Disconnected(ConnectionId),
     SnapshotDone {
         run: SnapshotRun,
         result: Result<Snapshot, SnapshotFailure>,
@@ -87,6 +86,8 @@ pub struct ConnectionParts {
     pub writer_bytes: Arc<AtomicUsize>,
     pub writer_frames: Arc<AtomicUsize>,
     pub closed: Arc<AtomicBool>,
+    pub pending: Arc<AtomicUsize>,
+    pub reader_done: Arc<AtomicBool>,
 }
 
 pub fn spawn_connection(
@@ -101,6 +102,7 @@ pub fn spawn_connection(
     let writer_bytes = Arc::new(AtomicUsize::new(0));
     let writer_frames = Arc::new(AtomicUsize::new(0));
     let closed = Arc::new(AtomicBool::new(false));
+    let reader_done = Arc::new(AtomicBool::new(false));
     let writer_capacity = limits
         .egress_frames
         .saturating_add(limits.cold_waiters)
@@ -110,8 +112,17 @@ pub fn spawn_connection(
     let writer_handle = thread::spawn(move || write_frames(writer_stream, writer_rx));
     let reader_pending = pending.clone();
     let reader_closed = closed.clone();
+    let reader_done_flag = reader_done.clone();
     let reader_handle = thread::spawn(move || {
-        read_frames(id, stream, limits, owner, reader_pending, reader_closed)
+        read_frames(
+            id,
+            stream,
+            limits,
+            owner,
+            reader_pending,
+            reader_closed,
+            reader_done_flag,
+        )
     });
     Ok(ConnectionParts {
         writer,
@@ -121,6 +132,8 @@ pub fn spawn_connection(
         writer_bytes,
         writer_frames,
         closed,
+        pending,
+        reader_done,
     })
 }
 
@@ -131,6 +144,7 @@ fn read_frames(
     owner: SyncSender<OwnerMessage>,
     pending: Arc<AtomicUsize>,
     closed: Arc<AtomicBool>,
+    reader_done: Arc<AtomicBool>,
 ) {
     let mut frame = Vec::new();
     let mut chunk = [0_u8; 8192];
@@ -188,16 +202,7 @@ fn read_frames(
         }
     }
     let _ = stream.shutdown(Shutdown::Both);
-    let mut disconnected = OwnerMessage::Disconnected(id);
-    while !closed.load(Ordering::Acquire) {
-        match owner.try_send(disconnected) {
-            Ok(()) | Err(TrySendError::Disconnected(_)) => break,
-            Err(TrySendError::Full(message)) => {
-                disconnected = message;
-                thread::yield_now();
-            }
-        }
-    }
+    reader_done.store(true, Ordering::Release);
 }
 
 fn report_oversized(

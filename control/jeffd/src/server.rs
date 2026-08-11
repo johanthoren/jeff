@@ -115,6 +115,8 @@ struct Connection {
     writer_bytes: Arc<AtomicUsize>,
     writer_frames: Arc<AtomicUsize>,
     closed: Arc<AtomicBool>,
+    pending: Arc<AtomicUsize>,
+    reader_done: Arc<AtomicBool>,
 }
 
 struct Subscription {
@@ -143,7 +145,7 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         .map_err(|error| ServerError::Registry(error.to_string()))?;
     let limits = Limits::new(config.frame_limit());
     let (messages_tx, messages_rx) = mpsc::sync_channel(limits.ingress);
-    let (notify_tx, notify_rx) = mpsc::sync_channel(1);
+    let (notify_tx, notify_rx) = mpsc::sync_channel(limits.ingress);
     let notify_overflow = Arc::new(AtomicBool::new(false));
     let callback_overflow = notify_overflow.clone();
     let mut watcher = notify::recommended_watcher(move |event| {
@@ -252,6 +254,7 @@ impl Server {
                 break;
             }
             self.accept_connections()?;
+            self.drop_disconnected_connections();
             self.pause_owner_if_armed();
             if shutdown.load(Ordering::Acquire) {
                 break;
@@ -306,6 +309,8 @@ impl Server {
             writer_bytes,
             writer_frames,
             closed,
+            pending,
+            reader_done,
         } = spawn_connection(id, stream, self.limits, self.messages_tx.clone())?;
         self.connections.insert(
             id,
@@ -318,6 +323,8 @@ impl Server {
                 writer_bytes,
                 writer_frames,
                 closed,
+                pending,
+                reader_done,
             },
         );
         Ok(())
@@ -349,8 +356,22 @@ impl Server {
                 }
                 self.close_connection(connection);
             }
-            OwnerMessage::Disconnected(connection) => self.drop_connection(connection),
             OwnerMessage::SnapshotDone { run, result } => self.finish_snapshot(run, result),
+        }
+    }
+
+    fn drop_disconnected_connections(&mut self) {
+        let disconnected: Vec<_> = self
+            .connections
+            .iter()
+            .filter(|(_, connection)| {
+                connection.reader_done.load(Ordering::Acquire)
+                    && connection.pending.load(Ordering::Acquire) == 0
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for connection in disconnected {
+            self.drop_connection(connection);
         }
     }
 
@@ -397,7 +418,6 @@ impl Server {
                         self.active.remove(project_id);
                     }
                 }
-                Ok(OwnerMessage::Disconnected(connection)) => self.drop_connection(connection),
                 Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
