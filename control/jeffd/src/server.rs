@@ -152,21 +152,21 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
     let notify_overflow = Arc::new(AtomicBool::new(false));
     let callback_overflow = notify_overflow.clone();
     let callback_registry = config.registry.clone();
-    let mut watcher =
-        notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            match notify_tx.try_send(event) {
-                Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => {}
-                Err(mpsc::TrySendError::Full(event)) => {
-                    callback_overflow.store(true, Ordering::Release);
-                    if event.as_ref().is_ok_and(|event| {
-                        event.paths.iter().any(|path| path == &callback_registry)
-                    }) {
-                        signal_test_fifo("_JEFFD_TEST_NOTIFY_REGISTRY_FULL");
-                    }
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        match notify_tx.try_send(event) {
+            Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => {}
+            Err(mpsc::TrySendError::Full(event)) => {
+                callback_overflow.store(true, Ordering::Release);
+                if event
+                    .as_ref()
+                    .is_ok_and(|event| event.paths.iter().any(|path| path == &callback_registry))
+                {
+                    signal_test_fifo("_JEFFD_TEST_NOTIFY_REGISTRY_FULL");
                 }
             }
-            signal_test_fifo("_JEFFD_TEST_NOTIFY_RETURNED");
-        })?;
+        }
+        signal_test_fifo("_JEFFD_TEST_NOTIFY_RETURNED");
+    })?;
     watcher.watch(
         config
             .registry
