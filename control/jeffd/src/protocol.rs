@@ -32,7 +32,6 @@ pub enum OwnerMessage {
         run: SnapshotRun,
         result: Result<Snapshot, SnapshotFailure>,
     },
-    Notify(notify::Result<notify::Event>),
 }
 
 pub struct OutboundFrame {

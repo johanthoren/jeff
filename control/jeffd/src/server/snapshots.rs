@@ -1,6 +1,6 @@
 use super::{ActiveSnapshot, Server, WaitKind};
 use crate::protocol::{OwnerMessage, SnapshotRun};
-use crate::snapshot::run_snapshot_with_cancel;
+use crate::snapshot::{run_snapshot_with_cancel, SnapshotFailure};
 use crate::state::ProjectCache;
 use jeff_project::ProjectRecord;
 use serde_json::json;
@@ -70,7 +70,7 @@ impl Server {
     pub(super) fn finish_snapshot(
         &mut self,
         run: SnapshotRun,
-        result: Result<jeff_project::Snapshot, crate::snapshot::SnapshotFailure>,
+        result: Result<jeff_project::Snapshot, SnapshotFailure>,
     ) {
         let project_id = run.record.id.clone();
         if !self
@@ -99,7 +99,7 @@ impl Server {
             {
                 self.start_snapshot(&project_id);
             } else {
-                self.answer_waiters(&project_id);
+                self.answer_waiters(&project_id, false);
             }
             return;
         }
@@ -109,13 +109,14 @@ impl Server {
             .get(&project_id)
             .and_then(ProjectCache::projection)
             .is_some();
+        let output_too_large = matches!(&result, Err(SnapshotFailure::OutputTooLarge(_)));
         if let Some(cache) = self.caches.get_mut(&project_id) {
             match &result {
                 Ok(snapshot) => cache.replace(snapshot.clone()),
                 Err(error) => cache.fail(error.to_string(), error.exit_code()),
             }
         }
-        self.answer_waiters(&project_id);
+        self.answer_waiters(&project_id, output_too_large);
         match result {
             Ok(_) if had_good => {
                 if let Some(projection) = self
@@ -145,7 +146,7 @@ impl Server {
         self.dirty.finished(&project_id, self.now());
     }
 
-    fn answer_waiters(&mut self, project_id: &str) {
+    fn answer_waiters(&mut self, project_id: &str, output_too_large: bool) {
         let waiters = self.take_waiters(project_id);
         let projection = self
             .caches
@@ -184,6 +185,10 @@ impl Server {
             } else {
                 if let WaitKind::Subscribe(subscription_id) = &waiter.kind {
                     self.remove_subscription(subscription_id);
+                }
+                if output_too_large {
+                    self.close_connection(waiter.connection);
+                    continue;
                 }
                 let message = failure
                     .as_ref()

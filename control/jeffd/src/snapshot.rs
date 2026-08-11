@@ -81,6 +81,8 @@ pub enum SnapshotFailure {
     Exit { message: String, code: Option<i32> },
     #[error("failed to read snapshot output: {0}")]
     Output(String),
+    #[error("failed to read snapshot output: {0}")]
+    OutputTooLarge(String),
 }
 
 impl SnapshotFailure {
@@ -251,6 +253,9 @@ fn receive_output(
 ) -> Result<Option<Vec<u8>>, SnapshotFailure> {
     match receiver.try_recv() {
         Ok(Ok(bytes)) => Ok(Some(bytes)),
+        Ok(Err(error)) if name == "stdout" && error.kind() == io::ErrorKind::InvalidData => {
+            Err(SnapshotFailure::OutputTooLarge(error.to_string()))
+        }
         Ok(Err(error)) => Err(SnapshotFailure::Output(error.to_string())),
         Err(TryRecvError::Empty) => Ok(None),
         Err(TryRecvError::Disconnected) => Err(SnapshotFailure::Output(format!(

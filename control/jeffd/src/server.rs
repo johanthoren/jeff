@@ -82,7 +82,10 @@ impl Limits {
                 "in_flight" => self.in_flight = value,
                 "cold_waiters" => self.cold_waiters = value,
                 "egress_frames" => self.egress_frames = value,
-                "egress_bytes" => self.egress_bytes = value,
+                "egress_bytes" => {
+                    self.egress_bytes = value;
+                    self.global_egress_bytes = value;
+                }
                 "global_egress_bytes" => self.global_egress_bytes = value,
                 "snapshot_bytes" => self.snapshot_bytes = value,
                 "connection_subscriptions" => self.connection_subscriptions = value,
@@ -140,11 +143,11 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         .map_err(|error| ServerError::Registry(error.to_string()))?;
     let limits = Limits::new(config.frame_limit());
     let (messages_tx, messages_rx) = mpsc::sync_channel(limits.ingress);
-    let notify_tx = messages_tx.clone();
+    let (notify_tx, notify_rx) = mpsc::sync_channel(1);
     let notify_overflow = Arc::new(AtomicBool::new(false));
     let callback_overflow = notify_overflow.clone();
     let mut watcher = notify::recommended_watcher(move |event| {
-        match notify_tx.try_send(OwnerMessage::Notify(event)) {
+        match notify_tx.try_send(event) {
             Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => {}
             Err(mpsc::TrySendError::Full(_)) => {
                 callback_overflow.store(true, Ordering::Release);
@@ -188,6 +191,7 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         dirty,
         messages_tx,
         messages_rx,
+        notify_rx,
         connections: HashMap::new(),
         subscriptions: HashMap::new(),
         waiters: HashMap::new(),
@@ -223,6 +227,7 @@ struct Server {
     dirty: DirtyTracker,
     messages_tx: SyncSender<OwnerMessage>,
     messages_rx: Receiver<OwnerMessage>,
+    notify_rx: Receiver<notify::Result<notify::Event>>,
     connections: HashMap<ConnectionId, Connection>,
     subscriptions: HashMap<String, Subscription>,
     waiters: HashMap<String, Vec<Waiter>>,
@@ -250,6 +255,9 @@ impl Server {
             self.pause_owner_if_armed();
             if shutdown.load(Ordering::Acquire) {
                 break;
+            }
+            if let Ok(event) = self.notify_rx.try_recv() {
+                self.handle_notify(event);
             }
             self.recover_notify_overflow();
             self.run_due_snapshots();
@@ -343,7 +351,6 @@ impl Server {
             }
             OwnerMessage::Disconnected(connection) => self.drop_connection(connection),
             OwnerMessage::SnapshotDone { run, result } => self.finish_snapshot(run, result),
-            OwnerMessage::Notify(event) => self.handle_notify(event),
         }
     }
 
