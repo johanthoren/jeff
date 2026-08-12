@@ -4335,6 +4335,15 @@ test('issue 238 persisted council research provenance fails closed and keeps his
     });
     assert.equal((await verdictFor(historical)).ok, true);
 
+    const explicitPre61 = structuredClone(historical);
+    explicitPre61.pipelineVersion = '6.0.1';
+    const pre61Result = await verdictFor(explicitPre61);
+    assert.equal(
+      pre61Result.ok,
+      true,
+      `explicit 6.0.x historical omission must remain readable:\n${pre61Result.stderr.join('\n')}`,
+    );
+
     const mislabeled = structuredClone(canonical);
     mislabeled.convergence.council.researchProvenance = 'historical-omitted';
     const result = await verdictFor(mislabeled);
