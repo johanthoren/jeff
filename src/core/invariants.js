@@ -22,6 +22,7 @@ import {
   forbiddenCouncilAgentIds,
   isAgentId,
   isArchivedVerifierAgentForbidden,
+  isRecoveryParticipantEligible,
 } from './identity-policy.js';
 import {
   hasCompletedApprovalProvenance,
@@ -1000,28 +1001,14 @@ function convergenceChecks(t, id, ids, out) {
         out.push(`task ${id}: recovery cannot lower the original audit floor [inv11]`);
       }
     }
-    const councilIds = new Set(jqOr(cl?.members, []).map((/** @type {any} */ member) => member?.agent_id));
-    const currentJudgeIds = [
-      t.agents?.reviewer_agent_id,
-      t.agents?.reviewer2_agent_id,
-      t.agents?.audit_agent_id,
-      t.review?.reviewer_agent_id,
-      t.review2?.reviewer_agent_id,
-      t.audit?.audit_agent_id,
-      ...archivedJudgeAgentIds(t),
-    ].filter(isAgentId);
     const testAuthor = recovery?.test_author_agent_id;
     const builder = recovery?.builder_agent_id;
     if (isAgentId(testAuthor)
       && (testAuthor !== t.tests?.authored_by_agent_id
-        || testAuthor === t.agents?.implementer_agent_id
-        || testAuthor === builder
-        || councilIds.has(testAuthor)
-        || currentJudgeIds.includes(testAuthor))) {
+        || !isRecoveryParticipantEligible(t, testAuthor, 'test author'))) {
       out.push(`task ${id}: recovery test author violates identity separation [inv11]`);
     }
-    if (isAgentId(builder)
-      && (builder === testAuthor || councilIds.has(builder) || currentJudgeIds.includes(builder))) {
+    if (isAgentId(builder) && !isRecoveryParticipantEligible(t, builder, 'builder')) {
       out.push(`task ${id}: recovery builder violates identity separation [inv11]`);
     }
     if (['test-contract-repair', 'operator-escalation'].includes(recovery?.route)

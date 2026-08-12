@@ -60,7 +60,12 @@ function canonicalValue(value) {
 
 /** @param {any} inquiry */
 function canonicalInquiry(inquiry) {
-  return JSON.stringify(canonicalValue(inquiry));
+  const findingVotes = [...inquiry.findingVotes]
+    .sort((left, right) => {
+      if (left?.id === right?.id) return 0;
+      return left?.id < right?.id ? -1 : 1;
+    });
+  return JSON.stringify(canonicalValue({ ...inquiry, findingVotes }));
 }
 
 /**

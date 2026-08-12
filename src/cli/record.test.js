@@ -7141,6 +7141,88 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
     });
   }
 
+  await t.test('findingVotes order is the only inquiry difference', async () => {
+    const task = councilTask();
+    const originalFinding = task.review.findings[0];
+    const findings = [
+      originalFinding,
+      ...[
+        ['A second accepted result is lost.', 'second-refuter'],
+        ['A third accepted result is lost.', 'third-refuter'],
+      ].map(([what, agentId], index) => {
+        const line = 11 + index;
+        return {
+          ...structuredClone(originalFinding),
+          line,
+          what,
+          why: 'The same recorder boundary loses independently accepted evidence.',
+          refute: {
+            ...structuredClone(originalFinding.refute),
+            agent_id: agentId,
+            finding: `src/core/record.js:${line} ${what}`,
+          },
+        };
+      }),
+    ];
+    task.review.findings = findings;
+    task.refutes = findings.map((finding) => finding.refute);
+
+    const invalid = councilReturn();
+    const findingIds = ['F1', 'F2', 'F3'];
+    invalid.council.findings = findings.map((finding, index) => ({
+      id: findingIds[index],
+      summary: finding.what,
+      source: 'review',
+      blockingVotes: 3,
+      survived: true,
+      followupTaskId: null,
+    }));
+    const inquiry = {
+      ...structuredClone(invalid.council.members[0].inquiry),
+      findingVotes: findingIds.map((id) => ({
+        id,
+        blocking: true,
+        rationale: `Live evidence for ${id}.`,
+      })),
+    };
+    invalid.council.members[0].inquiry = structuredClone(inquiry);
+    invalid.council.members[1].inquiry = {
+      ...structuredClone(inquiry),
+      findingVotes: [inquiry.findingVotes[1], inquiry.findingVotes[2], inquiry.findingVotes[0]],
+    };
+    invalid.council.members[2].inquiry = {
+      ...structuredClone(inquiry),
+      findingVotes: [inquiry.findingVotes[2], inquiry.findingVotes[0], inquiry.findingVotes[1]],
+    };
+    invalid.council.synthesis.survivingBlockers = findingIds;
+
+    const { root, taskDir } = await makeRoot(task);
+    const taskPath = join(taskDir, 'task.json');
+    const journalPath = join(taskDir, 'journal.jsonl');
+    try {
+      await writeFile(
+        journalPath,
+        `${JSON.stringify({
+          seq: 0,
+          at: '2026-07-12T00:00:00Z',
+          event: 'intent',
+          stage: 'council',
+        })}\n`,
+        'utf8',
+      );
+      const beforeTask = await readFile(taskPath);
+      const beforeJournal = await readFile(journalPath);
+      await assert.rejects(
+        recordSpecialistReturn(root, 'council', '18', invalid),
+        /record-(schema|transition).*council|inquiry|semantic/i,
+      );
+      assert.deepEqual(await readFile(taskPath), beforeTask);
+      assert.deepEqual(await readFile(journalPath), beforeJournal);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   const { root, taskDir } = await makeRoot(councilTask());
   try {
     await recordSpecialistReturn(root, 'council', '18', councilReturn());
@@ -7248,23 +7330,38 @@ test('issue 237 recovery judgments require a current clean green post-recovery g
   }
 });
 
-test('issue 237 confined repair cannot enter a route-incompatible refactor stage', async () => {
-  const task = councilTask();
-  task.plan = {
-    result: 'red',
-    slices: ['Repair the confined production defect.'],
-    testFiles: ['src/cli/record.test.js'],
-    redRun: { command: 'node --test src/cli/record.test.js', output: 'failure reproduced' },
-    escalation: null,
-    refactorOpportunity: 'Harmonize the recorder after behavior is restored.',
-  };
-  const { root, taskDir } = await makeRoot(task);
-  try {
-    await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('confined-repair'));
-    await recordSpecialistReturn(root, 'implement', '18', implementReturn('recovery-builder'));
-    assert.equal((await readTask(taskDir)).stage, 'review');
-  } finally {
-    await rm(root, { recursive: true, force: true });
+test('issue 237 implement-backed recovery routes cannot enter a route-incompatible refactor stage', async (t) => {
+  for (const route of ['confined-repair', 'causal-subgraph-reconstruction', 'full-replan']) {
+    await t.test(route, async () => {
+      const task = councilTask();
+      task.plan = {
+        result: 'red',
+        slices: ['Repair the selected production defect.'],
+        testFiles: ['src/cli/record.test.js'],
+        redRun: { command: 'node --test src/cli/record.test.js', output: 'failure reproduced' },
+        escalation: null,
+        refactorOpportunity: 'Harmonize the recorder after behavior is restored.',
+      };
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn(route));
+        if (route !== 'confined-repair') {
+          await recordSpecialistReturn(
+            root,
+            'plan',
+            '18',
+            planReturn({
+              complexity: 'complex',
+              refactorOpportunity: 'Harmonize the recorder after behavior is restored.',
+            }, 'recovery-test-author'),
+          );
+        }
+        await recordSpecialistReturn(root, 'implement', '18', implementReturn('recovery-builder'));
+        assert.equal((await readTask(taskDir)).stage, 'review');
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   }
 });
 

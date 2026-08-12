@@ -4008,6 +4008,36 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
         task.convergence.council.members[index].inquiry = inquiry;
       }
     }],
+    ['findingVotes order is the only inquiry difference', (task) => {
+      const council = task.convergence.council;
+      const findingIds = ['F1', 'F2', 'F3'];
+      council.findings = findingIds.map((id) => ({
+        id,
+        source: 'review',
+        summary: `Persisted blocker ${id}.`,
+        blockingVotes: 3,
+        survived: true,
+        followupTaskId: null,
+      }));
+      const inquiry = {
+        ...structuredClone(council.members[0].inquiry),
+        findingVotes: findingIds.map((id) => ({
+          id,
+          blocking: true,
+          rationale: `Persisted evidence for ${id}.`,
+        })),
+      };
+      council.members[0].inquiry = structuredClone(inquiry);
+      council.members[1].inquiry = {
+        ...structuredClone(inquiry),
+        findingVotes: [inquiry.findingVotes[1], inquiry.findingVotes[2], inquiry.findingVotes[0]],
+      };
+      council.members[2].inquiry = {
+        ...structuredClone(inquiry),
+        findingVotes: [inquiry.findingVotes[2], inquiry.findingVotes[0], inquiry.findingVotes[1]],
+      };
+      council.synthesis.survivingBlockers = findingIds;
+    }],
     ['vote tally is not derived from inquiries', (task) => {
       task.convergence.council.findings[0].blockingVotes = 1;
       task.convergence.council.findings[0].survived = false;
@@ -4077,4 +4107,69 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
   const refactorResult = await verdictFor(unboundRefactor);
   assert.equal(refactorResult.ok, false, 'refactor builder must match the recorded refactorer');
   assert.match(refactorResult.stderr.join('\n'), /builder|identity|recovery|inv/i);
+
+  const plannedRecovery = structuredClone(canonical);
+  plannedRecovery.stage = 'implement';
+  plannedRecovery.tests.authored_by_agent_id = 'recovery-test-author';
+  plannedRecovery.convergence.recovery.test_author_agent_id = 'recovery-test-author';
+  assert.equal((await verdictFor(plannedRecovery)).ok, true);
+
+  const testOnlyRecovery = structuredClone(plannedRecovery);
+  testOnlyRecovery.stage = 'review';
+  testOnlyRecovery.convergence.council.synthesis.solutionStrategies =
+    ['confined-repair', 'test-contract-repair'];
+  testOnlyRecovery.convergence.council.synthesis.rejectedAlternatives = ['confined-repair'];
+  testOnlyRecovery.convergence.council.synthesis.selectedStrategy = 'test-contract-repair';
+  testOnlyRecovery.convergence.recovery.route = 'test-contract-repair';
+  assert.equal((await verdictFor(testOnlyRecovery)).ok, true);
+
+  const forbiddenRecoveryIdentityCases = [
+    [
+      'recovery test author reuses the council synthesizer',
+      testOnlyRecovery,
+      canonical.convergence.council.synthesizer_agent_id,
+      (task, agentId) => {
+        task.tests.authored_by_agent_id = agentId;
+        task.convergence.recovery.test_author_agent_id = agentId;
+      },
+    ],
+    [
+      'recovery test author reuses the captured original test author',
+      plannedRecovery,
+      canonical.convergence.recovery.original.test_author_agent_id,
+      (task, agentId) => {
+        task.tests.authored_by_agent_id = agentId;
+        task.convergence.recovery.test_author_agent_id = agentId;
+      },
+    ],
+    [
+      'implementation recovery builder reuses the captured original builder',
+      production,
+      canonical.convergence.recovery.original.builder_agent_id,
+      (task, agentId) => {
+        task.agents.implementer_agent_id = agentId;
+        task.implement.agent_id = agentId;
+        task.convergence.recovery.builder_agent_id = agentId;
+      },
+    ],
+    [
+      'refactor recovery builder reuses the council synthesizer',
+      refactorProduction,
+      canonical.convergence.council.synthesizer_agent_id,
+      (task, agentId) => {
+        task.refactor.agent_id = agentId;
+        task.convergence.recovery.builder_agent_id = agentId;
+      },
+    ],
+  ];
+
+  for (const [name, base, agentId, bind] of forbiddenRecoveryIdentityCases) {
+    await t.test(name, async () => {
+      const invalid = structuredClone(base);
+      bind(invalid, agentId);
+      const result = await verdictFor(invalid);
+      assert.equal(result.ok, false, `${name} must not validate`);
+      assert.match(result.stderr.join('\n'), /recovery|identity|inv/i);
+    });
+  }
 });

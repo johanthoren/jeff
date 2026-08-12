@@ -17,6 +17,7 @@ import {
   isAgentId,
   isArchivedVerifierAgentForbidden,
   isRefuteAgentForbidden,
+  isRecoveryParticipantEligible,
 } from './identity-policy.js';
 import {
   currentOperationCycle,
@@ -182,29 +183,13 @@ function isPendingCodeRecovery(task) {
     && task.convergence?.recovery?.episode === 1;
 }
 
-/** @param {MutableRecordTask} task */
-function recoveryParticipantIds(task) {
-  return new Set([
-    task.tests?.authored_by_agent_id,
-    task.agents?.implementer_agent_id,
-    task.agents?.reviewer_agent_id,
-    task.agents?.reviewer2_agent_id,
-    task.agents?.audit_agent_id,
-    task.convergence?.recovery?.test_author_agent_id,
-    task.convergence?.recovery?.builder_agent_id,
-    ...archivedJudgeAgentIds(task),
-    ...(task.convergence?.council?.members ?? [])
-      .map((/** @type {any} */ member) => member.agent_id),
-    task.convergence?.council?.synthesizer_agent_id,
-  ].filter(isAgentId));
-}
-
-/** @param {MutableRecordTask} task @param {string} agentId @param {string} role */
+/** @param {MutableRecordTask} task @param {string} agentId @param {'test author' | 'builder'} role */
 function assertFreshRecoveryParticipant(task, agentId, role) {
-  if (recoveryParticipantIds(task).has(agentId)) {
+  if (!isRecoveryParticipantEligible(task, agentId, role)) {
     throw new Error(`[record-identity] recovery ${role} ${agentId} must use a fresh identity`);
   }
 }
+
 
 /** @param {MutableRecordTask} task */
 function assertRecoveryJudgmentGate(task) {
@@ -963,7 +948,7 @@ function judgmentSources(task) {
 
 /** @param {MutableRecordTask} task @param {boolean} isScopedCouncilFix */
 function isRefactorOwed(task, isScopedCouncilFix) {
-  if (isScopedCouncilFix && task.convergence?.recovery?.route === 'confined-repair') return false;
+  if (isScopedCouncilFix) return false;
   if (task.plan?.refactorOpportunity !== null) return true;
   return judgmentSources(task).some(({ source, outcome }) => (
     (outcome?.findings ?? []).some((/** @type {any} */ finding) => (
@@ -971,11 +956,6 @@ function isRefactorOwed(task, isScopedCouncilFix) {
       && finding.kickTo === 'refactor'
       && finding.refute?.source === source
       && finding.refute.verdict === 'survives'
-      && (!isScopedCouncilFix || task.convergence.council.findings.some((/** @type {any} */ councilFinding) => (
-        councilFinding.source === source
-        && councilFinding.summary === finding.what
-        && councilFinding.survived === true
-      )))
     ))
   ));
 }
