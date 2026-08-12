@@ -789,6 +789,7 @@ function recordCouncil(task, result, at) {
     throw new Error(`[record-transition] ${isOperation(task) ? 'operation' : 'code'} council selected an incompatible recovery route`);
   }
   if (!isOperation(task)) {
+    /** @type {Record<string, any>} */
     const originalLineage = {
       plan: task.plan === undefined ? null : structuredClone(task.plan),
       test_author_agent_id: task.tests?.authored_by_agent_id ?? null,
@@ -815,13 +816,13 @@ function recordCouncil(task, result, at) {
   }
   const destination = isOperation(task)
     ? 'execute'
-    : ({
+    : (/** @type {Record<string, string>} */ ({
       'confined-repair': 'implement',
       refactor: 'refactor',
       'test-contract-repair': 'plan',
       'causal-subgraph-reconstruction': 'plan',
       'full-replan': 'plan',
-    })[route];
+    }))[route];
   task.kickbacks = [...task.kickbacks, {
     from: council.stage,
     to: destination,
@@ -851,8 +852,8 @@ function isPreservedCouncilBlock(task, returned) {
     && pending.synthesis === undefined
     && pending.synthesizer_agent_id === undefined
     && returned.synthesis === undefined
-    && pending.members.every((member) => member.inquiry === undefined)
-    && returned.members.every((member) => member.inquiry === undefined);
+    && pending.members.every((/** @type {any} */ member) => member.inquiry === undefined)
+    && returned.members.every((/** @type {any} */ member) => member.inquiry === undefined);
   if (historicalOmission) {
     delete pendingSpecialistFields.synthesizer_agent_id;
     delete returnedSpecialistFields.synthesizer_agent_id;
@@ -1507,9 +1508,11 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
   if (stage !== 'council' && (typeof observedAgentId !== 'string' || observedAgentId.length === 0)) {
     throw new Error('[record-identity] observed agent is invalid');
   }
+  /** @type {Record<string, any>} */
   const transitionReturn = stage === 'council'
     ? bindCouncilObservedIdentity(specialistReturn, observedAgentId)
     : { ...specialistReturn, agent_id: observedAgentId };
+  /** @type {string | undefined} */
   let currentPipelineVersion;
   if (stage === 'council') {
     try {

@@ -25,17 +25,17 @@ export function requiresCouncilResearchProvenance(task) {
   return match === null || Number(match[1]) > 6 || (Number(match[1]) === 6 && Number(match[2]) >= 1);
 }
 
-/** @param {unknown} value */
+/** @param {unknown} value @returns {value is string} */
 function isNonemptyString(value) {
   return typeof value === 'string' && value.length > 0;
 }
 
-/** @param {unknown} value */
+/** @param {unknown} value @returns {value is string[]} */
 function isNonemptyStringArray(value) {
   return Array.isArray(value) && value.length > 0 && value.every(isNonemptyString);
 }
 
-/** @param {unknown} value */
+/** @param {unknown} value @returns {value is string[]} */
 function isUniqueStringArray(value) {
   return isNonemptyStringArray(value) && new Set(value).size === value.length;
 }
@@ -60,8 +60,9 @@ function canonicalValue(value) {
   if (typeof value === 'string') return canonicalText(value);
   if (Array.isArray(value)) return value.map(canonicalValue);
   if (!isType(value, 'object')) return value;
+  const object = /** @type {Record<string, any>} */ (value);
   return Object.fromEntries(
-    Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]),
+    Object.keys(object).sort().map((key) => [key, canonicalValue(object[key])]),
   );
 }
 
@@ -79,7 +80,7 @@ function canonicalSet(values) {
 /** @param {any} inquiry */
 function canonicalInquiry(inquiry) {
   const findingVotes = canonicalSet(inquiry.findingVotes)
-    .sort((left, right) => {
+    .sort((/** @type {any} */ left, /** @type {any} */ right) => {
       const idOrder = String(left?.id).localeCompare(String(right?.id), 'en');
       return idOrder || JSON.stringify(left).localeCompare(JSON.stringify(right), 'en');
     });
@@ -105,7 +106,7 @@ function canonicalInquiry(inquiry) {
 export function councilResearchViolation(council, options = {}) {
   const members = Array.isArray(council?.members) ? council.members : [];
   const present = council?.synthesis !== undefined
-    || members.some((member) => member?.inquiry !== undefined);
+    || members.some((/** @type {any} */ member) => member?.inquiry !== undefined);
   if (!present) return options.allowOmission === true ? null : 'synthesis';
   if (members.length !== 3) return 'members';
   const allowedRoutes = options.category === 'operation'
@@ -125,29 +126,29 @@ export function councilResearchViolation(council, options = {}) {
     }
     if (!isUniqueStringArray(inquiry.solutionStrategies)
       || inquiry.solutionStrategies.length < 2
-      || !inquiry.solutionStrategies.every((route) => allowedRoutes.includes(route))) {
+      || !inquiry.solutionStrategies.every((/** @type {string} */ route) => allowedRoutes.includes(route))) {
       return `members[${index}].inquiry.solutionStrategies`;
     }
     if (!Array.isArray(inquiry.findingVotes)) return `members[${index}].inquiry.findingVotes`;
   }
 
-  if (new Set(members.map((member) => canonicalInquiry(member.inquiry))).size !== 3) {
+  if (new Set(members.map((/** @type {any} */ member) => canonicalInquiry(member.inquiry))).size !== 3) {
     return 'members.inquiry';
   }
-  if (!members.some((member) => member.inquiry.question === RECONSTRUCTION_QUESTION)) {
+  if (!members.some((/** @type {any} */ member) => member.inquiry.question === RECONSTRUCTION_QUESTION)) {
     return 'members.inquiry.question';
   }
 
   const findings = Array.isArray(council?.findings) ? council.findings : [];
-  const findingIds = findings.map((finding) => finding?.id);
+  const findingIds = findings.map((/** @type {any} */ finding) => finding?.id);
   if (findingIds.length === 0 || !findingIds.every(isNonemptyString)
     || new Set(findingIds).size !== findingIds.length) return 'findings';
 
   for (let memberIndex = 0; memberIndex < members.length; memberIndex += 1) {
     const votes = members[memberIndex].inquiry.findingVotes;
-    const voteIds = votes.map((vote) => vote?.id);
+    const voteIds = votes.map((/** @type {any} */ vote) => vote?.id);
     if (votes.length !== findings.length || new Set(voteIds).size !== voteIds.length
-      || findingIds.some((id) => !voteIds.includes(id))) {
+      || findingIds.some((/** @type {string} */ id) => !voteIds.includes(id))) {
       return `members[${memberIndex}].inquiry.findingVotes`;
     }
     for (let voteIndex = 0; voteIndex < votes.length; voteIndex += 1) {
@@ -160,8 +161,8 @@ export function councilResearchViolation(council, options = {}) {
   }
 
   for (const finding of findings) {
-    const blockingVotes = members.filter((member) => (
-      member.inquiry.findingVotes.find((vote) => vote.id === finding.id)?.blocking === true
+    const blockingVotes = members.filter((/** @type {any} */ member) => (
+      member.inquiry.findingVotes.find((/** @type {any} */ vote) => vote.id === finding.id)?.blocking === true
     )).length;
     if (finding.blockingVotes !== blockingVotes || finding.survived !== (blockingVotes >= 2)) {
       return 'findings.blockingVotes';
@@ -180,7 +181,7 @@ export function councilResearchViolation(council, options = {}) {
     if (!isNonemptyStringArray(synthesis[field])) return `synthesis.${field}`;
   }
   if (!isUniqueStringArray(synthesis.solutionStrategies) || synthesis.solutionStrategies.length < 2
-    || !synthesis.solutionStrategies.every((route) => allowedRoutes.includes(route))) {
+    || !synthesis.solutionStrategies.every((/** @type {string} */ route) => allowedRoutes.includes(route))) {
     return 'synthesis.solutionStrategies';
   }
   if (!allowedRoutes.includes(synthesis.selectedStrategy)
@@ -189,13 +190,13 @@ export function councilResearchViolation(council, options = {}) {
   }
   const rejectedAlternatives = synthesis.rejectedAlternatives;
   const nonselectedStrategies = synthesis.solutionStrategies
-    .filter((route) => route !== synthesis.selectedStrategy);
+    .filter((/** @type {string} */ route) => route !== synthesis.selectedStrategy);
   if (!isUniqueStringArray(rejectedAlternatives)
     || rejectedAlternatives.length !== nonselectedStrategies.length
-    || rejectedAlternatives.some((route) => !nonselectedStrategies.includes(route))) {
+    || rejectedAlternatives.some((/** @type {string} */ route) => !nonselectedStrategies.includes(route))) {
     return 'synthesis.rejectedAlternatives';
   }
-  const surviving = findings.filter((finding) => finding.survived === true).map((finding) => finding.id);
+  const surviving = findings.filter((/** @type {any} */ finding) => finding.survived === true).map((/** @type {any} */ finding) => finding.id);
   if (!sameValues(synthesis.survivingBlockers, surviving)) return 'synthesis.survivingBlockers';
   if (council.verdict !== (surviving.length > 0 ? 'block' : 'ship')) return 'verdict';
   return null;
