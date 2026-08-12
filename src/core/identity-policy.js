@@ -85,7 +85,7 @@ export function forbiddenRefuteAgentIds(task) {
 
 /** @param {Record<string, any>} task @param {unknown} agentId */
 export function isRefuteAgentForbidden(task, agentId) {
-  return forbiddenRefuteAgentIds(task).has(/** @type {string} */ (agentId));
+  return (/** @type {ReadonlySet<unknown>} */ (forbiddenRefuteAgentIds(task))).has(agentId);
 }
 
 /** @param {Record<string, any>} task */

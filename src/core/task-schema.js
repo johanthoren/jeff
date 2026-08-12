@@ -305,7 +305,7 @@ function validateRecoveryOriginal(value, out) {
   requireField(out, `${field}.audit_required`, typeof value.audit_required === 'boolean');
   const absenceValid = Array.isArray(value.absentLineage)
     && new Set(value.absentLineage).size === value.absentLineage.length
-    && value.absentLineage.every((/** @type {string} */ name) => RECOVERY_LINEAGE_FIELDS.includes(name));
+    && value.absentLineage.every((/** @type {unknown} */ name) => (/** @type {ReadonlyArray<unknown>} */ (RECOVERY_LINEAGE_FIELDS)).includes(name));
   requireField(out, `${field}.absentLineage`, absenceValid);
   const absent = new Set(absenceValid ? value.absentLineage : []);
   requireField(out, `${field}.plan`, Object.hasOwn(value, 'plan')
