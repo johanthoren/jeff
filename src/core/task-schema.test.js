@@ -4278,6 +4278,15 @@ test('issue 238 persisted original delivery snapshots are strict and builder-bou
 });
 
 test('issue 238 persisted council research provenance fails closed and keeps history readable', async (t) => {
+  await t.test('current-version unconvened council placeholder omits research', async () => {
+    const placeholder = canonicalTask({
+      pipelineVersion: '6.1.0',
+      convergence: convergence(),
+    });
+    const result = await verdictFor(placeholder);
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+  });
+
   const canonical = item5CodeLedger({
     kickbacks: [],
     council: {
