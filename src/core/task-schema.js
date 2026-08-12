@@ -13,6 +13,7 @@ import {
   OPERATION_STATE_VERSION,
 } from './operation-state.js';
 import { isOneOf, isType } from './validate.js';
+import { validateSpecialistReturn } from './record-contract.js';
 
 const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
 const CODE_STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'audit', 'done'];
@@ -253,6 +254,49 @@ function validateCouncilSynthesis(value, out, operation) {
   requireField(out, `${field}.selectedStrategy`, isOneOf(value.selectedStrategy, routes));
 }
 
+/** @param {any} value @param {any} original */
+function isStrictStoredCodePlan(value, original) {
+  const fields = ['result', 'slices', 'testFiles', 'redRun', 'escalation', 'refactorOpportunity'];
+  if (!isType(value, 'object') || Object.keys(value).some((field) => !fields.includes(field))) {
+    return false;
+  }
+  try {
+    validateSpecialistReturn('plan', {
+      stage: 'plan',
+      complexity: original.complexity,
+      auditRequired: original.audit_required,
+      ...value,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** @param {any} value */
+function isStrictStoredImplementation(value) {
+  const fields = ['agent_id', 'result', 'files', 'greenRun', 'repairRound'];
+  if (!isType(value, 'object') || Object.keys(value).some((field) => !fields.includes(field))
+    || !isAgentId(value.agent_id)
+    || (value.repairRound !== undefined
+      && (!Number.isInteger(value.repairRound) || value.repairRound < 1))) {
+    return false;
+  }
+  const { agent_id: _agentId, repairRound: _repairRound, ...stored } = value;
+  try {
+    validateSpecialistReturn('implement', {
+      stage: 'implement',
+      ...stored,
+      kickback: stored.result === 'green'
+        ? null
+        : { to: 'plan', reason: 'Stored implementation kickback.' },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** @param {any} value @param {string[]} out */
 function validateRecoveryOriginal(value, out) {
   const field = 'convergence.recovery.original';
@@ -266,7 +310,7 @@ function validateRecoveryOriginal(value, out) {
   requireField(out, `${field}.absentLineage`, absenceValid);
   const absent = new Set(absenceValid ? value.absentLineage : []);
   requireField(out, `${field}.plan`, Object.hasOwn(value, 'plan')
-    && (absent.has('plan') ? value.plan === null : isType(value.plan, 'object')));
+    && (absent.has('plan') ? value.plan === null : isStrictStoredCodePlan(value.plan, value)));
   requireField(out, `${field}.test_author_agent_id`, Object.hasOwn(value, 'test_author_agent_id')
     && (absent.has('test_author_agent_id')
       ? value.test_author_agent_id === null
@@ -276,7 +320,9 @@ function validateRecoveryOriginal(value, out) {
       ? value.builder_agent_id === null
       : isNonemptyString(value.builder_agent_id)));
   requireField(out, `${field}.implement`, Object.hasOwn(value, 'implement')
-    && (absent.has('implement') ? value.implement === null : isType(value.implement, 'object')));
+    && (absent.has('implement')
+      ? value.implement === null
+      : isStrictStoredImplementation(value.implement)));
 }
 
 /** @param {any} value @param {string[]} out */
@@ -325,6 +371,13 @@ function validateConvergence(value, out, operation) {
   requireField(out, 'convergence.council.findings', Array.isArray(council.findings));
   requireField(out, 'convergence.council.verdict', isOneOf(council.verdict, ['ship', 'block', null]));
   requireField(out, 'convergence.council.outcome', isOneOf(council.outcome, ['shipped', 'scoped-fix-shipped', 'blocked-to-operator', null]));
+  if (Object.hasOwn(council, 'researchProvenance')) {
+    requireField(
+      out,
+      'convergence.council.researchProvenance',
+      isOneOf(council.researchProvenance, ['canonical', 'historical-omitted']),
+    );
+  }
   if (Array.isArray(council.members)) {
     council.members.forEach((/** @type {any} */ member, /** @type {number} */ index) => {
       const field = `convergence.council.members[${index}]`;
@@ -339,6 +392,23 @@ function validateConvergence(value, out, operation) {
         validateCouncilInquiry(member.inquiry, `${field}.inquiry`, out);
       }
     });
+  }
+  if (council.researchProvenance === 'canonical') {
+    requireField(
+      out,
+      'convergence.council.researchProvenance',
+      council.members.every((member) => isType(member?.inquiry, 'object'))
+        && isType(council.synthesis, 'object')
+        && isAgentId(council.synthesizer_agent_id),
+    );
+  } else if (council.researchProvenance === 'historical-omitted') {
+    requireField(
+      out,
+      'convergence.council.researchProvenance',
+      council.members.every((member) => !Object.hasOwn(member ?? {}, 'inquiry'))
+        && !Object.hasOwn(council, 'synthesis')
+        && !Object.hasOwn(council, 'synthesizer_agent_id'),
+    );
   }
   if (Array.isArray(council.findings)) {
     council.findings.forEach((/** @type {any} */ finding, /** @type {number} */ index) => {

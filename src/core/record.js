@@ -769,6 +769,7 @@ function recordCouncil(task, result, at) {
 
   task.convergence.council = {
     ...council,
+    researchProvenance: 'canonical',
     cycle: activeJudgmentCycle(task),
     executor_agent_id: task.agents.executor_agent_id,
   };
@@ -983,7 +984,9 @@ export function transitionTask(task, stage, result) {
   const isJudgment = stage === 'audit' || (operation ? stage === 'verify' : stage === 'review');
   const recoveryStage = operation ? 'execute' : 'implement';
   const isLegacyCodePlanResume = !operation && stage === 'plan' && next.stage === 'test';
-  if (stage === recoveryStage && next.status === 'blocked'
+  if (['plan', 'implement', 'refactor'].includes(stage)
+    && next.convergence?.recovery?.episode === 1
+    && next.status === 'blocked'
     && next.convergence?.council?.outcome === 'blocked-to-operator') {
     throw new Error('[record-transition] task is blocked after failed council recovery');
   }
@@ -1020,7 +1023,7 @@ export function transitionTask(task, stage, result) {
     if (pendingRecovery) {
       const route = next.convergence.recovery.route;
       if (!['test-contract-repair', 'causal-subgraph-reconstruction', 'full-replan'].includes(route)
-        || result.result !== 'red') {
+        || !['red', 'escalation'].includes(result.result)) {
         throw new Error('[record-transition] recovery plan does not match the selected council route');
       }
       assertFreshRecoveryParticipant(next, result.agent_id, 'test author');
@@ -1068,6 +1071,10 @@ export function transitionTask(task, stage, result) {
       };
       if (pendingRecovery) {
         invalidateVerification(next);
+        if (result.result === 'escalation') {
+          blockCouncilRecovery(next);
+          return /** @type {TaskJson} */ (next);
+        }
         next.stage = next.convergence.recovery.route === 'test-contract-repair'
           ? 'review'
           : 'implement';
@@ -1203,9 +1210,6 @@ export function transitionTask(task, stage, result) {
       if (next.convergence.recovery.route !== 'refactor') {
         throw new Error('[record-transition] recovery refactor does not match the selected council route');
       }
-      if (result.result !== 'refactored' || result.files.length === 0) {
-        throw new Error('[record-transition] direct recovery refactor requires result refactored with nonempty files');
-      }
       assertFreshRecoveryParticipant(next, result.agent_id, 'builder');
       next.convergence.recovery.builder_agent_id = result.agent_id;
     }
@@ -1217,6 +1221,10 @@ export function transitionTask(task, stage, result) {
       greenRun: result.greenRun,
       summary: result.summary,
     };
+    if (pendingRecovery && (result.result === 'clean' || result.files.length === 0)) {
+      blockCouncilRecovery(next);
+      return /** @type {TaskJson} */ (next);
+    }
     const scopedJudgmentRepair = resetJudgmentsAfterFix(next, at, result.files);
     if (scopedJudgmentRepair) {
       next.refactor.repairRound = currentCodeRepairRound(next);

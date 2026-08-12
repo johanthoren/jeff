@@ -58,14 +58,31 @@ function canonicalValue(value) {
   );
 }
 
+/** @param {unknown[]} values */
+function canonicalSet(values) {
+  const byValue = new Map(values.map((value) => {
+    const canonical = canonicalValue(value);
+    return [JSON.stringify(canonical), canonical];
+  }));
+  return [...byValue.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, 'en'))
+    .map(([, value]) => value);
+}
+
 /** @param {any} inquiry */
 function canonicalInquiry(inquiry) {
-  const findingVotes = [...inquiry.findingVotes]
+  const findingVotes = canonicalSet(inquiry.findingVotes)
     .sort((left, right) => {
-      if (left?.id === right?.id) return 0;
-      return left?.id < right?.id ? -1 : 1;
+      const idOrder = String(left?.id).localeCompare(String(right?.id), 'en');
+      return idOrder || JSON.stringify(left).localeCompare(JSON.stringify(right), 'en');
     });
-  return JSON.stringify(canonicalValue({ ...inquiry, findingVotes }));
+  return JSON.stringify(canonicalValue({
+    ...inquiry,
+    causalHypotheses: canonicalSet(inquiry.causalHypotheses),
+    solutionStrategies: canonicalSet(inquiry.solutionStrategies),
+    findingVotes,
+    decisiveEvidence: canonicalSet(inquiry.decisiveEvidence),
+  }));
 }
 
 /**

@@ -934,13 +934,20 @@ function convergenceChecks(t, id, ids, out) {
       out.push(`task ${id}: convened council.stage must be ${judgmentStages.join(' or ')} [inv8]`);
     }
   }
-    const researchViolation = councilResearchViolation(cl, {
-      allowOmission: true,
-      category: t.category === 'operation' ? 'operation' : 'code',
-    });
-    if (researchViolation !== null) {
-      out.push(`task ${id}: council.${researchViolation} is invalid canonical research [inv8]`);
-    }
+  const researchProvenance = cl?.researchProvenance;
+  const hasResearch = cl?.synthesis !== undefined
+    || cl?.synthesizer_agent_id !== undefined
+    || jqOr(cl?.members, []).some((/** @type {any} */ member) => member?.inquiry !== undefined);
+  const researchViolation = councilResearchViolation(cl, {
+    allowOmission: researchProvenance !== 'canonical',
+    category: t.category === 'operation' ? 'operation' : 'code',
+  });
+  if (researchViolation !== null) {
+    out.push(`task ${id}: council.${researchViolation} is invalid canonical research [inv8]`);
+  }
+  if (researchProvenance === 'historical-omitted' && hasResearch) {
+    out.push(`task ${id}: council research provenance is inconsistent with historical omission [inv8]`);
+  }
 
   // inv9: per-finding determinism (only when convened).
   if (conv) {
@@ -999,6 +1006,10 @@ function convergenceChecks(t, id, ids, out) {
       }
       if (original.audit_required === true && t.audit?.required !== true) {
         out.push(`task ${id}: recovery cannot lower the original audit floor [inv11]`);
+      }
+      if (isType(original.implement, 'object')
+        && original.builder_agent_id !== original.implement.agent_id) {
+        out.push(`task ${id}: recovery original builder must match the captured implementation [inv11]`);
       }
     }
     const testAuthor = recovery?.test_author_agent_id;
