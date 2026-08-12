@@ -4285,13 +4285,15 @@ test('issue 238 persisted council research provenance fails closed and keeps his
       researchProvenance: 'canonical',
     },
   });
+  canonical.pipelineVersion = '6.1.0';
   assert.equal((await verdictFor(canonical)).ok, true);
 
-  await t.test('canonical provenance cannot be stripped into historical omission', async () => {
+  await t.test('canonical marker and research cannot be stripped into historical omission', async () => {
     const stripped = structuredClone(canonical);
     for (const member of stripped.convergence.council.members) delete member.inquiry;
     delete stripped.convergence.council.synthesis;
     delete stripped.convergence.council.synthesizer_agent_id;
+    delete stripped.convergence.council.researchProvenance;
     const result = await verdictFor(stripped);
     assert.equal(result.ok, false, 'canonical research stripping must not validate');
     assert.match(result.stderr.join('\n'), /council|research|provenance|inv/i);

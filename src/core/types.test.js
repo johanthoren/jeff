@@ -493,3 +493,99 @@ void codeRecoveryCannotScopeExecute;
 // @ts-expect-error - operation councils cannot select code repair
 const operationCouncilCannotConfineRepair = 'confined-repair';
 void operationCouncilCannotConfineRepair;
+
+/** @type {import('./types.js').CodeConvergence} */
+const codeConvergenceCannotCollectOperationRoutes = {
+  cap: 2,
+  stages: {
+    review: { blockingKickbacks: 2 },
+    audit: { blockingKickbacks: 0 },
+  },
+  council: {
+    convened: true,
+    stage: 'review',
+    members: [{
+      agent_id: 'code-council-member',
+      lens: 'integrity',
+      temperature: 0.3,
+      inquiry: {
+        question: 'Which code repair route fits the evidence?',
+        problemRestatement: 'The code recovery route must stay category-valid.',
+        causalHypotheses: ['The public collection type is broader than runtime validation.'],
+        solutionStrategies: [
+          // @ts-expect-error - code inquiry collections cannot contain operation execution
+          'scoped-execute',
+        ],
+        findingVotes: [],
+        decisiveEvidence: ['The runtime rejects operation-only routes for code tasks.'],
+      },
+    }],
+    findings: [],
+    synthesis: {
+      problemRestatement: 'The code recovery route must stay category-valid.',
+      survivingBlockers: [],
+      causalHypotheses: ['The public collection type is broader than runtime validation.'],
+      solutionStrategies: [
+        // @ts-expect-error - code synthesis collections cannot contain operation execution
+        'scoped-execute',
+      ],
+      rejectedAlternatives: [
+        // @ts-expect-error - code rejected-alternative collections cannot contain operation execution
+        'scoped-execute',
+      ],
+      selectedStrategy: 'confined-repair',
+      decisiveEvidence: ['The runtime rejects operation-only routes for code tasks.'],
+    },
+    verdict: 'block',
+    outcome: null,
+  },
+};
+void codeConvergenceCannotCollectOperationRoutes;
+
+/** @type {import('./types.js').OperationConvergence} */
+const operationConvergenceCannotCollectCodeRoutes = {
+  cap: 2,
+  stages: {
+    verify: { blockingKickbacks: 2 },
+    audit: { blockingKickbacks: 0 },
+  },
+  council: {
+    convened: true,
+    stage: 'verify',
+    members: [{
+      agent_id: 'operation-council-member',
+      lens: 'integrity',
+      temperature: 0.3,
+      inquiry: {
+        question: 'Which operation recovery route fits the evidence?',
+        problemRestatement: 'The operation recovery route must stay category-valid.',
+        causalHypotheses: ['The public collection type is broader than runtime validation.'],
+        solutionStrategies: [
+          // @ts-expect-error - operation inquiry collections cannot contain code repair
+          'confined-repair',
+        ],
+        findingVotes: [],
+        decisiveEvidence: ['The runtime rejects code-only routes for operation tasks.'],
+      },
+    }],
+    findings: [],
+    synthesis: {
+      problemRestatement: 'The operation recovery route must stay category-valid.',
+      survivingBlockers: [],
+      causalHypotheses: ['The public collection type is broader than runtime validation.'],
+      solutionStrategies: [
+        // @ts-expect-error - operation synthesis collections cannot contain code repair
+        'confined-repair',
+      ],
+      rejectedAlternatives: [
+        // @ts-expect-error - operation rejected-alternative collections cannot contain code repair
+        'confined-repair',
+      ],
+      selectedStrategy: 'scoped-execute',
+      decisiveEvidence: ['The runtime rejects code-only routes for operation tasks.'],
+    },
+    verdict: 'block',
+    outcome: null,
+  },
+};
+void operationConvergenceCannotCollectCodeRoutes;

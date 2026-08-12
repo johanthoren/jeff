@@ -662,6 +662,24 @@ function mixedStageCouncilReturn(outcome = null) {
   };
 }
 
+/** @param {Record<string, any>} specialistReturn @returns {any} */
+function councilReturnWithoutResearch(specialistReturn) {
+  const historical = structuredClone(specialistReturn);
+  for (const member of historical.council.members) delete member.inquiry;
+  delete historical.council.synthesis;
+  return historical;
+}
+
+/** @param {string} taskDir */
+async function persistHistoricalCouncilOmission(taskDir) {
+  const task = await readTask(taskDir);
+  for (const member of task.convergence.council.members) delete member.inquiry;
+  delete task.convergence.council.synthesis;
+  delete task.convergence.council.synthesizer_agent_id;
+  task.convergence.council.researchProvenance = 'historical-omitted';
+  await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+}
+
 async function prepareScopedCouncilRecovery(task = confinedCouncilTask(), councilResult = councilReturn()) {
   const { root, taskDir } = await makeRoot(task);
   await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
@@ -4688,6 +4706,54 @@ test('issue 238 scoped completion rejects changed canonical council research ato
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('issue 238 historical-omitted recoveries retain a terminal completion path', async (t) => {
+  await t.test('code recovery', async () => {
+    const { root, taskDir } = await prepareCompletedMixedStageReassessment();
+    try {
+      await persistHistoricalCouncilOmission(taskDir);
+      const recovered = await recordSpecialistReturn(
+        root,
+        'council',
+        '18',
+        councilReturnWithoutResearch(mixedStageCouncilReturn('scoped-fix-shipped')),
+      );
+
+      assert.deepEqual([recovered.status, recovered.stage], ['done', 'done']);
+      assert.equal(recovered.convergence.council.outcome, 'scoped-fix-shipped');
+      assert.equal(recovered.convergence.council.researchProvenance, 'historical-omitted');
+      assert.equal(Object.hasOwn(recovered.convergence.council, 'synthesis'), false);
+      assert.equal(recovered.convergence.council.members.some((member) => Object.hasOwn(member, 'inquiry')), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('operation recovery', async () => {
+    const { root, taskDir } = await makeRoot(operationCouncilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+      await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor'));
+      await recordSpecialistReturn(root, 'verify', '18', verifyReturn('fresh-verifier', { cycle: 1 }));
+      await persistHistoricalCouncilOmission(taskDir);
+
+      const recovered = await recordSpecialistReturn(
+        root,
+        'council',
+        '18',
+        councilReturnWithoutResearch(operationCouncilReturn('scoped-fix-shipped')),
+      );
+
+      assert.deepEqual([recovered.status, recovered.stage], ['done', 'done']);
+      assert.equal(recovered.convergence.council.outcome, 'scoped-fix-shipped');
+      assert.equal(recovered.convergence.council.researchProvenance, 'historical-omitted');
+      assert.equal(Object.hasOwn(recovered.convergence.council, 'synthesis'), false);
+      assert.equal(recovered.convergence.council.members.some((member) => Object.hasOwn(member, 'inquiry')), false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 test('issue 65 scoped council completion requires fresh verification after the recorded fix', async () => {

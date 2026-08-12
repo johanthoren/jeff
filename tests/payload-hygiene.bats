@@ -1892,8 +1892,20 @@ skill_outside_dispatch_rules() {
     echo "the refactor brief does not give direct recovery one behavior-changing refactored result"
     return 1
   }
-  grep -qiE 'clean[^.]{0,80}(invalid|reject|not (valid|allowed|accepted))' "$refactor_brief" || {
-    echo "the refactor brief still permits clean to complete direct recovery"
+  grep -qiE 'clean[^.]{0,100}(no[- ]change|empty[^.]{0,40}files)|(no[- ]change|empty[^.]{0,40}files)[^.]{0,100}clean' "$refactor_brief" || {
+    echo "the refactor brief does not identify clean and no-change direct recovery returns"
+    return 1
+  }
+  grep -qiE '(clean|no[- ]change|empty[^.]{0,40}files)[^.]{0,180}accept[^.]{0,120}(terminal[^.]{0,60}(failure|evidence)|(failure|evidence)[^.]{0,60}terminal)' "$refactor_brief" || {
+    echo "the refactor brief does not accept clean or no-change as terminal failure evidence"
+    return 1
+  }
+  grep -qiE '(clean|no[- ]change|empty[^.]{0,40}files)[^.]{0,220}block[^.]{0,80}operator|block[^.]{0,80}operator[^.]{0,220}(clean|no[- ]change|empty[^.]{0,40}files)' "$refactor_brief" || {
+    echo "the refactor brief does not block a clean or no-change recovery to the operator"
+    return 1
+  }
+  ! grep -qiE 'clean[^.]{0,80}(invalid|will be rejected|not (valid|allowed|accepted))' "$refactor_brief" || {
+    echo "the refactor brief still rejects a valid clean direct recovery return"
     return 1
   }
 
