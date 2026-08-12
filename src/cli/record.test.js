@@ -7539,15 +7539,17 @@ test('issue 238 unordered inquiry research rejects order and repetition atomical
   }
 });
 
-test('issue 239 current councils advance legacy provenance before persistence', async (t) => {
+test('issue 239 current councils advance legacy provenance and preserve current or newer versions', async (t) => {
   const packageJson = JSON.parse(await readFile(join(HERE, '..', '..', 'package.json'), 'utf8'));
-  const histories = [
-    ['unversioned', undefined],
-    ['explicit pre-6.1', '6.0.1'],
+  const versions = [
+    ['unversioned', undefined, packageJson.version],
+    ['explicit pre-6.1', '6.0.1', packageJson.version],
+    ['already current', packageJson.version, packageJson.version],
+    ['newer', '7.0.0', '7.0.0'],
   ];
 
-  for (const [historyName, pipelineVersion] of histories) {
-    await t.test(historyName, async () => {
+  for (const [versionName, pipelineVersion, expectedPipelineVersion] of versions) {
+    await t.test(versionName, async () => {
       const task = councilTask();
       if (pipelineVersion === undefined) delete task.pipelineVersion;
       else task.pipelineVersion = pipelineVersion;
@@ -7555,7 +7557,7 @@ test('issue 239 current councils advance legacy provenance before persistence', 
       try {
         const recorded = await recordSpecialistReturn(root, 'council', '18', councilReturn());
         assert.equal(recorded.convergence.council.researchProvenance, 'canonical');
-        assert.equal(recorded.pipelineVersion, packageJson.version);
+        assert.equal(recorded.pipelineVersion, expectedPipelineVersion);
 
         for (const member of recorded.convergence.council.members) delete member.inquiry;
         delete recorded.convergence.council.synthesis;

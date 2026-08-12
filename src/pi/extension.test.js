@@ -985,3 +985,50 @@ test('issue 237 registered Pi tool returns validated council work with host-obse
   }
 });
 
+test('issue 239 standalone council synthesis rejects empty research arrays', async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-council-synthesis-'));
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    const validSynthesis = {
+      problemRestatement: 'The council boundary must preserve research and provenance.',
+      survivingBlockers: ['F1'],
+      causalHypotheses: ['Inquiry assembly and route judgment have different owners.'],
+      solutionStrategies: ['confined-repair', 'full-replan'],
+      rejectedAlternatives: ['confined-repair'],
+      selectedStrategy: 'full-replan',
+      decisiveEvidence: ['Three independent inquiries support reconstruction.'],
+    };
+
+    for (const field of ['causalHypotheses', 'decisiveEvidence']) {
+      await t.test(`rejects empty ${field}`, async () => {
+        const specialistReturn = {
+          stage: 'council-synthesis',
+          synthesis: { ...validSynthesis, [field]: [] },
+        };
+        const tool = registeredDispatchTool({
+          dispatchRoleSession: async () => ({
+            stage: 'council-synthesis',
+            agent_id: 'host-synthesis-agent',
+            brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
+            transcript: JSON.stringify(specialistReturn),
+          }),
+        });
+
+        await assert.rejects(
+          () => tool.execute(
+            `call-empty-${field}`,
+            { stage: 'council-synthesis', brief: 'Independently synthesize the three inquiries.' },
+            undefined,
+            undefined,
+            { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+          ),
+          /cook_dispatch: specialist return is invalid/,
+        );
+      });
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
