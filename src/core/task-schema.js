@@ -378,8 +378,9 @@ function validateConvergence(value, out, operation, requireResearchProvenance) {
       isOneOf(council.researchProvenance, ['canonical', 'historical-omitted']),
     );
   }
-  if (requireResearchProvenance && council.convened === true && !Object.hasOwn(council, 'researchProvenance')) {
-    out.push('convergence.council.researchProvenance is required');
+  if (requireResearchProvenance && council.convened === true
+    && council.researchProvenance !== 'canonical') {
+    out.push('convergence.council.researchProvenance must be canonical');
   }
   if (Array.isArray(council.members)) {
     council.members.forEach((/** @type {any} */ member, /** @type {number} */ index) => {

@@ -935,13 +935,14 @@ function convergenceChecks(t, id, ids, out) {
     }
   }
   const researchProvenance = cl?.researchProvenance;
+  const requiresResearchProvenance = requiresCouncilResearchProvenance(t);
   const hasResearch = cl?.synthesis !== undefined
     || cl?.synthesizer_agent_id !== undefined
     || jqOr(cl?.members, []).some((/** @type {any} */ member) => member?.inquiry !== undefined);
   const researchViolation = councilResearchViolation(cl, {
     allowOmission: !conv
-      || researchProvenance === 'historical-omitted'
-      || (researchProvenance === undefined && !requiresCouncilResearchProvenance(t)),
+      || (!requiresResearchProvenance
+        && (researchProvenance === undefined || researchProvenance === 'historical-omitted')),
     category: t.category === 'operation' ? 'operation' : 'code',
   });
   if (researchViolation !== null) {

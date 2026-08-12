@@ -1007,8 +1007,10 @@ export function transitionTask(task, stage, result) {
   const isJudgment = stage === 'audit' || (operation ? stage === 'verify' : stage === 'review');
   const recoveryStage = operation ? 'execute' : 'implement';
   const isLegacyCodePlanResume = !operation && stage === 'plan' && next.stage === 'test';
-  if (['plan', 'implement', 'refactor'].includes(stage)
-    && next.convergence?.recovery?.episode === 1
+  if (((operation && stage === 'execute')
+      || (!operation
+        && ['plan', 'implement', 'refactor'].includes(stage)
+        && next.convergence?.recovery?.episode === 1))
     && next.status === 'blocked'
     && next.convergence?.council?.outcome === 'blocked-to-operator') {
     throw new Error('[record-transition] task is blocked after failed council recovery');
