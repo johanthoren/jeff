@@ -3868,21 +3868,8 @@ function issue237PersistedCouncil() {
   };
 }
 
-test('issue 237 persisted recovery is optional for history and fail-closed when present', async (t) => {
-  const historical = item5CodeLedger({
-    kickbacks: [],
-    council: item5ConvenedCouncil([{
-      id: 'F1',
-      source: 'review',
-      summary: 'Historical finding',
-      blockingVotes: 2,
-      survived: true,
-      followupTaskId: null,
-    }]),
-  });
-  assert.equal((await verdictFor(historical)).ok, true);
-
-  const canonical = item5CodeLedger({
+function issue237PersistedRecovery() {
+  const task = item5CodeLedger({
     kickbacks: [{
       from: 'review',
       to: 'plan',
@@ -3891,8 +3878,8 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
     }],
     council: issue237PersistedCouncil(),
   });
-  canonical.stage = 'plan';
-  canonical.convergence.recovery = {
+  task.stage = 'plan';
+  task.convergence.recovery = {
     episode: 1,
     route: 'full-replan',
     baselineGate: null,
@@ -3920,6 +3907,24 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
       },
     },
   };
+  return task;
+}
+
+test('issue 237 persisted recovery is optional for history and fail-closed when present', async (t) => {
+  const historical = item5CodeLedger({
+    kickbacks: [],
+    council: item5ConvenedCouncil([{
+      id: 'F1',
+      source: 'review',
+      summary: 'Historical finding',
+      blockingVotes: 2,
+      survived: true,
+      followupTaskId: null,
+    }]),
+  });
+  assert.equal((await verdictFor(historical)).ok, true);
+
+  const canonical = issue237PersistedRecovery();
   assert.equal((await verdictFor(canonical)).ok, true);
 
   const historicallyAbsent = structuredClone(canonical);
@@ -4172,4 +4177,146 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
       assert.match(result.stderr.join('\n'), /recovery|identity|inv/i);
     });
   }
+});
+
+const ISSUE_238_UNORDERED_INQUIRY_FIELDS = [
+  'causalHypotheses',
+  'solutionStrategies',
+  'findingVotes',
+  'decisiveEvidence',
+];
+
+/**
+ * @param {string} field
+ * @param {'order' | 'repetition'} variant
+ */
+function issue238PersistedResearchVariant(field, variant) {
+  const task = issue237PersistedRecovery();
+  const council = task.convergence.council;
+  const findingIds = field === 'findingVotes' ? ['F1', 'F2', 'F3'] : ['F1'];
+
+  if (findingIds.length > 1) {
+    council.findings = findingIds.map((id) => ({
+      id,
+      source: 'review',
+      summary: `Persisted blocker ${id}.`,
+      blockingVotes: 3,
+      survived: true,
+      followupTaskId: null,
+    }));
+    council.synthesis.survivingBlockers = findingIds;
+  } else {
+    council.findings[0].blockingVotes = 3;
+  }
+
+  const values = field === 'findingVotes'
+    ? findingIds.map((id) => ({ id, blocking: true, rationale: `Evidence for ${id}.` }))
+    : field === 'solutionStrategies'
+      ? ['confined-repair', 'causal-subgraph-reconstruction', 'full-replan']
+      : [`${field} alpha`, `${field} beta`, `${field} gamma`];
+  const collections = variant === 'order'
+    ? [values, [values[1], values[2], values[0]], [values[2], values[0], values[1]]]
+    : [values, [values[0], ...values], [...values, values[2]]];
+  const inquiry = structuredClone(council.members[0].inquiry);
+  council.members = council.members.map((member, index) => ({
+    ...member,
+    inquiry: {
+      ...structuredClone(inquiry),
+      [field]: structuredClone(collections[index]),
+    },
+  }));
+  return task;
+}
+
+test('issue 238 persisted unordered inquiry research rejects order and repetition', async (t) => {
+  for (const field of ISSUE_238_UNORDERED_INQUIRY_FIELDS) {
+    for (const variant of ['order', 'repetition']) {
+      await t.test(`${field} ${variant}-only difference`, async () => {
+        const result = await verdictFor(issue238PersistedResearchVariant(field, variant));
+        assert.equal(result.ok, false, `${field} ${variant} must not validate`);
+        assert.match(result.stderr.join('\n'), /council|inquiry|research|inv/i);
+      });
+    }
+  }
+});
+
+test('issue 238 persisted original delivery snapshots are strict and builder-bound', async (t) => {
+  const cases = [
+    ['empty original plan snapshot', (task) => {
+      task.convergence.recovery.original.plan = {};
+    }],
+    ['empty original implementation snapshot', (task) => {
+      task.convergence.recovery.original.implement = {};
+    }],
+    ['original builder differs from captured implementation agent', (task) => {
+      task.convergence.recovery.original.builder_agent_id = 'different-original-builder';
+    }],
+  ];
+
+  for (const [name, mutate] of cases) {
+    await t.test(name, async () => {
+      const invalid = issue237PersistedRecovery();
+      mutate(invalid);
+      const result = await verdictFor(invalid);
+      assert.equal(result.ok, false, `${name} must not validate`);
+      assert.match(result.stderr.join('\n'), /plan|implement|builder|original|lineage|recovery|inv/i);
+    });
+  }
+
+  const historical = issue237PersistedRecovery();
+  historical.convergence.recovery.original.absentLineage = [
+    'plan',
+    'test_author_agent_id',
+    'builder_agent_id',
+    'implement',
+  ];
+  historical.convergence.recovery.original.plan = null;
+  historical.convergence.recovery.original.test_author_agent_id = null;
+  historical.convergence.recovery.original.builder_agent_id = null;
+  historical.convergence.recovery.original.implement = null;
+  assert.equal((await verdictFor(historical)).ok, true);
+});
+
+test('issue 238 persisted council research provenance fails closed and keeps history readable', async (t) => {
+  const canonical = item5CodeLedger({
+    kickbacks: [],
+    council: {
+      ...issue237PersistedCouncil(),
+      researchProvenance: 'canonical',
+    },
+  });
+  assert.equal((await verdictFor(canonical)).ok, true);
+
+  await t.test('canonical provenance cannot be stripped into historical omission', async () => {
+    const stripped = structuredClone(canonical);
+    for (const member of stripped.convergence.council.members) delete member.inquiry;
+    delete stripped.convergence.council.synthesis;
+    delete stripped.convergence.council.synthesizer_agent_id;
+    const result = await verdictFor(stripped);
+    assert.equal(result.ok, false, 'canonical research stripping must not validate');
+    assert.match(result.stderr.join('\n'), /council|research|provenance|inv/i);
+  });
+
+  await t.test('historical provenance accepts only complete research omission', async () => {
+    const historical = item5CodeLedger({
+      kickbacks: [],
+      council: item5ConvenedCouncil([{
+        id: 'F1',
+        source: 'review',
+        summary: 'Historical finding',
+        blockingVotes: 2,
+        survived: true,
+        followupTaskId: null,
+      }], {
+        researchProvenance: 'historical-omitted',
+      }),
+    });
+    assert.equal((await verdictFor(historical)).ok, true);
+
+    const mislabeled = structuredClone(canonical);
+    mislabeled.convergence.council.researchProvenance = 'historical-omitted';
+    const result = await verdictFor(mislabeled);
+    assert.equal(result.ok, false, 'historical provenance cannot label canonical research');
+    assert.match(result.stderr.join('\n'), /council|research|provenance|inv/i);
+  });
 });

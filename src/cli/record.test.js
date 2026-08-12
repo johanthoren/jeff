@@ -6803,6 +6803,76 @@ function issue237CouncilReturn(strategy, result = councilReturn()) {
   return selected;
 }
 
+const ISSUE_238_UNORDERED_INQUIRY_FIELDS = [
+  'causalHypotheses',
+  'solutionStrategies',
+  'findingVotes',
+  'decisiveEvidence',
+];
+
+/**
+ * @param {string} field
+ * @param {'order' | 'repetition'} variant
+ */
+function issue238ResearchCollectionVariant(field, variant) {
+  const task = councilTask();
+  const result = councilReturn();
+  const findingIds = field === 'findingVotes' ? ['F1', 'F2', 'F3'] : ['F1'];
+
+  if (findingIds.length > 1) {
+    const originalFinding = task.review.findings[0];
+    const findings = [
+      originalFinding,
+      ...findingIds.slice(1).map((id, index) => {
+        const line = 11 + index;
+        const what = `The recorder loses accepted result ${id}.`;
+        return {
+          ...structuredClone(originalFinding),
+          line,
+          what,
+          why: 'The same recorder boundary loses independently accepted evidence.',
+          refute: {
+            ...structuredClone(originalFinding.refute),
+            agent_id: `${id.toLowerCase()}-refuter`,
+            finding: `src/core/record.js:${line} ${what}`,
+          },
+        };
+      }),
+    ];
+    task.review.findings = findings;
+    task.refutes = findings.map((finding) => finding.refute);
+    result.council.findings = findings.map((finding, index) => ({
+      id: findingIds[index],
+      summary: finding.what,
+      source: 'review',
+      blockingVotes: 3,
+      survived: true,
+      followupTaskId: null,
+    }));
+    result.council.synthesis.survivingBlockers = findingIds;
+  } else {
+    result.council.findings[0].blockingVotes = 3;
+  }
+
+  const values = field === 'findingVotes'
+    ? findingIds.map((id) => ({ id, blocking: true, rationale: `Evidence for ${id}.` }))
+    : field === 'solutionStrategies'
+      ? ['confined-repair', 'causal-subgraph-reconstruction', 'full-replan']
+      : [`${field} alpha`, `${field} beta`, `${field} gamma`];
+  const collections = variant === 'order'
+    ? [values, [values[1], values[2], values[0]], [values[2], values[0], values[1]]]
+    : [values, [values[0], ...values], [...values, values[2]]];
+  const inquiry = structuredClone(result.council.members[0].inquiry);
+  result.council.members = result.council.members.map((member, index) => ({
+    ...member,
+    inquiry: {
+      ...structuredClone(inquiry),
+      [field]: structuredClone(collections[index]),
+    },
+  }));
+  return { task, result };
+}
+
 const ISSUE_237_BASELINE_GATE = {
   hash: 'pre-council-checkpoint',
   clean: true,
@@ -7048,6 +7118,53 @@ test('issue 237 recovery survives resume and exhausts exactly once after a fresh
   }
 });
 
+test('issue 238 valid recovery plan escalation exhausts the sole episode', async () => {
+  const { root, taskDir } = await makeRoot(councilTask());
+  const taskPath = join(taskDir, 'task.json');
+  try {
+    await recordSpecialistReturn(
+      root,
+      'council',
+      '18',
+      issue237CouncilReturn('causal-subgraph-reconstruction'),
+    );
+    const exhausted = await recordSpecialistReturn(
+      root,
+      'plan',
+      '18',
+      planReturn({
+        result: 'escalation',
+        complexity: 'complex',
+        escalation: {
+          fork: 'The locked recovery has two incompatible valid interpretations.',
+          options: ['Ask the operator to select the intended contract.'],
+        },
+      }, 'fresh-recovery-plan-author'),
+    );
+
+    assert.equal(exhausted.stage, 'plan');
+    assert.equal(exhausted.status, 'blocked');
+    assert.equal(exhausted.convergence.council.outcome, 'blocked-to-operator');
+    assert.equal(exhausted.convergence.recovery.episode, 1);
+    assert.equal(exhausted.convergence.recovery.route, 'causal-subgraph-reconstruction');
+    assert.equal(exhausted.blockedReason, 'The recording path loses a result.');
+
+    const beforeRetry = await readFile(taskPath);
+    await assert.rejects(
+      recordSpecialistReturn(
+        root,
+        'plan',
+        '18',
+        planReturn({ complexity: 'complex' }, 'second-recovery-plan-author'),
+      ),
+      /blocked|exhausted|council recovery/i,
+    );
+    assert.deepEqual(await readFile(taskPath), beforeRetry);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 237 malformed research or synthesis is rejected atomically', async (t) => {
   const invalidReturns = [
     ['missing one independent inquiry', (value) => {
@@ -7228,6 +7345,52 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
     await recordSpecialistReturn(root, 'council', '18', councilReturn());
     const recorded = await readTask(taskDir);
     assert.equal(recorded.convergence.recovery.route, 'confined-repair');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 238 unordered inquiry research rejects order and repetition atomically', async (t) => {
+  for (const field of ISSUE_238_UNORDERED_INQUIRY_FIELDS) {
+    for (const variant of ['order', 'repetition']) {
+      await t.test(`${field} ${variant}-only difference`, async () => {
+        const { task, result } = issue238ResearchCollectionVariant(field, variant);
+        const { root, taskDir } = await makeRoot(task);
+        const taskPath = join(taskDir, 'task.json');
+        const journalPath = join(taskDir, 'journal.jsonl');
+        try {
+          await writeFile(
+            journalPath,
+            `${JSON.stringify({
+              seq: 0,
+              at: '2026-07-12T00:00:00Z',
+              event: 'intent',
+              stage: 'council',
+            })}\n`,
+            'utf8',
+          );
+          const beforeTask = await readFile(taskPath);
+          const beforeJournal = await readFile(journalPath);
+          await assert.rejects(
+            recordSpecialistReturn(root, 'council', '18', result),
+            /record-(schema|transition).*council|inquiry|semantic/i,
+          );
+          assert.deepEqual(await readFile(taskPath), beforeTask);
+          assert.deepEqual(await readFile(journalPath), beforeJournal);
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+});
+
+test('issue 238 live council records canonical research provenance', async () => {
+  const { root, taskDir } = await makeRoot(councilTask());
+  try {
+    await recordSpecialistReturn(root, 'council', '18', councilReturn());
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.convergence.council.researchProvenance, 'canonical');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -7488,16 +7651,31 @@ test('issue 237 recovery marks lineage that was legitimately absent at council e
   }
 });
 
-test('issue 237 direct refactor recovery cannot complete with a clean no-change return', async () => {
+test('issue 238 direct refactor clean return exhausts the sole episode', async () => {
   const { root, taskDir } = await makeRoot(councilTask());
+  const taskPath = join(taskDir, 'task.json');
   try {
     await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('refactor'));
-    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
-    await assert.rejects(
-      recordSpecialistReturn(root, 'refactor', '18', refactorReturn('recovery-refactorer')),
-      /recovery refactor.*(change|refactored)|clean.*recovery|nonempty.*files/i,
+    const exhausted = await recordSpecialistReturn(
+      root,
+      'refactor',
+      '18',
+      refactorReturn('recovery-refactorer'),
     );
-    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+
+    assert.equal(exhausted.stage, 'refactor');
+    assert.equal(exhausted.status, 'blocked');
+    assert.equal(exhausted.convergence.council.outcome, 'blocked-to-operator');
+    assert.equal(exhausted.convergence.recovery.episode, 1);
+    assert.equal(exhausted.convergence.recovery.route, 'refactor');
+    assert.equal(exhausted.blockedReason, 'The recording path loses a result.');
+
+    const beforeRetry = await readFile(taskPath);
+    await assert.rejects(
+      recordSpecialistReturn(root, 'refactor', '18', refactorReturn('second-recovery-refactorer')),
+      /blocked|exhausted|council recovery/i,
+    );
+    assert.deepEqual(await readFile(taskPath), beforeRetry);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

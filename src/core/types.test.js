@@ -447,3 +447,49 @@ const convergenceWithSpentBonus = {
   },
 };
 void convergenceWithSpentBonus;
+
+
+/** @typedef {NonNullable<import('./types.js').CodeConvergence['council']['synthesis']>['selectedStrategy']} CodeCouncilRoute */
+/** @typedef {NonNullable<import('./types.js').CodeConvergence['recovery']>['route']} CodeRecoveryRoute */
+/** @typedef {NonNullable<import('./types.js').OperationConvergence['council']['synthesis']>['selectedStrategy']} OperationCouncilRoute */
+
+/** @type {CodeCouncilRoute[]} */
+const codeCouncilRoutes = [
+  'confined-repair',
+  'test-contract-repair',
+  'refactor',
+  'causal-subgraph-reconstruction',
+  'full-replan',
+  'operator-escalation',
+];
+void codeCouncilRoutes;
+
+/** @type {CodeRecoveryRoute[]} */
+const codeRecoveryRoutes = [
+  'confined-repair',
+  'test-contract-repair',
+  'refactor',
+  'causal-subgraph-reconstruction',
+  'full-replan',
+  'operator-escalation',
+];
+void codeRecoveryRoutes;
+
+/** @type {OperationCouncilRoute[]} */
+const operationCouncilRoutes = ['scoped-execute', 'operator-escalation'];
+void operationCouncilRoutes;
+
+/** @type {CodeCouncilRoute} */
+// @ts-expect-error - code councils cannot select operation execution
+const codeCouncilCannotScopeExecute = 'scoped-execute';
+void codeCouncilCannotScopeExecute;
+
+/** @type {CodeRecoveryRoute} */
+// @ts-expect-error - code recovery cannot route through operation execution
+const codeRecoveryCannotScopeExecute = 'scoped-execute';
+void codeRecoveryCannotScopeExecute;
+
+/** @type {OperationCouncilRoute} */
+// @ts-expect-error - operation councils cannot select code repair
+const operationCouncilCannotConfineRepair = 'confined-repair';
+void operationCouncilCannotConfineRepair;
