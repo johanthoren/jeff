@@ -939,7 +939,8 @@ function convergenceChecks(t, id, ids, out) {
     || cl?.synthesizer_agent_id !== undefined
     || jqOr(cl?.members, []).some((/** @type {any} */ member) => member?.inquiry !== undefined);
   const researchViolation = councilResearchViolation(cl, {
-    allowOmission: researchProvenance === 'historical-omitted'
+    allowOmission: !conv
+      || researchProvenance === 'historical-omitted'
       || (researchProvenance === undefined && !requiresCouncilResearchProvenance(t)),
     category: t.category === 'operation' ? 'operation' : 'code',
   });
