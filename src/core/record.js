@@ -1510,6 +1510,16 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
   const transitionReturn = stage === 'council'
     ? bindCouncilObservedIdentity(specialistReturn, observedAgentId)
     : { ...specialistReturn, agent_id: observedAgentId };
+  let currentPipelineVersion;
+  if (stage === 'council') {
+    try {
+      const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+      if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) throw new Error();
+      currentPipelineVersion = packageJson.version;
+    } catch {
+      throw new Error('[record-transition] could not read the installed pipeline version');
+    }
+  }
   /** @type {import('./journal.js').JournalAppend | import('./journal.js').JournalAppend[]} */
   const journal = stage === 'council'
     ? [
@@ -1532,7 +1542,10 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
       if (['review', 'audit'].includes(stage) && isPendingCodeRecovery(task)) {
         assertCurrentRecoveryJudgmentGate(root, task);
       }
-      return transitionTask(task, stage, transitionReturn);
+      const versionedTask = stage === 'council' && task.convergence?.council?.convened !== true
+        ? { ...task, pipelineVersion: currentPipelineVersion }
+        : task;
+      return transitionTask(versionedTask, stage, transitionReturn);
     },
     {
       allowTransientTerminal: true,

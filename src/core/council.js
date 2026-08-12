@@ -171,10 +171,13 @@ export function councilResearchViolation(council, options = {}) {
   const synthesis = council?.synthesis;
   if (!isType(synthesis, 'object')) return 'synthesis';
   if (!isNonemptyString(synthesis.problemRestatement)) return 'synthesis.problemRestatement';
-  for (const field of ['survivingBlockers', 'causalHypotheses', 'solutionStrategies', 'rejectedAlternatives', 'decisiveEvidence']) {
+  for (const field of ['survivingBlockers', 'rejectedAlternatives']) {
     if (!Array.isArray(synthesis[field]) || !synthesis[field].every(isNonemptyString)) {
       return `synthesis.${field}`;
     }
+  }
+  for (const field of ['causalHypotheses', 'solutionStrategies', 'decisiveEvidence']) {
+    if (!isNonemptyStringArray(synthesis[field])) return `synthesis.${field}`;
   }
   if (!isUniqueStringArray(synthesis.solutionStrategies) || synthesis.solutionStrategies.length < 2
     || !synthesis.solutionStrategies.every((route) => allowedRoutes.includes(route))) {

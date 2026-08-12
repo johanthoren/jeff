@@ -240,14 +240,13 @@ function validateCouncilSynthesis(value, out, operation) {
   requireField(out, field, isType(value, 'object'));
   if (!isType(value, 'object')) return;
   requireField(out, `${field}.problemRestatement`, isNonemptyString(value.problemRestatement));
-  for (const name of [
-    'survivingBlockers',
-    'causalHypotheses',
-    'solutionStrategies',
-    'rejectedAlternatives',
-    'decisiveEvidence',
-  ]) {
+  for (const name of ['survivingBlockers', 'rejectedAlternatives']) {
     requireField(out, `${field}.${name}`, Array.isArray(value[name])
+      && value[name].every(isNonemptyString));
+  }
+  for (const name of ['causalHypotheses', 'solutionStrategies', 'decisiveEvidence']) {
+    requireField(out, `${field}.${name}`, Array.isArray(value[name])
+      && value[name].length > 0
       && value[name].every(isNonemptyString));
   }
   const routes = operation ? OPERATION_COUNCIL_ROUTES : COUNCIL_ROUTES;

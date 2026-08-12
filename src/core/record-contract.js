@@ -324,6 +324,8 @@ function validateCouncilSynthesis(value, path) {
     'decisiveEvidence',
   ]) {
     strings(value[field], `${path}.${field}`);
+    if (['causalHypotheses', 'decisiveEvidence'].includes(field)
+      && value[field].length === 0) invalid(`${path}.${field}`);
   }
   const routes = [...COUNCIL_ROUTES, ...OPERATION_COUNCIL_ROUTES];
   oneOf(value.selectedStrategy, `${path}.selectedStrategy`, routes);
