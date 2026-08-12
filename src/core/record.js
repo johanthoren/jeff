@@ -834,10 +834,24 @@ function recordCouncil(task, result, at) {
 
 /** @param {Record<string, any>} pending @param {Record<string, any>} returned */
 function isPreservedCouncilBlock(pending, returned) {
-  const { cycle: _cycle, executor_agent_id: _executorAgentId, ...specialistFields } = pending;
+  const {
+    cycle: _pendingCycle,
+    executor_agent_id: _pendingExecutorAgentId,
+    researchProvenance: _pendingResearchProvenance,
+    ...pendingSpecialistFields
+  } = pending;
+  const {
+    cycle: _returnedCycle,
+    executor_agent_id: _returnedExecutorAgentId,
+    researchProvenance: _returnedResearchProvenance,
+    ...returnedSpecialistFields
+  } = returned;
   return pending.verdict === 'block'
     && pending.outcome === null
-    && isDeepStrictEqual(returned, { ...specialistFields, outcome: returned.outcome });
+    && isDeepStrictEqual(returnedSpecialistFields, {
+      ...pendingSpecialistFields,
+      outcome: returnedSpecialistFields.outcome,
+    });
 }
 
 /** @param {MutableRecordTask} task */
