@@ -3901,6 +3901,7 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
     original: {
       complexity: 'complex',
       audit_required: true,
+      absentLineage: [],
       plan: {
         result: 'red',
         slices: ['Implement the original contract.'],
@@ -3921,6 +3922,39 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
   };
   assert.equal((await verdictFor(canonical)).ok, true);
 
+  const historicallyAbsent = structuredClone(canonical);
+  historicallyAbsent.convergence.recovery.original.absentLineage = [
+    'plan',
+    'test_author_agent_id',
+    'builder_agent_id',
+    'implement',
+  ];
+  historicallyAbsent.convergence.recovery.original.plan = null;
+  historicallyAbsent.convergence.recovery.original.test_author_agent_id = null;
+  historicallyAbsent.convergence.recovery.original.builder_agent_id = null;
+  historicallyAbsent.convergence.recovery.original.implement = null;
+  assert.equal(
+    (await verdictFor(historicallyAbsent)).ok,
+    true,
+    'lineage that was absent at council entry remains compatible',
+  );
+
+  for (const field of ['plan', 'test_author_agent_id', 'builder_agent_id', 'implement']) {
+    await t.test(`present original ${field} cannot be nulled or deleted after capture`, async () => {
+      const nulled = structuredClone(canonical);
+      nulled.convergence.recovery.original[field] = null;
+      const nulledResult = await verdictFor(nulled);
+      assert.equal(nulledResult.ok, false, `present original ${field} must not become null`);
+      assert.match(nulledResult.stderr.join('\n'), /recovery|original|lineage|inv/i);
+
+      const deleted = structuredClone(canonical);
+      delete deleted.convergence.recovery.original[field];
+      const deletedResult = await verdictFor(deleted);
+      assert.equal(deletedResult.ok, false, `present original ${field} must not be deleted`);
+      assert.match(deletedResult.stderr.join('\n'), /recovery|original|lineage|inv/i);
+    });
+  }
+
   const invalidStates = [
     ['second episode', (task) => {
       task.convergence.recovery.episode = 2;
@@ -3936,6 +3970,9 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
     }],
     ['missing original delivery lineage', (task) => {
       delete task.convergence.recovery.original;
+    }],
+    ['missing original lineage presence snapshot', (task) => {
+      delete task.convergence.recovery.original.absentLineage;
     }],
     ['recovery lowers original complexity', (task) => {
       task.complexity = 'simple';
@@ -4021,6 +4058,8 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
   refactorProduction.stage = 'review';
   refactorProduction.convergence.council.synthesis.solutionStrategies.push('refactor');
   refactorProduction.convergence.council.synthesis.selectedStrategy = 'refactor';
+  refactorProduction.convergence.council.synthesis.rejectedAlternatives =
+    ['confined-repair', 'full-replan'];
   refactorProduction.convergence.recovery.route = 'refactor';
   refactorProduction.convergence.recovery.builder_agent_id = 'recovery-refactorer';
   refactorProduction.refactor = {

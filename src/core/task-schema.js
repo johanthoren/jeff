@@ -28,6 +28,13 @@ const KEBAB_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OPERATION_FINDING_DESTINATIONS = ['capture', 'plan', 'execute'];
 const CODE_JUDGMENT_SOURCES = ['review', 'review2', 'audit'];
 const CODE_JUDGMENT_DESTINATIONS = ['capture', 'plan', 'implement', 'refactor'];
+export const RECOVERY_LINEAGE_FIELDS = [
+  'plan',
+  'test_author_agent_id',
+  'builder_agent_id',
+  'implement',
+];
+
 const AUDIT_CATEGORIES = [
   'secrets',
   'injection_sql',
@@ -253,10 +260,23 @@ function validateRecoveryOriginal(value, out) {
   if (!isType(value, 'object')) return;
   requireField(out, `${field}.complexity`, isOneOf(value.complexity, ['simple', 'complex']));
   requireField(out, `${field}.audit_required`, typeof value.audit_required === 'boolean');
-  requireField(out, `${field}.plan`, value.plan === null || isType(value.plan, 'object'));
-  requireField(out, `${field}.test_author_agent_id`, isNullableString(value.test_author_agent_id));
-  requireField(out, `${field}.builder_agent_id`, isNullableString(value.builder_agent_id));
-  requireField(out, `${field}.implement`, value.implement === null || isType(value.implement, 'object'));
+  const absenceValid = Array.isArray(value.absentLineage)
+    && new Set(value.absentLineage).size === value.absentLineage.length
+    && value.absentLineage.every((name) => RECOVERY_LINEAGE_FIELDS.includes(name));
+  requireField(out, `${field}.absentLineage`, absenceValid);
+  const absent = new Set(absenceValid ? value.absentLineage : []);
+  requireField(out, `${field}.plan`, Object.hasOwn(value, 'plan')
+    && (absent.has('plan') ? value.plan === null : isType(value.plan, 'object')));
+  requireField(out, `${field}.test_author_agent_id`, Object.hasOwn(value, 'test_author_agent_id')
+    && (absent.has('test_author_agent_id')
+      ? value.test_author_agent_id === null
+      : isNonemptyString(value.test_author_agent_id)));
+  requireField(out, `${field}.builder_agent_id`, Object.hasOwn(value, 'builder_agent_id')
+    && (absent.has('builder_agent_id')
+      ? value.builder_agent_id === null
+      : isNonemptyString(value.builder_agent_id)));
+  requireField(out, `${field}.implement`, Object.hasOwn(value, 'implement')
+    && (absent.has('implement') ? value.implement === null : isType(value.implement, 'object')));
 }
 
 /** @param {any} value @param {string[]} out */

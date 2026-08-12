@@ -29,7 +29,13 @@ function activeAgentIds(task) {
 /** @param {Record<string, any>} task */
 export function archivedJudgeAgentIds(task) {
   return Array.isArray(task.judgmentHistory)
-    ? task.judgmentHistory.flatMap((/** @type {any} */ entry) => agentIds(Object.values(entry?.agents ?? {})))
+    ? task.judgmentHistory.flatMap((/** @type {any} */ entry) => agentIds([
+      ...Object.values(entry?.agents ?? {}),
+      entry?.review?.reviewer_agent_id,
+      entry?.review2?.reviewer_agent_id,
+      entry?.verification?.verifier_agent_id,
+      entry?.audit?.audit_agent_id,
+    ]))
     : [];
 }
 
@@ -84,11 +90,9 @@ export function isRefuteAgentForbidden(task, agentId) {
 
 /** @param {Record<string, any>} task */
 export function forbiddenCouncilAgentIds(task) {
-  const archived = task.category === 'operation'
-    ? [...archivedJudgeAgentIds(task), ...archivedRefuterAgentIds(task)]
-    : [];
   return new Set([
     ...forbiddenRefuteAgentIds(task),
-    ...archived,
+    ...archivedJudgeAgentIds(task),
+    ...(task.category === 'operation' ? archivedRefuterAgentIds(task) : []),
   ]);
 }

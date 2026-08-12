@@ -449,6 +449,20 @@ function councilTask(overrides = {}) {
       audit_agent_id: 'auditor',
     },
     tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['gate'] },
+    plan: {
+      result: 'red',
+      slices: ['Implement the original council contract.'],
+      testFiles: ['src/cli/record.test.js'],
+      redRun: { command: 'node --test src/cli/record.test.js', output: 'original red' },
+      escalation: null,
+      refactorOpportunity: null,
+    },
+    implement: {
+      agent_id: 'implementer',
+      result: 'green',
+      files: ['src/core/record.js'],
+      greenRun: { command: 'node --test src/cli/record.test.js', output: 'original green' },
+    },
     review: {
       verdict: 'needs-work',
       reportedVerdict: 'needs-work',
@@ -556,7 +570,7 @@ function councilReturn(outcome = null, memberOverrides = {}) {
         survivingBlockers: ['F1'],
         causalHypotheses: ['The recorder does not preserve the complete active judgment union.'],
         solutionStrategies: ['confined-repair', 'causal-subgraph-reconstruction'],
-        rejectedAlternatives: ['full-replan'],
+        rejectedAlternatives: ['causal-subgraph-reconstruction'],
         selectedStrategy: 'confined-repair',
         decisiveEvidence: ['Two independent inquiries reproduce a durable evidence loss.'],
       },
@@ -640,7 +654,7 @@ function mixedStageCouncilReturn(outcome = null) {
           'Recorder replacement and stale recovery proof may share one incomplete judgment-state boundary.',
         ],
         solutionStrategies: ['confined-repair', 'causal-subgraph-reconstruction', 'full-replan'],
-        rejectedAlternatives: ['confined-repair'],
+        rejectedAlternatives: ['confined-repair', 'full-replan'],
         selectedStrategy: 'causal-subgraph-reconstruction',
         decisiveEvidence: ['Independent recorder and audit reproductions fail within the same recovery boundary.'],
       },
@@ -4438,8 +4452,8 @@ test('issue 65 cycle 1 refute rejects prior-refuter reuse atomically with the id
   }
 });
 
-test('issue 121 council separation remains limited to the active observed identities', async () => {
-  const task = councilTask({
+test('issue 237 code council members and synthesizer cannot reuse archived judge identities', async (t) => {
+  const archivedTask = () => councilTask({
     judgmentHistory: [{
       at: '2026-07-12T00:00:01Z',
       review: { verdict: 'pass', reviewer_agent_id: 'historical-reviewer', findings: [], evidence: ['prior'] },
@@ -4447,25 +4461,31 @@ test('issue 121 council separation remains limited to the active observed identi
       audit: { required: true, verdict: 'pass', audit_agent_id: 'historical-auditor', findings: [], evidence: ['prior'] },
     }],
   });
-  const { root, taskDir } = await makeRoot(task);
-  try {
-    await assert.doesNotReject(
-      recordSpecialistReturn(root, 'council', '18', councilReturn(null, { 0: { agent_id: 'historical-auditor' } })),
-    );
+  const cases = [
+    ['member', councilReturn(null, { 0: { agent_id: 'historical-reviewer' } }), {
+      member_agent_ids: ['historical-reviewer', 'council-security', 'council-pragmatist'],
+      synthesizer_agent_id: 'council-synthesizer',
+    }],
+    ['synthesizer', councilReturn(), {
+      member_agent_ids: ['council-integrity', 'council-security', 'council-pragmatist'],
+      synthesizer_agent_id: 'historical-auditor',
+    }],
+  ];
 
-    const freshRoot = await makeRoot(councilTask());
-    try {
-      const before = await readFile(join(freshRoot.taskDir, 'task.json'), 'utf8');
-      await assert.rejects(
-        recordSpecialistReturn(freshRoot.root, 'council', '18', councilReturn(null, { 0: { agent_id: 'implementer' } })),
-        /\[(?:record-identity|inv8)\]/,
-      );
-      assert.equal(await readFile(join(freshRoot.taskDir, 'task.json'), 'utf8'), before);
-    } finally {
-      await rm(freshRoot.root, { recursive: true, force: true });
-    }
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  for (const [name, returned, observed] of cases) {
+    await t.test(name, async () => {
+      const { root, taskDir } = await makeRoot(archivedTask());
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordObservedSpecialistReturn(root, 'council', '18', returned, observed),
+          /record-identity.*(?:archived|prior judge|fresh|council)/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -6778,6 +6798,8 @@ function issue237CouncilReturn(strategy, result = councilReturn()) {
   if (!selected.council.synthesis.solutionStrategies.includes(strategy)) {
     selected.council.synthesis.solutionStrategies.push(strategy);
   }
+  selected.council.synthesis.rejectedAlternatives =
+    selected.council.synthesis.solutionStrategies.filter((route) => route !== strategy);
   return selected;
 }
 
@@ -6875,7 +6897,7 @@ test('issue 237 test-only and refactor recovery keep author builder and judge id
       const planned = await readTask(taskDir);
       assert.equal(planned.stage, 'review');
       assert.equal(planned.agents.implementer_agent_id, 'implementer');
-      assert.equal(planned.implement, undefined);
+      assert.equal(planned.implement.agent_id, 'implementer');
       assert.equal(planned.convergence.recovery.test_author_agent_id, 'recovery-test-author');
       assert.equal(planned.convergence.recovery.builder_agent_id, null);
       runGit(root, ['add', '.']);
@@ -7063,6 +7085,12 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
     ['missing reconstruction question', (value) => {
       value.council.members[0].inquiry.question = 'Is this finding blocking?';
     }],
+    ['inquiry repeats one strategy instead of comparing material alternatives', (value) => {
+      value.council.members[0].inquiry.solutionStrategies = ['confined-repair', 'confined-repair'];
+    }],
+    ['code inquiry offers an operation-only strategy', (value) => {
+      value.council.members[0].inquiry.solutionStrategies = ['scoped-execute', 'operator-escalation'];
+    }],
     ['vote tally inconsistent with independent inquiries', (value) => {
       value.council.findings[0].blockingVotes = 1;
       value.council.findings[0].survived = false;
@@ -7080,6 +7108,18 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
     }],
     ['selected repair is absent from materially different strategies', (value) => {
       value.council.synthesis.selectedStrategy = 'full-replan';
+    }],
+    ['synthesis rejects no offered alternative', (value) => {
+      value.council.synthesis.rejectedAlternatives = [];
+    }],
+    ['synthesis rejects its selected route', (value) => {
+      value.council.synthesis.rejectedAlternatives = ['confined-repair'];
+    }],
+    ['synthesis rejects a route that was not offered', (value) => {
+      value.council.synthesis.rejectedAlternatives = ['workflow-node'];
+    }],
+    ['synthesis omits one nonselected material strategy', (value) => {
+      value.council.synthesis.solutionStrategies.push('full-replan');
     }],
   ];
 
@@ -7137,6 +7177,49 @@ test('issue 237 live council binds member and synthesizer identities to host obs
         await rm(root, { recursive: true, force: true });
       }
     });
+  }
+});
+
+test('issue 237 cook record council accepts four exact host observations and rejects malformed observations atomically', async () => {
+  const validObservations = [
+    'council-integrity',
+    'council-security',
+    'council-pragmatist',
+    'council-synthesizer',
+  ];
+  const validRoot = await makeRoot(councilTask());
+  try {
+    const file = await writeReturn(validRoot.root, councilReturn(), 'council-return.json');
+    const result = runCook(validRoot.root, ['record', 'council', '18', ...validObservations, file]);
+    assert.equal(result.code, 0, result.stderr);
+    const recorded = await readTask(validRoot.taskDir);
+    assert.deepEqual(
+      recorded.convergence.council.members.map((member) => member.agent_id),
+      validObservations.slice(0, 3),
+    );
+    assert.equal(recorded.convergence.council.synthesizer_agent_id, validObservations[3]);
+  } finally {
+    await rm(validRoot.root, { recursive: true, force: true });
+  }
+
+  const invalidObservations = [
+    ['too few', validObservations.slice(0, 3)],
+    ['too many', [...validObservations, 'fifth-observation']],
+    ['malformed synthesizer', [...validObservations.slice(0, 3), '']],
+    ['mismatched member', ['other-member', ...validObservations.slice(1)]],
+  ];
+  for (const [name, observations] of invalidObservations) {
+    const { root, taskDir } = await makeRoot(councilTask());
+    try {
+      const file = await writeReturn(root, councilReturn(), `${name}.json`);
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      const result = runCook(root, ['record', 'council', '18', ...observations, file]);
+      assert.notEqual(result.code, 0, `${name} observations must be rejected`);
+      assert.match(result.stderr, /usage|identity|observed|council/i);
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   }
 });
 
@@ -7274,10 +7357,34 @@ test('issue 237 recovery retains original plan test author builder and implement
     assert.deepEqual(recovered.convergence.recovery.original, {
       complexity: 'complex',
       audit_required: true,
+      absentLineage: [],
       plan: originalPlan,
       test_author_agent_id: 'original-test-author',
       builder_agent_id: 'implementer',
       implement: originalImplement,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 237 recovery marks lineage that was legitimately absent at council entry', async () => {
+  const task = councilTask();
+  delete task.plan;
+  delete task.implement;
+  task.tests.authored_by_agent_id = null;
+  task.agents.implementer_agent_id = null;
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(root, 'council', '18', councilReturn());
+    assert.deepEqual((await readTask(taskDir)).convergence.recovery.original, {
+      complexity: 'complex',
+      audit_required: true,
+      absentLineage: ['plan', 'test_author_agent_id', 'builder_agent_id', 'implement'],
+      plan: null,
+      test_author_agent_id: null,
+      builder_agent_id: null,
+      implement: null,
     });
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -7329,4 +7436,25 @@ test('issue 237 operation council honors its scoped-execute synthesis route', as
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  for (const [name, strategies] of [
+    ['operation inquiry rejects code-only strategies', ['confined-repair', 'operator-escalation']],
+    ['operation inquiry requires materially different strategies', ['scoped-execute', 'scoped-execute']],
+  ]) {
+    await t.test(name, async () => {
+      const { root, taskDir } = await makeRoot(operationCouncilTask());
+      try {
+        const invalid = operationCouncilReturn();
+        invalid.council.members[0].inquiry.solutionStrategies = strategies;
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordSpecialistReturn(root, 'council', '18', invalid),
+          /inquiry.*strateg|operation.*strateg|solutionStrategies/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
 });

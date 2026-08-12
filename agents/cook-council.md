@@ -11,8 +11,9 @@ Inputs are the locked task, durable lineage and checkpoints, the exact source-bo
 
 Return one inquiry that:
 - asks a precise `question`; the council must include the exact question "Are these independent defects, or evidence that this part of the design should be reconstructed?" in at least one member's inquiry;
-- records `problemRestatement`, nonempty `causalHypotheses`, materially different `solutionStrategies`, one `findingVotes` entry for every supplied finding id, and `decisiveEvidence`;
-- uses only these strategies: `confined-repair`, `test-contract-repair`, `refactor`, `causal-subgraph-reconstruction`, `full-replan`, or `operator-escalation`;
+- records `problemRestatement`, nonempty `causalHypotheses`, at least two unique materially different `solutionStrategies`, one `findingVotes` entry for every supplied finding id, and `decisiveEvidence`;
+- for a code task, uses only `confined-repair`, `test-contract-repair`, `refactor`, `causal-subgraph-reconstruction`, `full-replan`, or `operator-escalation`;
+- for an operation task, uses both `scoped-execute` and `operator-escalation`;
 - keeps each vote independent and gives a concrete rationale.
 
 Do not mutate repository, task, or external state. The return must not include `agent_id`; Jeff binds the host-observed child id when assembling the three member records.

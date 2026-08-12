@@ -79,6 +79,12 @@ export function councilResearchViolation(council, options = {}) {
     || members.some((member) => member?.inquiry !== undefined);
   if (!present) return options.allowOmission === true ? null : 'synthesis';
   if (members.length !== 3) return 'members';
+  const allowedRoutes = options.category === 'operation'
+    ? OPERATION_COUNCIL_ROUTES
+    : options.category === 'code'
+      ? COUNCIL_ROUTES
+      : [...COUNCIL_ROUTES, ...OPERATION_COUNCIL_ROUTES];
+
 
   for (let index = 0; index < members.length; index += 1) {
     const inquiry = members[index]?.inquiry;
@@ -87,6 +93,11 @@ export function councilResearchViolation(council, options = {}) {
     if (!isNonemptyString(inquiry.problemRestatement)) return `members[${index}].inquiry.problemRestatement`;
     for (const field of ['causalHypotheses', 'solutionStrategies', 'decisiveEvidence']) {
       if (!isNonemptyStringArray(inquiry[field])) return `members[${index}].inquiry.${field}`;
+    }
+    if (!isUniqueStringArray(inquiry.solutionStrategies)
+      || inquiry.solutionStrategies.length < 2
+      || !inquiry.solutionStrategies.every((route) => allowedRoutes.includes(route))) {
+      return `members[${index}].inquiry.solutionStrategies`;
     }
     if (!Array.isArray(inquiry.findingVotes)) return `members[${index}].inquiry.findingVotes`;
   }
@@ -136,11 +147,6 @@ export function councilResearchViolation(council, options = {}) {
       return `synthesis.${field}`;
     }
   }
-  const allowedRoutes = options.category === 'operation'
-    ? OPERATION_COUNCIL_ROUTES
-    : options.category === 'code'
-      ? COUNCIL_ROUTES
-      : [...COUNCIL_ROUTES, ...OPERATION_COUNCIL_ROUTES];
   if (!isUniqueStringArray(synthesis.solutionStrategies) || synthesis.solutionStrategies.length < 2
     || !synthesis.solutionStrategies.every((route) => allowedRoutes.includes(route))) {
     return 'synthesis.solutionStrategies';
@@ -148,6 +154,14 @@ export function councilResearchViolation(council, options = {}) {
   if (!allowedRoutes.includes(synthesis.selectedStrategy)
     || !synthesis.solutionStrategies.includes(synthesis.selectedStrategy)) {
     return 'synthesis.selectedStrategy';
+  }
+  const rejectedAlternatives = synthesis.rejectedAlternatives;
+  const nonselectedStrategies = synthesis.solutionStrategies
+    .filter((route) => route !== synthesis.selectedStrategy);
+  if (!isUniqueStringArray(rejectedAlternatives)
+    || rejectedAlternatives.length !== nonselectedStrategies.length
+    || rejectedAlternatives.some((route) => !nonselectedStrategies.includes(route))) {
+    return 'synthesis.rejectedAlternatives';
   }
   const surviving = findings.filter((finding) => finding.survived === true).map((finding) => finding.id);
   if (!sameValues(synthesis.survivingBlockers, surviving)) return 'synthesis.survivingBlockers';

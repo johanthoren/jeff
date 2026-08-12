@@ -6,7 +6,7 @@ import { collectTasks, readConfig, readTask, writeTask } from './store.js';
 import { locateTask, withStoreLock } from './store-lock.js';
 import { appendJournalEvents } from './journal.js';
 import { git, treeDirty } from './git.js';
-import { configSchemaViolations, isIsoDateTime, taskSchemaViolations } from './task-schema.js';
+import { configSchemaViolations, isIsoDateTime, RECOVERY_LINEAGE_FIELDS, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateSpecialistReturn } from './record-contract.js';
 import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES } from './council.js';
@@ -803,6 +803,12 @@ function recordCouncil(task, result, at) {
     throw new Error(`[record-transition] ${isOperation(task) ? 'operation' : 'code'} council selected an incompatible recovery route`);
   }
   if (!isOperation(task)) {
+    const originalLineage = {
+      plan: task.plan === undefined ? null : structuredClone(task.plan),
+      test_author_agent_id: task.tests?.authored_by_agent_id ?? null,
+      builder_agent_id: task.agents?.implementer_agent_id ?? null,
+      implement: task.implement === undefined ? null : structuredClone(task.implement),
+    };
     task.convergence.recovery = {
       episode: 1,
       route,
@@ -812,10 +818,8 @@ function recordCouncil(task, result, at) {
       original: {
         complexity: task.complexity,
         audit_required: task.audit.required,
-        plan: task.plan === undefined ? null : structuredClone(task.plan),
-        test_author_agent_id: task.tests?.authored_by_agent_id ?? null,
-        builder_agent_id: task.agents?.implementer_agent_id ?? null,
-        implement: task.implement === undefined ? null : structuredClone(task.implement),
+        absentLineage: RECOVERY_LINEAGE_FIELDS.filter((field) => originalLineage[field] === null),
+        ...originalLineage,
       },
     };
   }

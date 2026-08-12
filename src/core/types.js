@@ -199,7 +199,8 @@
  * @typedef {Object} OriginalDeliveryLineage
  * @property {'simple' | 'complex'} complexity
  * @property {boolean} audit_required
- * @property {Record<string, unknown>} plan
+ * @property {('plan' | 'test_author_agent_id' | 'builder_agent_id' | 'implement')[]} absentLineage
+ * @property {Record<string, unknown> | null} plan
  * @property {string | null} test_author_agent_id
  * @property {string | null} builder_agent_id
  * @property {Record<string, unknown> | null} implement

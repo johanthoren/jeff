@@ -1853,6 +1853,18 @@ skill_outside_dispatch_rules() {
       return 1
     }
   done
+  grep -qiE 'code[^.]{0,200}confined-repair[^.]{0,200}operator-escalation|confined-repair[^.]{0,200}operator-escalation[^.]{0,200}code' "$brief" || {
+    echo "the council inquiry brief does not bind code inquiries to code recovery strategies"
+    return 1
+  }
+  grep -qiE 'operation[^.]{0,200}scoped-execute[^.]{0,200}operator-escalation|scoped-execute[^.]{0,200}operator-escalation[^.]{0,200}operation' "$brief" || {
+    echo "the council inquiry brief does not bind operation inquiries to operation recovery strategies"
+    return 1
+  }
+  grep -qiE 'materially different|distinct strateg' "$brief" || {
+    echo "the council inquiry brief does not require materially different strategies"
+    return 1
+  }
   grep -qiE '(omit|without|must not)[^.]{0,80}agent_id' "$brief" || {
     echo "the council specialist brief does not keep host-observed agent_id out of its return"
     return 1
