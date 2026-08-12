@@ -6,6 +6,8 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateStore } from './validate-store.js';
+import { runInvariants } from './invariants.js';
+import { taskSchemaViolations } from './task-schema.js';
 const AUDIT_CATEGORIES = [
   'secrets',
   'injection_sql',
@@ -4275,6 +4277,34 @@ test('issue 238 persisted original delivery snapshots are strict and builder-bou
   historical.convergence.recovery.original.builder_agent_id = null;
   historical.convergence.recovery.original.implement = null;
   assert.equal((await verdictFor(historical)).ok, true);
+});
+
+test('issue 239 persisted canonical synthesis requires causal hypotheses and decisive evidence', async (t) => {
+  for (const field of ['causalHypotheses', 'decisiveEvidence']) {
+    await t.test(`rejects empty ${field} at schema and invariant boundaries`, (boundary) => {
+      const invalid = issue237PersistedRecovery();
+      invalid.convergence.council.synthesis[field] = [];
+
+      boundary.test('schema', () => {
+        const schemaViolations = taskSchemaViolations(invalid, { lite: true });
+        assert.ok(
+          schemaViolations.some((violation) => violation.includes(`synthesis.${field}`)),
+          `persisted schema must reject empty synthesis ${field}:\n${schemaViolations.join('\n')}`,
+        );
+      });
+
+      boundary.test('invariant', () => {
+        const invariantViolations = runInvariants([invalid], { lite: true });
+        assert.ok(
+          invariantViolations.some((violation) => (
+            violation.includes(`council.synthesis.${field}`)
+            && violation.includes('[inv8]')
+          )),
+          `persisted invariants must reject empty synthesis ${field}:\n${invariantViolations.join('\n')}`,
+        );
+      });
+    });
+  }
 });
 
 test('issue 238 persisted council research provenance fails closed and keeps history readable', async (t) => {

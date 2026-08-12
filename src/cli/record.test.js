@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import * as recordCore from '../core/record.js';
 import { runVerify } from '../core/verify.js';
+import { validateStore } from '../core/validate-store.js';
 
 const { recordSpecialistReturn: recordObservedSpecialistReturn } = recordCore;
 
@@ -7297,6 +7298,27 @@ test('issue 238 valid recovery plan escalation exhausts the sole episode', async
   }
 });
 
+test('issue 239 live council synthesis requires causal hypotheses and decisive evidence', async (t) => {
+  for (const field of ['causalHypotheses', 'decisiveEvidence']) {
+    await t.test(`rejects empty ${field} atomically`, async () => {
+      const { root, taskDir } = await makeRoot(councilTask());
+      try {
+        const invalid = councilReturn();
+        invalid.council.synthesis[field] = [];
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+        await assert.rejects(
+          recordSpecialistReturn(root, 'council', '18', invalid),
+          /record-(schema|transition).*council|synthesis|research/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test('issue 237 malformed research or synthesis is rejected atomically', async (t) => {
   const invalidReturns = [
     ['missing one independent inquiry', (value) => {
@@ -7517,14 +7539,37 @@ test('issue 238 unordered inquiry research rejects order and repetition atomical
   }
 });
 
-test('issue 238 live council records canonical research provenance', async () => {
-  const { root, taskDir } = await makeRoot(councilTask());
-  try {
-    await recordSpecialistReturn(root, 'council', '18', councilReturn());
-    const recorded = await readTask(taskDir);
-    assert.equal(recorded.convergence.council.researchProvenance, 'canonical');
-  } finally {
-    await rm(root, { recursive: true, force: true });
+test('issue 239 current councils advance legacy provenance before persistence', async (t) => {
+  const packageJson = JSON.parse(await readFile(join(HERE, '..', '..', 'package.json'), 'utf8'));
+  const histories = [
+    ['unversioned', undefined],
+    ['explicit pre-6.1', '6.0.1'],
+  ];
+
+  for (const [historyName, pipelineVersion] of histories) {
+    await t.test(historyName, async () => {
+      const task = councilTask();
+      if (pipelineVersion === undefined) delete task.pipelineVersion;
+      else task.pipelineVersion = pipelineVersion;
+      const { root, taskDir } = await makeRoot(task);
+      try {
+        const recorded = await recordSpecialistReturn(root, 'council', '18', councilReturn());
+        assert.equal(recorded.convergence.council.researchProvenance, 'canonical');
+        assert.equal(recorded.pipelineVersion, packageJson.version);
+
+        for (const member of recorded.convergence.council.members) delete member.inquiry;
+        delete recorded.convergence.council.synthesis;
+        delete recorded.convergence.council.synthesizer_agent_id;
+        delete recorded.convergence.council.researchProvenance;
+        await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(recorded, null, 2)}\n`, 'utf8');
+
+        const stripped = await validateStore(root);
+        assert.equal(stripped.ok, false, 'new canonical research stripping must fail closed');
+        assert.match(stripped.stderr.join('\n'), /council|research|provenance|inv/i);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   }
 });
 
