@@ -1559,11 +1559,15 @@ test('dispatchRoleSession fails closed when the orchestrator model is unavailabl
 });
 
 
-test('issue 237 Pi dispatch exposes three fresh read-only council inquiry sessions', async () => {
+test('issue 237 Pi dispatch exposes fresh read-only inquiry and synthesis sessions', async () => {
   await withRepo(async (repoRoot) => {
     await writeFile(
       join(repoRoot, 'agents', 'cook-council.md'),
       '---\nname: cook-council\neffort: xhigh\n---\nConduct one independent council inquiry.',
+    );
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-council-synthesis.md'),
+      '---\nname: cook-council-synthesis\neffort: xhigh\n---\nIndependently synthesize the council inquiries.',
     );
     const captured = [];
     const sdk = {
@@ -1583,6 +1587,7 @@ test('issue 237 Pi dispatch exposes three fresh read-only council inquiry sessio
     const results = [];
 
     assert.equal(STAGES.includes('council'), true);
+    assert.equal(STAGES.includes('council-synthesis'), true);
     for (const lens of lenses) {
       results.push(await dispatchRoleSession({
         stage: 'council',
@@ -1595,18 +1600,32 @@ test('issue 237 Pi dispatch exposes three fresh read-only council inquiry sessio
         generateAgentId: () => `council-${lens}`,
       }));
     }
+    results.push(await dispatchRoleSession({
+      stage: 'council-synthesis',
+      brief: 'Synthesize the three inquiries and select the recovery route without agent_id.',
+      taskDir: '.jeff/tasks/lite-237-3064274374',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel: { provider: 'local', id: 'qwen-dev' },
+      sdk,
+      generateAgentId: () => 'council-synthesizer',
+    }));
 
     assert.deepEqual(results.map((result) => result.agent_id), [
       'council-integrity',
       'council-security',
       'council-pragmatist',
+      'council-synthesizer',
     ]);
-    assert.equal(new Set(results.map((result) => result.agent_id)).size, 3);
+    assert.equal(new Set(results.map((result) => result.agent_id)).size, 4);
     assert.deepEqual(captured.map((options) => options.tools), [
       ['read', 'grep', 'find', 'ls'],
       ['read', 'grep', 'find', 'ls'],
       ['read', 'grep', 'find', 'ls'],
+      ['read', 'grep', 'find', 'ls'],
     ]);
-    assert.deepEqual(captured.map((options) => options.thinkingLevel), ['xhigh', 'xhigh', 'xhigh']);
+    assert.deepEqual(captured.map((options) => options.thinkingLevel), [
+      'xhigh', 'xhigh', 'xhigh', 'xhigh',
+    ]);
   });
 });

@@ -3840,6 +3840,7 @@ function issue237PersistedCouncil() {
   return {
     convened: true,
     stage: 'review',
+    synthesizer_agent_id: 'council-synthesizer',
     members: [
       { agent_id: 'council-integrity', lens: 'integrity', temperature: 0.3 },
       { agent_id: 'council-security', lens: 'security', temperature: 0.7 },
@@ -3897,6 +3898,26 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
     baselineGate: null,
     test_author_agent_id: null,
     builder_agent_id: null,
+    original: {
+      complexity: 'complex',
+      audit_required: true,
+      plan: {
+        result: 'red',
+        slices: ['Implement the original contract.'],
+        testFiles: ['src/core/task-schema.test.js'],
+        redRun: { command: 'node --test src/core/task-schema.test.js', output: 'red' },
+        escalation: null,
+        refactorOpportunity: null,
+      },
+      test_author_agent_id: 'plan',
+      builder_agent_id: 'implementer',
+      implement: {
+        agent_id: 'implementer',
+        result: 'green',
+        files: ['src/core/record.js'],
+        greenRun: { command: 'node --test src/core/task-schema.test.js', output: 'green' },
+      },
+    },
   };
   assert.equal((await verdictFor(canonical)).ok, true);
 
@@ -3910,11 +3931,45 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
     ['route disagrees with synthesis', (task) => {
       task.convergence.recovery.route = 'confined-repair';
     }],
+    ['missing host-observed synthesizer identity', (task) => {
+      delete task.convergence.council.synthesizer_agent_id;
+    }],
+    ['missing original delivery lineage', (task) => {
+      delete task.convergence.recovery.original;
+    }],
+    ['recovery lowers original complexity', (task) => {
+      task.complexity = 'simple';
+    }],
+    ['recovery lowers original audit floor', (task) => {
+      task.audit.required = false;
+    }],
     ['identical inquiry packets', (task) => {
       task.convergence.council.members[1].inquiry =
         structuredClone(task.convergence.council.members[0].inquiry);
       task.convergence.council.members[2].inquiry =
         structuredClone(task.convergence.council.members[0].inquiry);
+    }],
+    ['object key order is the only inquiry difference', (task) => {
+      task.convergence.council.findings[0].blockingVotes = 3;
+      const entries = Object.entries(task.convergence.council.members[0].inquiry);
+      task.convergence.council.members[1].inquiry = Object.fromEntries([...entries].reverse());
+      task.convergence.council.members[2].inquiry =
+        Object.fromEntries([...entries.slice(1), entries[0]]);
+    }],
+    ['punctuation is the only inquiry difference', (task) => {
+      task.convergence.council.findings[0].blockingVotes = 3;
+      for (const [index, suffix] of [[1, '.'], [2, '!']]) {
+        const inquiry = structuredClone(task.convergence.council.members[0].inquiry);
+        inquiry.question += suffix;
+        inquiry.problemRestatement += suffix;
+        inquiry.causalHypotheses = inquiry.causalHypotheses.map((item) => `${item}${suffix}`);
+        inquiry.decisiveEvidence = inquiry.decisiveEvidence.map((item) => `${item}${suffix}`);
+        inquiry.findingVotes = inquiry.findingVotes.map((vote) => ({
+          ...vote,
+          rationale: `${vote.rationale}${suffix}`,
+        }));
+        task.convergence.council.members[index].inquiry = inquiry;
+      }
     }],
     ['vote tally is not derived from inquiries', (task) => {
       task.convergence.council.findings[0].blockingVotes = 1;
@@ -3934,7 +3989,53 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
       mutate(invalid);
       const result = await verdictFor(invalid);
       assert.equal(result.ok, false, `${name} must not validate`);
-      assert.match(result.stderr.join('\n'), /council|recovery|identity|inv/i);
+      assert.match(result.stderr.join('\n'), /council|recovery|identity|complexity|audit|lineage|inv/i);
     });
   }
+
+  const production = structuredClone(canonical);
+  production.stage = 'review';
+  production.tests.authored_by_agent_id = 'recovery-test-author';
+  production.agents.implementer_agent_id = 'recovery-builder';
+  production.implement = {
+    agent_id: 'recovery-builder',
+    result: 'green',
+    files: ['src/core/record.js'],
+    greenRun: { command: 'node --test src/core/task-schema.test.js', output: 'green' },
+  };
+  production.convergence.recovery.test_author_agent_id = 'recovery-test-author';
+  production.convergence.recovery.builder_agent_id = 'recovery-builder';
+  assert.equal((await verdictFor(production)).ok, true);
+
+  for (const [name, builder] of [['missing', null], ['spoofed', 'other-builder']]) {
+    await t.test(`${name} production recovery builder`, async () => {
+      const invalid = structuredClone(production);
+      invalid.convergence.recovery.builder_agent_id = builder;
+      const result = await verdictFor(invalid);
+      assert.equal(result.ok, false, `${name} builder must not validate`);
+      assert.match(result.stderr.join('\n'), /builder|identity|recovery|inv/i);
+    });
+  }
+
+  const refactorProduction = structuredClone(canonical);
+  refactorProduction.stage = 'review';
+  refactorProduction.convergence.council.synthesis.solutionStrategies.push('refactor');
+  refactorProduction.convergence.council.synthesis.selectedStrategy = 'refactor';
+  refactorProduction.convergence.recovery.route = 'refactor';
+  refactorProduction.convergence.recovery.builder_agent_id = 'recovery-refactorer';
+  refactorProduction.refactor = {
+    agent_id: 'recovery-refactorer',
+    result: 'refactored',
+    files: ['src/core/record.js'],
+    outsideDiff: [],
+    greenRun: { command: 'node --test src/core/task-schema.test.js', output: 'green' },
+    summary: ['Changed the selected recovery boundary.'],
+  };
+  assert.equal((await verdictFor(refactorProduction)).ok, true);
+
+  const unboundRefactor = structuredClone(refactorProduction);
+  unboundRefactor.convergence.recovery.builder_agent_id = 'other-refactorer';
+  const refactorResult = await verdictFor(unboundRefactor);
+  assert.equal(refactorResult.ok, false, 'refactor builder must match the recorded refactorer');
+  assert.match(refactorResult.stderr.join('\n'), /builder|identity|recovery|inv/i);
 });

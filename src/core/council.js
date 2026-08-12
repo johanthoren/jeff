@@ -11,6 +11,11 @@ export const COUNCIL_ROUTES = [
   'operator-escalation',
 ];
 
+export const OPERATION_COUNCIL_ROUTES = [
+  'scoped-execute',
+  'operator-escalation',
+];
+
 export const RECONSTRUCTION_QUESTION = 'Are these independent defects, or evidence that this part of the design should be reconstructed?';
 
 /** @param {unknown} value */
@@ -33,19 +38,46 @@ function sameValues(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+/** @param {string} value */
+function canonicalText(value) {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('en')
+    .replace(/[\p{P}\p{S}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** @param {unknown} value @returns {unknown} */
+function canonicalValue(value) {
+  if (typeof value === 'string') return canonicalText(value);
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (!isType(value, 'object')) return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]),
+  );
+}
+
+/** @param {any} inquiry */
+function canonicalInquiry(inquiry) {
+  return JSON.stringify(canonicalValue(inquiry));
+}
+
 /**
- * Returns the first invalid canonical research field. Complete historical
- * omission remains valid because schema-v1 ledgers have no version marker that
- * can distinguish an old council from a new one.
+ * Returns the first invalid canonical research field.
+ *
+ * Persisted ledger validation may opt into complete historical omission.
+ * Live council aggregates must always carry all three inquiries and synthesis.
  *
  * @param {any} council
+ * @param {{allowOmission?: boolean, category?: 'code' | 'operation'}} [options]
  * @returns {string | null}
  */
-export function councilResearchViolation(council) {
+export function councilResearchViolation(council, options = {}) {
   const members = Array.isArray(council?.members) ? council.members : [];
   const present = council?.synthesis !== undefined
     || members.some((member) => member?.inquiry !== undefined);
-  if (!present) return null;
+  if (!present) return options.allowOmission === true ? null : 'synthesis';
   if (members.length !== 3) return 'members';
 
   for (let index = 0; index < members.length; index += 1) {
@@ -59,7 +91,7 @@ export function councilResearchViolation(council) {
     if (!Array.isArray(inquiry.findingVotes)) return `members[${index}].inquiry.findingVotes`;
   }
 
-  if (new Set(members.map((member) => JSON.stringify(member.inquiry))).size !== 3) {
+  if (new Set(members.map((member) => canonicalInquiry(member.inquiry))).size !== 3) {
     return 'members.inquiry';
   }
   if (!members.some((member) => member.inquiry.question === RECONSTRUCTION_QUESTION)) {
@@ -87,14 +119,12 @@ export function councilResearchViolation(council) {
     }
   }
 
-  if (council.verdict === 'block') {
-    for (const finding of findings) {
-      const blockingVotes = members.filter((member) => (
-        member.inquiry.findingVotes.find((vote) => vote.id === finding.id)?.blocking === true
-      )).length;
-      if (finding.blockingVotes !== blockingVotes || finding.survived !== (blockingVotes >= 2)) {
-        return 'findings.blockingVotes';
-      }
+  for (const finding of findings) {
+    const blockingVotes = members.filter((member) => (
+      member.inquiry.findingVotes.find((vote) => vote.id === finding.id)?.blocking === true
+    )).length;
+    if (finding.blockingVotes !== blockingVotes || finding.survived !== (blockingVotes >= 2)) {
+      return 'findings.blockingVotes';
     }
   }
 
@@ -106,17 +136,21 @@ export function councilResearchViolation(council) {
       return `synthesis.${field}`;
     }
   }
+  const allowedRoutes = options.category === 'operation'
+    ? OPERATION_COUNCIL_ROUTES
+    : options.category === 'code'
+      ? COUNCIL_ROUTES
+      : [...COUNCIL_ROUTES, ...OPERATION_COUNCIL_ROUTES];
   if (!isUniqueStringArray(synthesis.solutionStrategies) || synthesis.solutionStrategies.length < 2
-    || !synthesis.solutionStrategies.every((route) => COUNCIL_ROUTES.includes(route))) {
+    || !synthesis.solutionStrategies.every((route) => allowedRoutes.includes(route))) {
     return 'synthesis.solutionStrategies';
   }
-  if (!COUNCIL_ROUTES.includes(synthesis.selectedStrategy)
+  if (!allowedRoutes.includes(synthesis.selectedStrategy)
     || !synthesis.solutionStrategies.includes(synthesis.selectedStrategy)) {
     return 'synthesis.selectedStrategy';
   }
-  if (council.verdict === 'block') {
-    const surviving = findings.filter((finding) => finding.survived === true).map((finding) => finding.id);
-    if (!sameValues(synthesis.survivingBlockers, surviving)) return 'synthesis.survivingBlockers';
-  }
+  const surviving = findings.filter((finding) => finding.survived === true).map((finding) => finding.id);
+  if (!sameValues(synthesis.survivingBlockers, surviving)) return 'synthesis.survivingBlockers';
+  if (council.verdict !== (surviving.length > 0 ? 'block' : 'ship')) return 'verdict';
   return null;
 }

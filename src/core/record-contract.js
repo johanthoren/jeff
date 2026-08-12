@@ -1,9 +1,13 @@
 // @ts-check
 
 import { isType } from './validate.js';
-import { councilResearchViolation } from './council.js';
+import {
+  COUNCIL_ROUTES,
+  OPERATION_COUNCIL_ROUTES,
+  councilResearchViolation,
+} from './council.js';
 
-const STAGES = ['plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute', 'council'];
+const STAGES = ['plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute', 'council', 'council-synthesis'];
 const RESULTS = {
   plan: ['red', 'plan', 'escalation'],
   implement: ['green', 'kickback'],
@@ -300,6 +304,36 @@ function validateCouncilInquiry(value, path) {
   });
 }
 
+/** @param {any} value @param {string} path */
+function validateCouncilSynthesis(value, path) {
+  closed(value, path, [
+    'problemRestatement',
+    'survivingBlockers',
+    'causalHypotheses',
+    'solutionStrategies',
+    'rejectedAlternatives',
+    'selectedStrategy',
+    'decisiveEvidence',
+  ]);
+  string(value.problemRestatement, `${path}.problemRestatement`);
+  for (const field of [
+    'survivingBlockers',
+    'causalHypotheses',
+    'solutionStrategies',
+    'rejectedAlternatives',
+    'decisiveEvidence',
+  ]) {
+    strings(value[field], `${path}.${field}`);
+  }
+  const routes = [...COUNCIL_ROUTES, ...OPERATION_COUNCIL_ROUTES];
+  oneOf(value.selectedStrategy, `${path}.selectedStrategy`, routes);
+  if (value.solutionStrategies.length < 2
+    || !value.solutionStrategies.every((route) => routes.includes(route))
+    || !value.solutionStrategies.includes(value.selectedStrategy)) {
+    invalid(`${path}.solutionStrategies`);
+  }
+}
+
 /** @param {any} value */
 function validateCouncil(value) {
   closed(value, '', ['stage', 'council']);
@@ -332,17 +366,7 @@ function validateCouncil(value) {
     if (typeof finding.survived !== 'boolean') invalid(`${at}.survived`);
     if (finding.followupTaskId !== null && !['string', 'number'].includes(typeof finding.followupTaskId)) invalid(`${at}.followupTaskId`);
   });
-  if (council.synthesis !== undefined) {
-    closed(council.synthesis, 'council.synthesis', [
-      'problemRestatement',
-      'survivingBlockers',
-      'causalHypotheses',
-      'solutionStrategies',
-      'rejectedAlternatives',
-      'selectedStrategy',
-      'decisiveEvidence',
-    ]);
-  }
+  validateCouncilSynthesis(council.synthesis, 'council.synthesis');
   const researchViolation = councilResearchViolation(council);
   if (researchViolation !== null) invalid(`council.${researchViolation}`);
   oneOf(council.verdict, 'council.verdict', ['ship', 'block']);
@@ -362,6 +386,16 @@ export function validateCouncilInquiryReturn(value) {
   return record;
 }
 
+/** @param {unknown} value @returns {Record<string, any>} */
+export function validateCouncilSynthesisReturn(value) {
+  if (!isType(value, 'object')) invalid('$');
+  const record = /** @type {Record<string, any>} */ (value);
+  closed(record, '', ['stage', 'synthesis']);
+  if (record.stage !== 'council-synthesis') invalid('stage');
+  validateCouncilSynthesis(record.synthesis, 'synthesis');
+  return record;
+}
+
 
 /** @type {Record<string, (value: any) => void>} */
 const VALIDATORS = {
@@ -374,6 +408,7 @@ const VALIDATORS = {
   audit: validateAudit,
   refute: validateRefute,
   council: validateCouncil,
+  'council-synthesis': validateCouncilSynthesisReturn,
 };
 
 /** @param {string} stage @param {unknown} value @returns {Record<string, any>} */

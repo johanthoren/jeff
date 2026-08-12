@@ -248,7 +248,7 @@ test('issue 95 plan projection exposes a named refactor opportunity', () => {
   assert.equal(display.refactorOpportunity, opportunity);
 });
 
-test('issue 105 extension registers status and dispatch without a host-specific approval adapter', () => {
+test('issue 105 and issue 237 extension registers every host dispatch stage', () => {
   const commands = new Map();
   const tools = new Map();
   const pi = {
@@ -273,6 +273,7 @@ test('issue 105 extension registers status and dispatch without a host-specific 
   assert.deepEqual(tools.get('cook_dispatch').parameters.required, ['stage', 'brief']);
   assert.deepEqual(tools.get('cook_dispatch').parameters.properties.stage.enum, [
     'plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute', 'council',
+    'council-synthesis',
   ]);
   assert.deepEqual([...tools.keys()], ['cook_dispatch']);
 });
@@ -910,6 +911,75 @@ test('cook_dispatch transports the judgment cycle through the shared record cont
 
     assert.equal(recorded.review.reviewer_agent_id, 'pi-review-agent');
     assert.equal(recorded.status, 'done');
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('issue 237 registered Pi tool returns validated council work with host-observed identities', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-council-delivery-'));
+  const inquiryReturn = {
+    stage: 'council',
+    lens: 'integrity',
+    temperature: 0.3,
+    inquiry: {
+      question: 'Are these independent defects, or evidence that this part of the design should be reconstructed?',
+      problemRestatement: 'The live council boundary must preserve independent research.',
+      causalHypotheses: ['The aggregate currently trusts model-supplied provenance.'],
+      solutionStrategies: ['confined-repair', 'full-replan'],
+      findingVotes: [{ id: 'F1', blocking: true, rationale: 'The provenance mismatch is reachable.' }],
+      decisiveEvidence: ['The host generated a distinct child session id.'],
+    },
+  };
+  const synthesisReturn = {
+    stage: 'council-synthesis',
+    synthesis: {
+      problemRestatement: 'The council boundary must preserve research and provenance.',
+      survivingBlockers: ['F1'],
+      causalHypotheses: ['Inquiry assembly and route judgment have different owners.'],
+      solutionStrategies: ['confined-repair', 'full-replan'],
+      rejectedAlternatives: ['confined-repair'],
+      selectedStrategy: 'full-replan',
+      decisiveEvidence: ['Three independent inquiries support reconstruction.'],
+    },
+  };
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    const tool = registeredDispatchTool({
+      dispatchRoleSession: async ({ stage }) => ({
+        stage,
+        agent_id: stage === 'council' ? 'host-inquiry-agent' : 'host-synthesis-agent',
+        brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
+        transcript: JSON.stringify(stage === 'council' ? inquiryReturn : synthesisReturn),
+      }),
+    });
+
+    const inquiry = await tool.execute(
+      'call-inquiry',
+      { stage: 'council', brief: 'Return one independent inquiry.' },
+      undefined,
+      undefined,
+      { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+    );
+    assert.deepEqual(inquiry.details, {
+      ...inquiryReturn,
+      agent_id: 'host-inquiry-agent',
+    });
+    assert.deepEqual(JSON.parse(inquiry.content[0].text), inquiry.details);
+
+    const synthesis = await tool.execute(
+      'call-synthesis',
+      { stage: 'council-synthesis', brief: 'Independently synthesize the three inquiries.' },
+      undefined,
+      undefined,
+      { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+    );
+    assert.deepEqual(synthesis.details, {
+      ...synthesisReturn,
+      agent_id: 'host-synthesis-agent',
+    });
+    assert.deepEqual(JSON.parse(synthesis.content[0].text), synthesis.details);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

@@ -1778,10 +1778,16 @@ skill_outside_dispatch_rules() {
   local schema="$REPO/skills/cook/reference/jeff-state-schema.md"
   local design="$REPO/docs/specs/jeff-design.md"
   local brief="$REPO/agents/cook-council.md"
+  local synthesis_brief="$REPO/agents/cook-council-synthesis.md"
+  local refactor_brief="$REPO/agents/cook-refactor.md"
   local council
 
   [ -f "$brief" ] || {
     echo "agents/cook-council.md is missing"
+    return 1
+  }
+  [ -f "$synthesis_brief" ] || {
+    echo "agents/cook-council-synthesis.md is missing"
     return 1
   }
 
@@ -1815,6 +1821,24 @@ skill_outside_dispatch_rules() {
     echo "the Council method omits direct test-only recovery"
     return 1
   }
+  grep -qiE '(dispatch|fresh|independent)[^.]{0,120}synthesis (specialist|station)|synthesis (specialist|station)[^.]{0,120}(dispatch|fresh|independent)' <<<"$council" || {
+    echo "the Council method does not assign synthesis and route judgment to a fresh specialist"
+    return 1
+  }
+  grep -qF 'scoped-execute' <<<"$council" || {
+    echo "the Council method omits the operation-specific scoped-execute route"
+    return 1
+  }
+  grep -qiE '(clean|green)[^.]{0,100}gate[^.]{0,100}before[^.]{0,100}(fresh )?judgment' <<<"$council" || {
+    echo "the Council method does not require the current recovery gate before fresh judgments"
+    return 1
+  }
+  for lineage in plan test-author builder implementation checkpoint; do
+    grep -qiE "(original|prior|baseline)[^.]{0,100}${lineage}|${lineage}[^.]{0,100}(original|prior|baseline)" <<<"$council" || {
+      echo "the Council method does not retain original $lineage lineage"
+      return 1
+    }
+  done
 
   for field in \
     inquiry \
@@ -1834,6 +1858,33 @@ skill_outside_dispatch_rules() {
     return 1
   }
 
+  for field in \
+    problemRestatement \
+    survivingBlockers \
+    causalHypotheses \
+    solutionStrategies \
+    rejectedAlternatives \
+    selectedStrategy \
+    decisiveEvidence
+  do
+    grep -qF "$field" "$synthesis_brief" || {
+      echo "the council synthesis specialist brief omits $field"
+      return 1
+    }
+  done
+  grep -qiE '(omit|without|must not)[^.]{0,80}agent_id' "$synthesis_brief" || {
+    echo "the council synthesis brief does not keep host-observed agent_id out of its return"
+    return 1
+  }
+  grep -qiE 'direct[^.]{0,80}recovery[^.]{0,120}result[^.]{0,40}refactored|result[^.]{0,40}refactored[^.]{0,120}direct[^.]{0,80}recovery' "$refactor_brief" || {
+    echo "the refactor brief does not give direct recovery one behavior-changing refactored result"
+    return 1
+  }
+  grep -qiE 'clean[^.]{0,80}(invalid|reject|not (valid|allowed|accepted))' "$refactor_brief" || {
+    echo "the refactor brief still permits clean to complete direct recovery"
+    return 1
+  }
+
   grep -qiE 'optional|historical|compatib' "$schema" || {
     echo "the state schema omits historical compatibility for recovery state"
     return 1
@@ -1850,4 +1901,22 @@ skill_outside_dispatch_rules() {
     echo "the design spec does not retain the original task lineage"
     return 1
   }
+  for released in "$schema" "$design"; do
+    grep -qF 'scoped-execute' "$released" || {
+      echo "${released#"$REPO/"} omits the operation-specific council route"
+      return 1
+    }
+    grep -qiE 'synthesis (specialist|station)' "$released" || {
+      echo "${released#"$REPO/"} omits independent synthesis ownership"
+      return 1
+    }
+    grep -qiE '(clean|green)[^.]{0,100}gate[^.]{0,100}before[^.]{0,100}(fresh )?judgment' "$released" || {
+      echo "${released#"$REPO/"} omits the post-recovery gate ordering"
+      return 1
+    }
+    grep -qiE '(original|prior)[^.]{0,160}(plan|test-author|builder|implementation|checkpoint)' "$released" || {
+      echo "${released#"$REPO/"} omits original delivery lineage"
+      return 1
+    }
+  done
 }

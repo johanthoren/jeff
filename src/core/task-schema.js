@@ -1,7 +1,7 @@
 // @ts-check
 
 import { isAgentId, isSourceRefuteAgentForbidden } from './identity-policy.js';
-import { COUNCIL_ROUTES } from './council.js';
+import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES } from './council.js';
 import {
   hasBoundPendingApprovalRequest,
   hasCompletedApprovalProvenance,
@@ -226,8 +226,8 @@ function validateCouncilInquiry(value, field, out) {
   });
 }
 
-/** @param {any} value @param {string[]} out */
-function validateCouncilSynthesis(value, out) {
+/** @param {any} value @param {string[]} out @param {boolean} operation */
+function validateCouncilSynthesis(value, out, operation) {
   const field = 'convergence.council.synthesis';
   requireField(out, field, isType(value, 'object'));
   if (!isType(value, 'object')) return;
@@ -242,7 +242,21 @@ function validateCouncilSynthesis(value, out) {
     requireField(out, `${field}.${name}`, Array.isArray(value[name])
       && value[name].every(isNonemptyString));
   }
-  requireField(out, `${field}.selectedStrategy`, isOneOf(value.selectedStrategy, COUNCIL_ROUTES));
+  const routes = operation ? OPERATION_COUNCIL_ROUTES : COUNCIL_ROUTES;
+  requireField(out, `${field}.selectedStrategy`, isOneOf(value.selectedStrategy, routes));
+}
+
+/** @param {any} value @param {string[]} out */
+function validateRecoveryOriginal(value, out) {
+  const field = 'convergence.recovery.original';
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.complexity`, isOneOf(value.complexity, ['simple', 'complex']));
+  requireField(out, `${field}.audit_required`, typeof value.audit_required === 'boolean');
+  requireField(out, `${field}.plan`, value.plan === null || isType(value.plan, 'object'));
+  requireField(out, `${field}.test_author_agent_id`, isNullableString(value.test_author_agent_id));
+  requireField(out, `${field}.builder_agent_id`, isNullableString(value.builder_agent_id));
+  requireField(out, `${field}.implement`, value.implement === null || isType(value.implement, 'object'));
 }
 
 /** @param {any} value @param {string[]} out */
@@ -256,6 +270,7 @@ function validateRecovery(value, out) {
   for (const name of ['test_author_agent_id', 'builder_agent_id']) {
     requireField(out, `${field}.${name}`, isNullableString(value[name]));
   }
+  validateRecoveryOriginal(value.original, out);
 }
 
 /**
@@ -322,7 +337,10 @@ function validateConvergence(value, out, operation) {
       }
     });
   }
-  if (council.synthesis !== undefined) validateCouncilSynthesis(council.synthesis, out);
+  if (council.synthesis !== undefined) {
+    validateCouncilSynthesis(council.synthesis, out, operation);
+    requireField(out, 'convergence.council.synthesizer_agent_id', isAgentId(council.synthesizer_agent_id));
+  }
   if (value.recovery !== undefined) validateRecovery(value.recovery, out);
 }
 

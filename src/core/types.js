@@ -191,8 +191,18 @@
  * @property {string[]} causalHypotheses
  * @property {string[]} solutionStrategies
  * @property {string[]} rejectedAlternatives
- * @property {'confined-repair' | 'test-contract-repair' | 'refactor' | 'causal-subgraph-reconstruction' | 'full-replan' | 'operator-escalation'} selectedStrategy
+ * @property {'confined-repair' | 'test-contract-repair' | 'refactor' | 'causal-subgraph-reconstruction' | 'full-replan' | 'scoped-execute' | 'operator-escalation'} selectedStrategy
  * @property {string[]} decisiveEvidence
+ */
+
+/**
+ * @typedef {Object} OriginalDeliveryLineage
+ * @property {'simple' | 'complex'} complexity
+ * @property {boolean} audit_required
+ * @property {Record<string, unknown>} plan
+ * @property {string | null} test_author_agent_id
+ * @property {string | null} builder_agent_id
+ * @property {Record<string, unknown> | null} implement
  */
 
 /**
@@ -202,6 +212,7 @@
  * @property {TestGate | null} baselineGate
  * @property {string | null} test_author_agent_id
  * @property {string | null} builder_agent_id
+ * @property {OriginalDeliveryLineage} original
  */
 
 /**
@@ -239,7 +250,7 @@
  * @typedef {Object} CodeConvergence
  * @property {number} cap
  * @property {{review: ConvergenceCounter, audit: ConvergenceCounter}} stages
- * @property {{convened: boolean, stage: 'review' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], synthesis?: CouncilSynthesis, verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {{convened: boolean, stage: 'review' | 'audit' | null, synthesizer_agent_id?: string, members: CouncilMember[], findings: CouncilFinding[], synthesis?: CouncilSynthesis, verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  * @property {CouncilRecovery} [recovery]
  */
 
@@ -247,7 +258,7 @@
  * @typedef {Object} OperationConvergence
  * @property {number} cap
  * @property {{verify: ConvergenceCounter, audit: ConvergenceCounter}} stages
- * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, members: CouncilMember[], findings: OperationCouncilFinding[], synthesis?: CouncilSynthesis, verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, synthesizer_agent_id?: string, members: CouncilMember[], findings: OperationCouncilFinding[], synthesis?: CouncilSynthesis, verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  */
 
 /** @typedef {CodeConvergence | OperationConvergence} Convergence */

@@ -140,7 +140,13 @@ function observedAgentId(value) {
  * @param {Record<string, any>} value
  */
 function recordSpecialistReturn(root, stage, id, value) {
-  return recordObservedSpecialistReturn(root, stage, id, value, observedAgentId(value));
+  const observedIdentity = stage === 'council'
+    ? {
+        member_agent_ids: value.council.members.map((member) => member.agent_id),
+        synthesizer_agent_id: 'council-synthesizer',
+      }
+    : observedAgentId(value);
+  return recordObservedSpecialistReturn(root, stage, id, value, observedIdentity);
 }
 
 /** @param {string} root @param {unknown} value @param {string} [name] */
@@ -1982,6 +1988,34 @@ function operationCouncilTask() {
  * @returns {any}
  */
 function operationCouncilReturn(outcome = null, survived = true) {
+  const question = 'Are these independent defects, or evidence that this part of the design should be reconstructed?';
+  const votes = survived ? [true, true, false] : [true, false, false];
+  const inquiries = [
+    {
+      question,
+      problemRestatement: 'The destination registry violates the independently observed postcondition.',
+      causalHypotheses: ['The scoped execution did not remove the source entry.'],
+      solutionStrategies: ['scoped-execute', 'operator-escalation'],
+      findingVotes: [{ id: 'F1', blocking: votes[0], rationale: 'The duplicate is directly observable.' }],
+      decisiveEvidence: ['The verifier reads two destination entries.'],
+    },
+    {
+      question: 'Which bounded operation can restore the planned postcondition?',
+      problemRestatement: 'The completed operation left a duplicate registry entry.',
+      causalHypotheses: ['The destination write completed before source cleanup.'],
+      solutionStrategies: ['operator-escalation', 'scoped-execute'],
+      findingVotes: [{ id: 'F1', blocking: votes[1], rationale: 'The recorded state differs from the plan.' }],
+      decisiveEvidence: ['Independent inspection reports the source and destination together.'],
+    },
+    {
+      question: 'Is one scoped execution sufficient without changing the locked operation plan?',
+      problemRestatement: 'The operation requires one bounded correction to satisfy its existing plan.',
+      causalHypotheses: ['The retained rollback boundary permits a confined retry.'],
+      solutionStrategies: ['scoped-execute', 'operator-escalation'],
+      findingVotes: [{ id: 'F1', blocking: votes[2], rationale: 'The recovery remains bounded and reversible.' }],
+      decisiveEvidence: ['The original approval and recovery boundaries remain available.'],
+    },
+  ];
   return {
     stage: 'council',
     council: {
@@ -1991,7 +2025,7 @@ function operationCouncilReturn(outcome = null, survived = true) {
         { agent_id: 'operation-integrity', lens: 'integrity', temperature: 0.3 },
         { agent_id: 'operation-security', lens: 'security', temperature: 0.7 },
         { agent_id: 'operation-pragmatist', lens: 'pragmatist', temperature: 1 },
-      ],
+      ].map((member, index) => ({ ...member, inquiry: inquiries[index] })),
       findings: [{
         id: 'F1',
         summary: 'The destination registry contains two entries.',
@@ -2000,6 +2034,15 @@ function operationCouncilReturn(outcome = null, survived = true) {
         survived,
         followupTaskId: survived ? null : 18,
       }],
+      synthesis: {
+        problemRestatement: 'The operation left a duplicate registry entry after bounded execution.',
+        survivingBlockers: survived ? ['F1'] : [],
+        causalHypotheses: ['The scoped execution did not complete source cleanup.'],
+        solutionStrategies: ['scoped-execute', 'operator-escalation'],
+        rejectedAlternatives: ['operator-escalation'],
+        selectedStrategy: 'scoped-execute',
+        decisiveEvidence: ['Independent inspection observes the duplicate deterministically.'],
+      },
       verdict: survived ? 'block' : 'ship',
       outcome,
     },
@@ -6735,6 +6778,7 @@ test('issue 237 council selects every bounded code recovery route without leavin
         assert.equal(recorded.stage, expectedStage);
         assert.equal(recorded.status, expectedStatus);
         assert.equal(recorded.convergence.council.outcome, expectedOutcome);
+        assert.equal(recorded.convergence.council.synthesizer_agent_id, 'council-synthesizer');
         assert.equal(recorded.convergence.recovery.episode, 1);
         assert.equal(recorded.convergence.recovery.route, strategy);
         assert.deepEqual(recorded.convergence.recovery.baselineGate, baselineGate);
@@ -6774,6 +6818,9 @@ test('issue 237 test-only and refactor recovery keep author builder and judge id
   await t.test('test-contract repair proceeds from fresh authorship directly to the gate-facing review stage', async () => {
     const { root, taskDir } = await makeRoot(councilTask());
     try {
+      await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+      runGit(root, ['add', '.']);
+      runGit(root, ['commit', '-qm', 'add test profile']);
       await recordSpecialistReturn(
         root,
         'council',
@@ -6793,6 +6840,10 @@ test('issue 237 test-only and refactor recovery keep author builder and judge id
       assert.equal(planned.implement, undefined);
       assert.equal(planned.convergence.recovery.test_author_agent_id, 'recovery-test-author');
       assert.equal(planned.convergence.recovery.builder_agent_id, null);
+      runGit(root, ['add', '.']);
+      runGit(root, ['commit', '-qm', 'record test-only recovery']);
+      const verification = await runVerify(root, '18');
+      assert.equal(verification.code, 0, verification.stderr.join('\n'));
 
       const before = await readFile(join(taskDir, 'task.json'), 'utf8');
       await assert.rejects(
@@ -6813,6 +6864,9 @@ test('issue 237 test-only and refactor recovery keep author builder and judge id
   await t.test('direct refactor recovery records its builder and rejects that identity as a judge', async () => {
     const { root, taskDir } = await makeRoot(councilTask());
     try {
+      await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+      runGit(root, ['add', '.']);
+      runGit(root, ['commit', '-qm', 'add test profile']);
       await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('refactor'));
       await recordSpecialistReturn(root, 'refactor', '18', observedReturn('recovery-refactorer', {
         stage: 'refactor',
@@ -6826,6 +6880,10 @@ test('issue 237 test-only and refactor recovery keep author builder and judge id
       const refactored = await readTask(taskDir);
       assert.equal(refactored.stage, 'review');
       assert.equal(refactored.convergence.recovery.builder_agent_id, 'recovery-refactorer');
+      runGit(root, ['add', '.']);
+      runGit(root, ['commit', '-qm', 'record refactor recovery']);
+      const verification = await runVerify(root, '18');
+      assert.equal(verification.code, 0, verification.stderr.join('\n'));
 
       const before = await readFile(join(taskDir, 'task.json'), 'utf8');
       await assert.rejects(
@@ -6855,6 +6913,9 @@ test('issue 237 recovery survives resume and exhausts exactly once after a fresh
   }));
   const baselineGate = (await readTask(taskDir)).tests.gate;
   try {
+    await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'add test profile']);
     await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('full-replan'));
     assert.equal((await readTask(taskDir)).stage, 'plan');
 
@@ -6865,6 +6926,10 @@ test('issue 237 recovery survives resume and exhausts exactly once after a fresh
       planReturn({ complexity: 'complex', auditRequired: true }, 'recovery-plan-author'),
     );
     await recordSpecialistReturn(root, 'implement', '18', implementReturn('recovery-implementer'));
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'record recovery']);
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
     const recoveryCycle = (await readTask(taskDir)).judgmentHistory.length;
 
     const finding = blockingFinding({
@@ -6928,9 +6993,34 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
     ['missing one independent inquiry', (value) => {
       delete value.council.members[2].inquiry;
     }],
+    ['all live research omitted as if this were a historical ledger', (value) => {
+      for (const member of value.council.members) delete member.inquiry;
+      delete value.council.synthesis;
+    }],
     ['identical inquiry packets', (value) => {
       value.council.members[1].inquiry = structuredClone(value.council.members[0].inquiry);
       value.council.members[2].inquiry = structuredClone(value.council.members[0].inquiry);
+    }],
+    ['object key order is the only inquiry difference', (value) => {
+      const entries = Object.entries(value.council.members[0].inquiry);
+      value.council.findings[0].blockingVotes = 3;
+      value.council.members[1].inquiry = Object.fromEntries([...entries].reverse());
+      value.council.members[2].inquiry = Object.fromEntries([...entries.slice(1), entries[0]]);
+    }],
+    ['punctuation is the only inquiry difference', (value) => {
+      value.council.findings[0].blockingVotes = 3;
+      for (const [index, suffix] of [[1, '.'], [2, '!']]) {
+        const inquiry = structuredClone(value.council.members[0].inquiry);
+        inquiry.question += suffix;
+        inquiry.problemRestatement += suffix;
+        inquiry.causalHypotheses = inquiry.causalHypotheses.map((item) => `${item}${suffix}`);
+        inquiry.decisiveEvidence = inquiry.decisiveEvidence.map((item) => `${item}${suffix}`);
+        inquiry.findingVotes = inquiry.findingVotes.map((vote) => ({
+          ...vote,
+          rationale: `${vote.rationale}${suffix}`,
+        }));
+        value.council.members[index].inquiry = inquiry;
+      }
     }],
     ['missing reconstruction question', (value) => {
       value.council.members[0].inquiry.question = 'Is this finding blocking?';
@@ -6938,6 +7028,14 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
     ['vote tally inconsistent with independent inquiries', (value) => {
       value.council.findings[0].blockingVotes = 1;
       value.council.findings[0].survived = false;
+    }],
+    ['ship verdict contradicts the inquiry-derived majority', (value) => {
+      value.council.findings[0].blockingVotes = 0;
+      value.council.findings[0].survived = false;
+      value.council.findings[0].followupTaskId = 'ledger';
+      value.council.synthesis.survivingBlockers = [];
+      value.council.verdict = 'ship';
+      value.council.outcome = 'shipped';
     }],
     ['synthesis omits a surviving blocker', (value) => {
       value.council.synthesis.survivingBlockers = [];
@@ -6973,4 +7071,224 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('issue 237 live council binds member and synthesizer identities to host observations', async (t) => {
+  const cases = [
+    ['member', {
+      member_agent_ids: ['spoofed-member', 'council-security', 'council-pragmatist'],
+      synthesizer_agent_id: 'council-synthesizer',
+    }],
+    ['synthesizer', {
+      member_agent_ids: ['council-integrity', 'council-security', 'council-pragmatist'],
+      synthesizer_agent_id: 'implementer',
+    }],
+  ];
+
+  for (const [name, observed] of cases) {
+    await t.test(name, async () => {
+      const { root, taskDir } = await makeRoot(councilTask());
+      try {
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordObservedSpecialistReturn(root, 'council', '18', councilReturn(), observed),
+          /record-identity.*council|observed.*identity|synthesizer/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('issue 237 recovery judgments require a current clean green post-recovery gate', async () => {
+  const { root, taskDir } = await prepareScopedCouncilRecovery();
+  try {
+    const cycle = (await readTask(taskDir)).judgmentHistory.length;
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-reviewer-one', { cycle })),
+      /recovery.*gate|clean green.*before.*judgment|current.*checkpoint/i,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+
+    const verification = await runVerify(root, '18');
+    assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      reviewReturn('fresh-reviewer-one', { cycle }),
+    );
+    assert.equal((await readTask(taskDir)).agents.reviewer_agent_id, 'fresh-reviewer-one');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 237 confined repair cannot enter a route-incompatible refactor stage', async () => {
+  const task = councilTask();
+  task.plan = {
+    result: 'red',
+    slices: ['Repair the confined production defect.'],
+    testFiles: ['src/cli/record.test.js'],
+    redRun: { command: 'node --test src/cli/record.test.js', output: 'failure reproduced' },
+    escalation: null,
+    refactorOpportunity: 'Harmonize the recorder after behavior is restored.',
+  };
+  const { root, taskDir } = await makeRoot(task);
+  try {
+    await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('confined-repair'));
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('recovery-builder'));
+    assert.equal((await readTask(taskDir)).stage, 'review');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 237 recovery cannot lower complexity audit or the fresh reviewer floor', async (t) => {
+  await t.test('recovery plan preserves the complex classification and required audit', async () => {
+    const { root, taskDir } = await makeRoot(councilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('full-replan'));
+      await recordSpecialistReturn(
+        root,
+        'plan',
+        '18',
+        planReturn({ complexity: 'simple', auditRequired: false }, 'recovery-test-author'),
+      );
+      const planned = await readTask(taskDir);
+      assert.equal(planned.complexity, 'complex');
+      assert.equal(planned.audit.required, true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('one fresh review cannot satisfy the original complex reviewer floor', async () => {
+    const { root, taskDir } = await makeRoot(councilTask());
+    try {
+      await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
+      runGit(root, ['add', '.']);
+      runGit(root, ['commit', '-qm', 'add test profile']);
+      await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('full-replan'));
+      await recordSpecialistReturn(
+        root,
+        'plan',
+        '18',
+        planReturn({ complexity: 'simple', auditRequired: false }, 'recovery-test-author'),
+      );
+      await recordSpecialistReturn(root, 'implement', '18', implementReturn('recovery-builder'));
+      runGit(root, ['add', '.']);
+      runGit(root, ['commit', '-qm', 'record recovery']);
+      const verification = await runVerify(root, '18');
+      assert.equal(verification.code, 0, verification.stderr.join('\n'));
+      const cycle = (await readTask(taskDir)).judgmentHistory.length;
+      await recordSpecialistReturn(
+        root,
+        'review',
+        '18',
+        reviewReturn('fresh-reviewer-one', { cycle }),
+      );
+      assert.equal((await readTask(taskDir)).stage, 'review');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 237 recovery retains original plan test author builder and implementation lineage', async () => {
+  const originalPlan = {
+    result: 'red',
+    slices: ['Implement the original contract.'],
+    testFiles: ['src/cli/record.test.js'],
+    redRun: { command: 'node --test src/cli/record.test.js', output: 'original red' },
+    escalation: null,
+    refactorOpportunity: null,
+  };
+  const originalImplement = {
+    agent_id: 'implementer',
+    result: 'green',
+    files: ['src/core/record.js'],
+    greenRun: { command: 'node --test src/cli/record.test.js', output: 'original green' },
+  };
+  const { root, taskDir } = await makeRoot(councilTask({
+    plan: originalPlan,
+    implement: originalImplement,
+    tests: {
+      authored_by_agent_id: 'original-test-author',
+      green: true,
+      evidence: [{ command: 'node --test', output: 'green' }],
+      gate: ISSUE_237_BASELINE_GATE,
+    },
+  }));
+  try {
+    await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('full-replan'));
+    await recordSpecialistReturn(
+      root,
+      'plan',
+      '18',
+      planReturn({ complexity: 'complex', auditRequired: true }, 'recovery-test-author'),
+    );
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('recovery-builder'));
+    const recovered = await readTask(taskDir);
+    assert.deepEqual(recovered.convergence.recovery.original, {
+      complexity: 'complex',
+      audit_required: true,
+      plan: originalPlan,
+      test_author_agent_id: 'original-test-author',
+      builder_agent_id: 'implementer',
+      implement: originalImplement,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 237 direct refactor recovery cannot complete with a clean no-change return', async () => {
+  const { root, taskDir } = await makeRoot(councilTask());
+  try {
+    await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('refactor'));
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'refactor', '18', refactorReturn('recovery-refactorer')),
+      /recovery refactor.*(change|refactored)|clean.*recovery|nonempty.*files/i,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 237 operation council honors its scoped-execute synthesis route', async (t) => {
+  await t.test('operation-specific route reaches execute and remains recorded', async () => {
+    const { root, taskDir } = await makeRoot(operationCouncilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
+      const recorded = await readTask(taskDir);
+      assert.equal(recorded.stage, 'execute');
+      assert.equal(recorded.convergence.council.synthesis.selectedStrategy, 'scoped-execute');
+      assert.equal(recorded.convergence.council.synthesizer_agent_id, 'council-synthesizer');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('code-only route is rejected rather than ignored for an operation', async () => {
+    const { root, taskDir } = await makeRoot(operationCouncilTask());
+    try {
+      const invalid = operationCouncilReturn();
+      invalid.council.synthesis.solutionStrategies = ['confined-repair', 'operator-escalation'];
+      invalid.council.synthesis.selectedStrategy = 'confined-repair';
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(root, 'council', '18', invalid),
+        /operation.*route|selectedStrategy|scoped-execute/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

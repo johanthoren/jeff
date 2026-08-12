@@ -922,11 +922,21 @@ function convergenceChecks(t, id, ids, out) {
     if (JSON.stringify([...lenses].sort()) !== JSON.stringify(['integrity', 'pragmatist', 'security'])) {
       out.push(`task ${id}: council lenses must be exactly integrity, security, pragmatist [inv8]`);
     }
+    const synthesizerId = cl.synthesizer_agent_id;
+    if (cl.synthesis !== undefined
+      && (!isAgentId(synthesizerId)
+        || mids.includes(synthesizerId)
+        || forbidden.has(synthesizerId))) {
+      out.push(`task ${id}: council synthesizer must be a fresh host-observed identity [inv8]`);
+    }
     if (!judgmentStages.includes(cl.stage)) {
       out.push(`task ${id}: convened council.stage must be ${judgmentStages.join(' or ')} [inv8]`);
     }
   }
-    const researchViolation = councilResearchViolation(cl);
+    const researchViolation = councilResearchViolation(cl, {
+      allowOmission: true,
+      category: t.category === 'operation' ? 'operation' : 'code',
+    });
     if (researchViolation !== null) {
       out.push(`task ${id}: council.${researchViolation} is invalid canonical research [inv8]`);
     }
@@ -979,6 +989,17 @@ function convergenceChecks(t, id, ids, out) {
     if (recovery?.route !== cl?.synthesis?.selectedStrategy) {
       out.push(`task ${id}: recovery route must equal council synthesis selectedStrategy [inv11]`);
     }
+    const original = recovery?.original;
+    if (!isType(original, 'object')) {
+      out.push(`task ${id}: recovery must retain original delivery lineage [inv11]`);
+    } else {
+      if (original.complexity === 'complex' && t.complexity !== 'complex') {
+        out.push(`task ${id}: recovery cannot lower original complexity [inv11]`);
+      }
+      if (original.audit_required === true && t.audit?.required !== true) {
+        out.push(`task ${id}: recovery cannot lower the original audit floor [inv11]`);
+      }
+    }
     const councilIds = new Set(jqOr(cl?.members, []).map((/** @type {any} */ member) => member?.agent_id));
     const currentJudgeIds = [
       t.agents?.reviewer_agent_id,
@@ -1010,6 +1031,21 @@ function convergenceChecks(t, id, ids, out) {
     if (['confined-repair', 'refactor', 'operator-escalation'].includes(recovery?.route)
       && testAuthor !== null) {
       out.push(`task ${id}: recovery route cannot carry fresh test authorship [inv11]`);
+    }
+    const judgmentStage = ['review', 'audit', 'done'].includes(t.stage);
+    const productionRoutes = [
+      'confined-repair',
+      'refactor',
+      'causal-subgraph-reconstruction',
+      'full-replan',
+    ];
+    if (judgmentStage && productionRoutes.includes(recovery?.route)) {
+      const recordedBuilder = recovery.route === 'refactor'
+        ? t.refactor?.agent_id
+        : t.implement?.agent_id;
+      if (!isAgentId(builder) || builder !== recordedBuilder) {
+        out.push(`task ${id}: production recovery builder must match the recorded recovery change [inv11]`);
+      }
     }
     if (recovery?.route === 'operator-escalation'
       && (cl.outcome !== 'blocked-to-operator' || t.status !== 'blocked')) {
