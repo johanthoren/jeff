@@ -1542,7 +1542,7 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
       if (['review', 'audit'].includes(stage) && isPendingCodeRecovery(task)) {
         assertCurrentRecoveryJudgmentGate(root, task);
       }
-      const versionedTask = stage === 'council' && task.convergence?.council?.convened !== true
+      const versionedTask = stage === 'council' && task.convergence?.council?.convened !== true && !requiresCouncilResearchProvenance(task)
         ? { ...task, pipelineVersion: currentPipelineVersion }
         : task;
       return transitionTask(versionedTask, stage, transitionReturn);
