@@ -2469,7 +2469,7 @@ test('issue 101 cycle 2: either capped operation source triggers one council wit
 test('issue 101 cycle 2: scoped execute kickbacks terminate but an exact approval stop remains resumable', async (t) => {
   for (const destination of ['capture', 'plan']) {
     await t.test(`scoped kickback to ${destination} blocks to the operator`, async () => {
-      const { root } = await makeRoot(operationCouncilTask());
+      const { root, taskDir } = await makeRoot(operationCouncilTask());
       try {
         await recordSpecialistReturn(root, 'council', '18', operationCouncilReturn());
         const before = await recordSpecialistReturn(root, 'execute', '18', executeReturn('scoped-executor', {
@@ -2484,6 +2484,13 @@ test('issue 101 cycle 2: scoped execute kickbacks terminate but an exact approva
           ['blocked', 'execute', 'blocked-to-operator'],
         );
         assert.match(before.blockedReason, /destination registry contains two entries/i);
+
+        const blockedBytes = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordSpecialistReturn(root, 'execute', '18', executeReturn('later-executor')),
+          /\[record-transition\].*(?:blocked|terminal|council)/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), blockedBytes);
       } finally {
         await rm(root, { recursive: true, force: true });
       }

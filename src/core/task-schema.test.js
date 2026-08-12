@@ -4308,6 +4308,17 @@ test('issue 238 persisted council research provenance fails closed and keeps his
     assert.match(result.stderr.join('\n'), /council|research|provenance|inv/i);
   });
 
+  await t.test('current-version canonical marker cannot be substituted with historical omission', async () => {
+    const substituted = structuredClone(canonical);
+    substituted.convergence.council.researchProvenance = 'historical-omitted';
+    for (const member of substituted.convergence.council.members) delete member.inquiry;
+    delete substituted.convergence.council.synthesis;
+    delete substituted.convergence.council.synthesizer_agent_id;
+    const result = await verdictFor(substituted);
+    assert.equal(result.ok, false, 'current canonical research substitution must not validate');
+    assert.match(result.stderr.join('\n'), /council|research|provenance|inv/i);
+  });
+
   await t.test('historical provenance accepts only complete research omission', async () => {
     const historical = item5CodeLedger({
       kickbacks: [],
