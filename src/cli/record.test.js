@@ -4674,6 +4674,22 @@ test('issue 65 initial council block cannot claim scoped-fix-shipped', async () 
   }
 });
 
+test('issue 238 scoped completion rejects changed canonical council research atomically', async () => {
+  const { root, taskDir } = await prepareCompletedMixedStageReassessment();
+  try {
+    const changed = mixedStageCouncilReturn('scoped-fix-shipped');
+    changed.council.members[0].inquiry.causalHypotheses = ['A different causal account.'];
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', changed),
+      /\[record-transition\].*preserve the recorded block/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 65 scoped council completion requires fresh verification after the recorded fix', async () => {
   const { root, taskDir } = await prepareScopedCouncilRecovery();
   try {
@@ -5377,7 +5393,14 @@ function item4RepairTask(overrides = {}) {
         review: { blockingKickbacks: 1 },
       },
     },
-    plan: { refactorOpportunity: null },
+    plan: {
+      result: 'red',
+      slices: ['Implement the original contract.'],
+      testFiles: ['src/cli/record.test.js'],
+      redRun: { command: 'node --test src/cli/record.test.js', output: 'original red' },
+      escalation: null,
+      refactorOpportunity: null,
+    },
     agents: {
       implementer_agent_id: 'implementer-old',
       reviewer_agent_id: 'reviewer-old',
