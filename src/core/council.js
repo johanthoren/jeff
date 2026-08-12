@@ -18,6 +18,13 @@ export const OPERATION_COUNCIL_ROUTES = [
 
 export const RECONSTRUCTION_QUESTION = 'Are these independent defects, or evidence that this part of the design should be reconstructed?';
 
+/** @param {any} task */
+export function requiresCouncilResearchProvenance(task) {
+  if (task?.pipelineVersion === undefined) return false;
+  const match = /^(\d+)\.(\d+)(?:\.|$)/.exec(task.pipelineVersion);
+  return match === null || Number(match[1]) > 6 || (Number(match[1]) === 6 && Number(match[2]) >= 1);
+}
+
 /** @param {unknown} value */
 function isNonemptyString(value) {
   return typeof value === 'string' && value.length > 0;

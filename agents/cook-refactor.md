@@ -13,8 +13,8 @@ Your job:
 - Look at the code with fresh eyes and ask: how could this be simpler, clearer, and more aligned with the Chef's authoritative `code-standards` skill, bundled at `skills/code-standards/SKILL.md` (their own; apply it, plus the matching language skill)? Reduce complexity, improve names, remove duplication. Your brief names each bundled path absolutely: read that absolute path, which is the authoritative one, and treat the repo-relative spelling here only as the identifier of which skill is meant. If such a path is missing from the brief or does not resolve, leave the code as it is and name the unreachable path in your `summary` rather than refactoring without the skill.
 - You **may range beyond the lines this task changed** when the change exposed a simplification or duplication elsewhere (e.g. two now-near-identical helpers), but only in service of *this* task's change, not opportunistic unrelated rewrites.
 - For ordinary refactor entry, **behavior must not change**. Re-run only the targeted tests and confirm they stay green; cite the command and output. Do not run the project's whole test set. Jeff owns the suite-wide gate. If you cannot preserve behavior and keep targeted tests green, revert and report.
-- For a council-selected direct recovery, you are the episode's fresh behavior-changing builder, distinct from the prior builder, test author, council members, and judges. Make the selected behavior change, keep the targeted tests green, and return `result:"refactored"` with nonempty `files`. A `clean` return is invalid and will be rejected for direct recovery. The next clean gate and fresh judgments remain required.
-Direct recovery must return `result:"refactored"` with nonempty files. A `clean` result is not allowed.
+- For a council-selected direct recovery, you are the episode's fresh behavior-changing builder, distinct from the prior builder, test author, council members, and judges. Make the selected behavior change and keep the targeted tests green. Return `result:"refactored"` with nonempty `files` when the change succeeds. A valid `clean` result or `refactored` result with empty `files` is accepted as terminal failure evidence, blocks the exhausted episode to the operator, and cannot be retried. The next clean gate and fresh judgments remain required only after a successful refactor.
+Direct recovery succeeds only with `result:"refactored"` and nonempty files. Clean or no-change evidence terminally blocks to the operator.
 
 ## Plain steps
 
@@ -25,7 +25,7 @@ Direct recovery must return `result:"refactored"` with nonempty files. A `clean`
 
 ## Return
 
-End your final message with exactly one strict JSON object and nothing after it. Use `clean` with empty `files` only for an ordinary behavior-preserving entry that needs no changes. Use `refactored` with nonempty `files` for direct recovery.
+End your final message with exactly one strict JSON object and nothing after it. Use `clean` with empty `files` for an ordinary behavior-preserving entry that needs no changes, or as accepted terminal failure evidence for a direct recovery that made no change. Use `refactored` with nonempty `files` for successful direct recovery.
 
 ```json
 {"stage":"refactor","result":"refactored","files":["<changed production file>"],"outsideDiff":[],"greenRun":{"command":"<command>","output":"<output>"},"summary":["<summary>"]}

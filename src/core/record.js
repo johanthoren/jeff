@@ -8,7 +8,7 @@ import { appendJournalEvents } from './journal.js';
 import { git, treeDirty } from './git.js';
 import { configSchemaViolations, isIsoDateTime, RECOVERY_LINEAGE_FIELDS, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
-import { validateSpecialistReturn } from './record-contract.js';
+import { validateHistoricalCouncilRecoveryReturn, validateSpecialistReturn } from './record-contract.js';
 import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES } from './council.js';
 import {
   activeRefuterAgentIds,
@@ -846,6 +846,15 @@ function isPreservedCouncilBlock(pending, returned) {
     researchProvenance: _returnedResearchProvenance,
     ...returnedSpecialistFields
   } = returned;
+  const historicalOmission = pending.researchProvenance === 'historical-omitted'
+    && pending.synthesis === undefined
+    && returned.synthesis === undefined
+    && pending.members.every((member) => member.inquiry === undefined)
+    && returned.members.every((member) => member.inquiry === undefined);
+  if (historicalOmission) {
+    delete pendingSpecialistFields.synthesizer_agent_id;
+    delete returnedSpecialistFields.synthesizer_agent_id;
+  }
   return pending.verdict === 'block'
     && pending.outcome === null
     && isDeepStrictEqual(returnedSpecialistFields, {
@@ -1484,7 +1493,13 @@ export async function recordSpecialistFile(root, stage, id, file, observedAgentI
  * @param {string | {member_agent_ids: string[], synthesizer_agent_id: string}} [observedAgentId]
  */
 export async function recordSpecialistReturn(root, stage, id, value, observedAgentId) {
-  const specialistReturn = validateSpecialistReturn(stage, value);
+  let specialistReturn;
+  try {
+    specialistReturn = validateSpecialistReturn(stage, value);
+  } catch (error) {
+    if (stage !== 'council') throw error;
+    specialistReturn = validateHistoricalCouncilRecoveryReturn(value);
+  }
   if (stage !== 'council' && (typeof observedAgentId !== 'string' || observedAgentId.length === 0)) {
     throw new Error('[record-identity] observed agent is invalid');
   }

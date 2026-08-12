@@ -334,8 +334,8 @@ function validateCouncilSynthesis(value, path) {
   }
 }
 
-/** @param {any} value */
-function validateCouncil(value) {
+/** @param {any} value @param {{allowResearchOmission?: boolean}} [options] */
+function validateCouncil(value, options = {}) {
   closed(value, '', ['stage', 'council']);
   const council = value.council;
   closedOptional(
@@ -366,8 +366,10 @@ function validateCouncil(value) {
     if (typeof finding.survived !== 'boolean') invalid(`${at}.survived`);
     if (finding.followupTaskId !== null && !['string', 'number'].includes(typeof finding.followupTaskId)) invalid(`${at}.followupTaskId`);
   });
-  validateCouncilSynthesis(council.synthesis, 'council.synthesis');
-  const researchViolation = councilResearchViolation(council);
+  if (council.synthesis !== undefined) validateCouncilSynthesis(council.synthesis, 'council.synthesis');
+  const researchViolation = councilResearchViolation(council, {
+    allowOmission: options.allowResearchOmission === true,
+  });
   if (researchViolation !== null) invalid(`council.${researchViolation}`);
   oneOf(council.verdict, 'council.verdict', ['ship', 'block']);
   oneOf(council.outcome, 'council.outcome', [null, 'shipped', 'scoped-fix-shipped', 'blocked-to-operator']);
@@ -418,5 +420,14 @@ export function validateSpecialistReturn(stage, value) {
   const record = /** @type {Record<string, any>} */ (value);
   if (record.stage !== stage) invalid('stage');
   VALIDATORS[stage](record);
+  return record;
+}
+
+/** @param {unknown} value @returns {Record<string, any>} */
+export function validateHistoricalCouncilRecoveryReturn(value) {
+  if (!isType(value, 'object')) invalid('$');
+  const record = /** @type {Record<string, any>} */ (value);
+  if (record.stage !== 'council') invalid('stage');
+  validateCouncil(record, { allowResearchOmission: true });
   return record;
 }

@@ -1,7 +1,7 @@
 // @ts-check
 
 import { isAgentId, isSourceRefuteAgentForbidden } from './identity-policy.js';
-import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES } from './council.js';
+import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES, requiresCouncilResearchProvenance } from './council.js';
 import {
   hasBoundPendingApprovalRequest,
   hasCompletedApprovalProvenance,
@@ -344,7 +344,7 @@ function validateRecovery(value, out) {
  * @param {string[]} out
  * @param {boolean} operation
  */
-function validateConvergence(value, out, operation) {
+function validateConvergence(value, out, operation, requireResearchProvenance) {
   requireField(out, 'convergence', isType(value, 'object'));
   if (!isType(value, 'object')) return;
   requireField(out, 'convergence.cap', Number.isInteger(value.cap));
@@ -377,6 +377,9 @@ function validateConvergence(value, out, operation) {
       'convergence.council.researchProvenance',
       isOneOf(council.researchProvenance, ['canonical', 'historical-omitted']),
     );
+  }
+  if (requireResearchProvenance && council.convened === true && !Object.hasOwn(council, 'researchProvenance')) {
+    out.push('convergence.council.researchProvenance is required');
   }
   if (Array.isArray(council.members)) {
     council.members.forEach((/** @type {any} */ member, /** @type {number} */ index) => {
@@ -1092,7 +1095,9 @@ export function taskSchemaViolations(task, { lite }) {
   for (const field of ['blockedReason', 'abandonReason']) {
     requireField(out, field, isNullableString(task[field]));
   }
-  if (task.convergence !== undefined) validateConvergence(task.convergence, out, operation);
+  if (task.convergence !== undefined) {
+    validateConvergence(task.convergence, out, operation, requiresCouncilResearchProvenance(task));
+  }
   if (operation) validateOperationRefutes(task, out);
   if (authoritativeOperation) {
     validateOperationState(task, out);

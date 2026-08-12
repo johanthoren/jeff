@@ -16,7 +16,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { isType } from './validate.js';
-import { councilResearchViolation } from './council.js';
+import { councilResearchViolation, requiresCouncilResearchProvenance } from './council.js';
 import {
   archivedJudgeAgentIds,
   forbiddenCouncilAgentIds,
@@ -939,7 +939,8 @@ function convergenceChecks(t, id, ids, out) {
     || cl?.synthesizer_agent_id !== undefined
     || jqOr(cl?.members, []).some((/** @type {any} */ member) => member?.inquiry !== undefined);
   const researchViolation = councilResearchViolation(cl, {
-    allowOmission: researchProvenance !== 'canonical',
+    allowOmission: researchProvenance === 'historical-omitted'
+      || (researchProvenance === undefined && !requiresCouncilResearchProvenance(t)),
     category: t.category === 'operation' ? 'operation' : 'code',
   });
   if (researchViolation !== null) {
@@ -994,7 +995,7 @@ function convergenceChecks(t, id, ids, out) {
     if (t.category === 'operation' || recovery?.episode !== 1 || !conv || cl.verdict !== 'block') {
       out.push(`task ${id}: recovery must be exactly episode 1 of a blocking code council [inv11]`);
     }
-    if (recovery?.route !== cl?.synthesis?.selectedStrategy) {
+    if (cl?.synthesis !== undefined && recovery?.route !== cl.synthesis.selectedStrategy) {
       out.push(`task ${id}: recovery route must equal council synthesis selectedStrategy [inv11]`);
     }
     const original = recovery?.original;
