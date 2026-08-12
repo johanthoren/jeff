@@ -1,6 +1,7 @@
 // @ts-check
 
 import { isAgentId, isSourceRefuteAgentForbidden } from './identity-policy.js';
+import { COUNCIL_ROUTES } from './council.js';
 import {
   hasBoundPendingApprovalRequest,
   hasCompletedApprovalProvenance,
@@ -155,14 +156,21 @@ function validateTests(value, out) {
   requireField(out, 'tests.authored_by_agent_id', isNullableString(value.authored_by_agent_id));
   requireField(out, 'tests.green', typeof value.green === 'boolean' || value.green === 'na');
   requireField(out, 'tests.evidence', Array.isArray(value.evidence));
-  if (value.gate === undefined) return;
-  requireField(out, 'tests.gate', isType(value.gate, 'object'));
-  if (!isType(value.gate, 'object')) return;
-  requireField(out, 'tests.gate.hash', typeof value.gate.hash === 'string');
-  requireField(out, 'tests.gate.clean', typeof value.gate.clean === 'boolean');
-  requireField(out, 'tests.gate.green', typeof value.gate.green === 'boolean');
-  requireField(out, 'tests.gate.command', typeof value.gate.command === 'string');
-  requireField(out, 'tests.gate.at', isIsoDateTime(value.gate.at));
+  if (value.gate !== undefined) validateGate(value.gate, 'tests.gate', out);
+}
+/**
+ * @param {any} value
+ * @param {string} field
+ * @param {string[]} out
+ */
+function validateGate(value, field, out) {
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.hash`, typeof value.hash === 'string');
+  requireField(out, `${field}.clean`, typeof value.clean === 'boolean');
+  requireField(out, `${field}.green`, typeof value.green === 'boolean');
+  requireField(out, `${field}.command`, typeof value.command === 'string');
+  requireField(out, `${field}.at`, isIsoDateTime(value.at));
 }
 
 /**
@@ -194,6 +202,60 @@ function validateKickbacks(value, out) {
       requireField(out, `${findingField}.kickTo`, isOneOf(finding.kickTo, CODE_JUDGMENT_DESTINATIONS));
     });
   });
+}
+
+/** @param {any} value @param {string} field @param {string[]} out */
+function validateCouncilInquiry(value, field, out) {
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.question`, isNonemptyString(value.question));
+  requireField(out, `${field}.problemRestatement`, isNonemptyString(value.problemRestatement));
+  for (const name of ['causalHypotheses', 'solutionStrategies', 'decisiveEvidence']) {
+    requireField(out, `${field}.${name}`, Array.isArray(value[name])
+      && value[name].every(isNonemptyString));
+  }
+  requireField(out, `${field}.findingVotes`, Array.isArray(value.findingVotes));
+  if (!Array.isArray(value.findingVotes)) return;
+  value.findingVotes.forEach((/** @type {any} */ vote, /** @type {number} */ index) => {
+    const voteField = `${field}.findingVotes[${index}]`;
+    requireField(out, voteField, isType(vote, 'object'));
+    if (!isType(vote, 'object')) return;
+    requireField(out, `${voteField}.id`, isNonemptyString(vote.id));
+    requireField(out, `${voteField}.blocking`, typeof vote.blocking === 'boolean');
+    requireField(out, `${voteField}.rationale`, isNonemptyString(vote.rationale));
+  });
+}
+
+/** @param {any} value @param {string[]} out */
+function validateCouncilSynthesis(value, out) {
+  const field = 'convergence.council.synthesis';
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.problemRestatement`, isNonemptyString(value.problemRestatement));
+  for (const name of [
+    'survivingBlockers',
+    'causalHypotheses',
+    'solutionStrategies',
+    'rejectedAlternatives',
+    'decisiveEvidence',
+  ]) {
+    requireField(out, `${field}.${name}`, Array.isArray(value[name])
+      && value[name].every(isNonemptyString));
+  }
+  requireField(out, `${field}.selectedStrategy`, isOneOf(value.selectedStrategy, COUNCIL_ROUTES));
+}
+
+/** @param {any} value @param {string[]} out */
+function validateRecovery(value, out) {
+  const field = 'convergence.recovery';
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.episode`, Number.isInteger(value.episode));
+  requireField(out, `${field}.route`, isOneOf(value.route, COUNCIL_ROUTES));
+  if (value.baselineGate !== null) validateGate(value.baselineGate, `${field}.baselineGate`, out);
+  for (const name of ['test_author_agent_id', 'builder_agent_id']) {
+    requireField(out, `${field}.${name}`, isNullableString(value[name]));
+  }
 }
 
 /**
@@ -238,6 +300,9 @@ function validateConvergence(value, out, operation) {
       if (member.temperature !== undefined) {
         requireField(out, `${field}.temperature`, member.temperature === null || typeof member.temperature === 'number');
       }
+      if (member.inquiry !== undefined) {
+        validateCouncilInquiry(member.inquiry, `${field}.inquiry`, out);
+      }
     });
   }
   if (Array.isArray(council.findings)) {
@@ -257,6 +322,8 @@ function validateConvergence(value, out, operation) {
       }
     });
   }
+  if (council.synthesis !== undefined) validateCouncilSynthesis(council.synthesis, out);
+  if (value.recovery !== undefined) validateRecovery(value.recovery, out);
 }
 
 /** @param {any} value @param {string} field @param {string[]} out */

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchRoleSession, loadSdk } from './role-session.js';
+import { dispatchRoleSession, loadSdk, STAGES } from './role-session.js';
 
 const REVIEW_AGENT = `---
 name: cook-review
@@ -1555,5 +1555,58 @@ test('dispatchRoleSession fails closed when the orchestrator model is unavailabl
       }),
       /orchestrator model/i,
     );
+  });
+});
+
+
+test('issue 237 Pi dispatch exposes three fresh read-only council inquiry sessions', async () => {
+  await withRepo(async (repoRoot) => {
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-council.md'),
+      '---\nname: cook-council\neffort: xhigh\n---\nConduct one independent council inquiry.',
+    );
+    const captured = [];
+    const sdk = {
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (options) => {
+        captured.push(options);
+        return {
+          session: {
+            subscribe() {},
+            async prompt() {},
+            dispose() {},
+          },
+        };
+      },
+    };
+    const lenses = ['integrity', 'security', 'pragmatist'];
+    const results = [];
+
+    assert.equal(STAGES.includes('council'), true);
+    for (const lens of lenses) {
+      results.push(await dispatchRoleSession({
+        stage: 'council',
+        brief: `Use only the ${lens} lens and return one inquiry without agent_id.`,
+        taskDir: '.jeff/tasks/lite-237-3064274374',
+        cwd: repoRoot,
+        repoRoot,
+        currentModel: { provider: 'local', id: 'qwen-dev' },
+        sdk,
+        generateAgentId: () => `council-${lens}`,
+      }));
+    }
+
+    assert.deepEqual(results.map((result) => result.agent_id), [
+      'council-integrity',
+      'council-security',
+      'council-pragmatist',
+    ]);
+    assert.equal(new Set(results.map((result) => result.agent_id)).size, 3);
+    assert.deepEqual(captured.map((options) => options.tools), [
+      ['read', 'grep', 'find', 'ls'],
+      ['read', 'grep', 'find', 'ls'],
+      ['read', 'grep', 'find', 'ls'],
+    ]);
+    assert.deepEqual(captured.map((options) => options.thinkingLevel), ['xhigh', 'xhigh', 'xhigh']);
   });
 });

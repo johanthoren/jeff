@@ -18,6 +18,7 @@ For a `code` task:
 - Decide whether implementation owes behavior-preserving deduplication, deletion, or harmonization. Return a specific non-empty `refactorOpportunity`, or explicit `null`.
 - For every acceptance criterion, record disposition (`write`, `revise`, `reuse`, `delete`, or `skip`), consumer-observable behavior, and deterministic outcome seam.
 - Author or revise tests owed by `write`/`revise`, run only those targeted tests, and record decisive RED. Do not force RED for Preserve/Remove/None.
+When a blocking code council selects `test-contract-repair`, `causal-subgraph-reconstruction`, or `full-replan`, this is the sole same-task recovery episode. Re-derive the affected proof obligations as a fresh test author. Never lower an already-required audit. Test-contract repair changes only the proof contract and returns directly to the gate-facing review state; the reconstruction routes proceed to a distinct recovery implementer.
 
 For an `operation` task:
 - Define nonempty `runbook`, `preconditions`, `recoveryBoundary`, `approvalBoundary`, deterministic `postconditions`, and `verificationSeams`. Set `requiresApproval:true` when execution may cross an irreversible shared-mutation boundary; otherwise set it to `false`.

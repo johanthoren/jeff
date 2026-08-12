@@ -477,9 +477,51 @@ function councilTask(overrides = {}) {
     ...overrides,
   });
 }
+/** @param {Record<string, any>} [overrides] @returns {any} */
+function confinedCouncilTask(overrides = {}) {
+  return councilTask({
+    plan: {
+      result: 'red',
+      slices: ['Implement without planned refactor'],
+      testFiles: ['src/cli/record.test.js'],
+      redRun: { command: 'node --test src/cli/record.test.js', output: 'missing behavior' },
+      escalation: null,
+      refactorOpportunity: null,
+    },
+    ...overrides,
+  });
+}
+
 
 /** @param {string | null} [outcome] @param {Record<number, Record<string, any>>} [memberOverrides] @returns {any} */
 function councilReturn(outcome = null, memberOverrides = {}) {
+  const inquiryQuestion = 'Are these independent defects, or evidence that this part of the design should be reconstructed?';
+  const inquiries = [
+    {
+      question: inquiryQuestion,
+      problemRestatement: 'The recorder loses one accepted result under a supported completion order.',
+      causalHypotheses: ['The write boundary replaces state instead of merging the active result.'],
+      solutionStrategies: ['confined-repair', 'causal-subgraph-reconstruction'],
+      findingVotes: [{ id: 'F1', blocking: true, rationale: 'The supported order loses durable evidence.' }],
+      decisiveEvidence: ['The deterministic completion-order reproduction loses the first result.'],
+    },
+    {
+      question: 'Which trust boundary owns preservation of concurrent specialist results?',
+      problemRestatement: 'Accepted judgment evidence is not durable across all legal recorder orderings.',
+      causalHypotheses: ['The atomic update contract does not cover the whole active judgment union.'],
+      solutionStrategies: ['causal-subgraph-reconstruction', 'full-replan'],
+      findingVotes: [{ id: 'F1', blocking: true, rationale: 'A durable evidence invariant is violated.' }],
+      decisiveEvidence: ['The persisted task omits an already accepted judgment.'],
+    },
+    {
+      question: 'What is the smallest recovery that restores the observable ledger contract?',
+      problemRestatement: 'One completion order produces an incomplete task ledger.',
+      causalHypotheses: ['A confined recorder correction may restore the same public contract.'],
+      solutionStrategies: ['confined-repair', 'operator-escalation'],
+      findingVotes: [{ id: 'F1', blocking: false, rationale: 'A bounded repair may be sufficient.' }],
+      decisiveEvidence: ['The failure is isolated to one recorder transition.'],
+    },
+  ];
   return {
     stage: 'council',
     council: {
@@ -489,7 +531,11 @@ function councilReturn(outcome = null, memberOverrides = {}) {
         { agent_id: 'council-integrity', lens: 'integrity', temperature: 0.3 },
         { agent_id: 'council-security', lens: 'security', temperature: 0.7 },
         { agent_id: 'council-pragmatist', lens: 'pragmatist', temperature: 1.0 },
-      ].map((member, index) => ({ ...member, ...(memberOverrides[index] ?? {}) })),
+      ].map((member, index) => ({
+        ...member,
+        inquiry: inquiries[index],
+        ...(memberOverrides[index] ?? {}),
+      })),
       findings: [{
         id: 'F1',
         summary: 'The recording path loses a result.',
@@ -498,6 +544,15 @@ function councilReturn(outcome = null, memberOverrides = {}) {
         survived: true,
         followupTaskId: null,
       }],
+      synthesis: {
+        problemRestatement: 'A supported completion order can discard accepted task evidence.',
+        survivingBlockers: ['F1'],
+        causalHypotheses: ['The recorder does not preserve the complete active judgment union.'],
+        solutionStrategies: ['confined-repair', 'causal-subgraph-reconstruction'],
+        rejectedAlternatives: ['full-replan'],
+        selectedStrategy: 'confined-repair',
+        decisiveEvidence: ['Two independent inquiries reproduce a durable evidence loss.'],
+      },
       verdict: 'block',
       outcome,
     },
@@ -545,6 +600,20 @@ function mixedStageCouncilReturn(outcome = null) {
     ...result,
     council: {
       ...result.council,
+      members: result.council.members.map((member) => ({
+        ...member,
+        inquiry: {
+          ...member.inquiry,
+          findingVotes: [
+            ...member.inquiry.findingVotes,
+            {
+              id: 'F2',
+              blocking: true,
+              rationale: 'The stale audit evidence can authorize an invalid recovery completion.',
+            },
+          ],
+        },
+      })),
       findings: [
         ...result.council.findings,
         {
@@ -556,11 +625,23 @@ function mixedStageCouncilReturn(outcome = null) {
           followupTaskId: null,
         },
       ],
+      synthesis: {
+        ...result.council.synthesis,
+        problemRestatement: 'The recovery boundary can lose recorder evidence and reuse stale audit proof.',
+        survivingBlockers: ['F1', 'F2'],
+        causalHypotheses: [
+          'Recorder replacement and stale recovery proof may share one incomplete judgment-state boundary.',
+        ],
+        solutionStrategies: ['confined-repair', 'causal-subgraph-reconstruction', 'full-replan'],
+        rejectedAlternatives: ['confined-repair'],
+        selectedStrategy: 'causal-subgraph-reconstruction',
+        decisiveEvidence: ['Independent recorder and audit reproductions fail within the same recovery boundary.'],
+      },
     },
   };
 }
 
-async function prepareScopedCouncilRecovery(task = councilTask(), councilResult = councilReturn()) {
+async function prepareScopedCouncilRecovery(task = confinedCouncilTask(), councilResult = councilReturn()) {
   const { root, taskDir } = await makeRoot(task);
   await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
   runGit(root, ['init', '-q']);
@@ -571,39 +652,51 @@ async function prepareScopedCouncilRecovery(task = councilTask(), councilResult 
   runGit(root, ['commit', '-qm', 'baseline']);
 
   await recordSpecialistReturn(root, 'council', '18', councilResult);
-  await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
+  let routed = await readTask(taskDir);
+  if (routed.stage === 'plan') {
+    await recordSpecialistReturn(
+      root,
+      'plan',
+      '18',
+      planReturn({ complexity: 'complex', auditRequired: true }, 'scoped-recovery-plan-agent'),
+    );
+    routed = await readTask(taskDir);
+  }
+  if (routed.stage === 'implement') {
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
+  } else if (routed.stage === 'refactor') {
+    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
+  }
   runGit(root, ['add', '.']);
-  runGit(root, ['commit', '-qm', 'record scoped fix']);
+  runGit(root, ['commit', '-qm', 'record scoped recovery']);
   return { root, taskDir };
 }
 
 /** @param {string} root @param {Record<string, any>} [overrides] */
 async function recordFreshCouncilJudgments(root, overrides = {}) {
+  const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
+  const cycle = (await readTask(taskDir)).judgmentHistory?.length ?? 0;
   await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-reviewer-one', {
-    cycle: 1,
+    cycle,
     ...overrides.review,
   }));
   await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-reviewer-two', {
-    cycle: 1,
+    cycle,
     ...overrides.review2,
   }));
   if (overrides.includeAudit === true) {
     await recordSpecialistReturn(root, 'audit', '18', auditReturn('fresh-auditor', {
-      cycle: 1,
+      cycle,
       ...overrides.audit,
     }));
   }
 }
 
 async function prepareMixedStageReassessment() {
-  const prepared = await prepareScopedCouncilRecovery(
+  return prepareScopedCouncilRecovery(
     mixedStageCouncilTask(),
     mixedStageCouncilReturn(),
   );
-  await recordSpecialistReturn(prepared.root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
-  runGit(prepared.root, ['add', '.']);
-  runGit(prepared.root, ['commit', '-qm', 'record scoped refactor']);
-  return prepared;
 }
 
 async function prepareCompletedMixedStageReassessment() {
@@ -2598,6 +2691,13 @@ test('issue 95 council-demoted refactor finding is not revived after scoped impl
   task.review.findings.push(refactorFinding);
   task.refutes.push(refactorFinding.refute);
   const returned = councilReturn();
+  for (let index = 0; index < returned.council.members.length; index += 1) {
+    returned.council.members[index].inquiry.findingVotes.push({
+      id: 'F2',
+      blocking: index === 0,
+      rationale: 'The duplicate refactor path is a bounded follow-up, not a surviving blocker.',
+    });
+  }
   returned.council.findings.push({
     id: 'F2',
     summary: refactorFinding.what,
@@ -4349,6 +4449,20 @@ test('issue 74 council waits for every required judgment atomically', async (t) 
 });
 
 test('issue 74 council requires the exact source-bound blocker union atomically', async (t) => {
+  /** @param {any} result @param {any} finding @param {number} blockingVoteCount */
+  function addCanonicalFinding(result, finding, blockingVoteCount) {
+    for (let index = 0; index < result.council.members.length; index += 1) {
+      result.council.members[index].inquiry.findingVotes.push({
+        id: finding.id,
+        blocking: index < blockingVoteCount,
+        rationale: 'The independent inquiry classified this candidate against the active blocker union.',
+      });
+    }
+    result.council.findings.push(finding);
+    result.council.synthesis.survivingBlockers = result.council.findings
+      .filter((/** @type {any} */ candidate) => candidate.survived)
+      .map((/** @type {any} */ candidate) => candidate.id);
+  }
   const extra = {
     id: 'F2',
     summary: 'An invented blocker that no active judgment returned.',
@@ -4362,12 +4476,12 @@ test('issue 74 council requires the exact source-bound blocker union atomically'
     ['omitted blocker', () => [mixedStageCouncilTask(), councilReturn()]],
     ['invented blocker', () => {
       const result = councilReturn();
-      result.council.findings.push(extra);
+      addCanonicalFinding(result, extra, 2);
       return [councilTask(), result];
     }],
     ['duplicate blocker', () => {
       const result = councilReturn();
-      result.council.findings.push({ ...result.council.findings[0], id: 'F2' });
+      addCanonicalFinding(result, { ...result.council.findings[0], id: 'F2' }, 2);
       return [councilTask(), result];
     }],
     ['duplicate active blocker identity', () => {
@@ -4427,6 +4541,12 @@ test('issue 74 one mixed-source council can ship the complete blocker union', as
     survived: false,
     followupTaskId: 18,
   }));
+  for (let index = 0; index < returned.council.members.length; index += 1) {
+    for (const vote of returned.council.members[index].inquiry.findingVotes) {
+      vote.blocking = index === 0;
+    }
+  }
+  returned.council.synthesis.survivingBlockers = [];
   returned.council.verdict = 'ship';
   const { root, taskDir } = await makeRoot(mixedStageCouncilTask());
   try {
@@ -4449,6 +4569,10 @@ test('issue 70 council ship terminates while preserving originating needs-work e
   try {
     const returned = councilReturn('shipped');
     Object.assign(returned.council.findings[0], { blockingVotes: 1, survived: false, followupTaskId: 18 });
+    for (let index = 0; index < returned.council.members.length; index += 1) {
+      returned.council.members[index].inquiry.findingVotes[0].blocking = index === 0;
+    }
+    returned.council.synthesis.survivingBlockers = [];
     returned.council.verdict = 'ship';
     const recorded = await recordSpecialistReturn(root, 'council', '18', returned);
 
@@ -4477,11 +4601,10 @@ test('issue 65 initial council block cannot claim scoped-fix-shipped', async () 
 });
 
 test('issue 65 scoped council completion requires fresh verification after the recorded fix', async () => {
-  const { root, taskDir } = await makeRoot(councilTask());
+  const { root, taskDir } = await makeRoot(confinedCouncilTask());
   try {
     await recordSpecialistReturn(root, 'council', '18', councilReturn());
     await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
-    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
     await recordFreshCouncilJudgments(root);
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
@@ -4503,7 +4626,7 @@ test('issue 65 council fix failed scoped implementation blocks atomically and ca
     command: 'make test',
     at: '2026-07-12T00:00:01Z',
   };
-  const task = councilTask({
+  const task = confinedCouncilTask({
     tests: {
       authored_by_agent_id: 'plan-agent',
       green: true,
@@ -4551,7 +4674,7 @@ test('issue 65 council fix failed scoped implementation blocks atomically and ca
 });
 
 test('issue 65 scoped council completion accepts a recorded fix followed by a fresh clean gate', async () => {
-  const { root, taskDir } = await makeRoot(councilTask());
+  const { root, taskDir } = await makeRoot(confinedCouncilTask());
   try {
     await writeFile(join(root, '.jeff', 'profile.md'), 'Test command: `true`\n', 'utf8');
     runGit(root, ['init', '-q']);
@@ -4563,7 +4686,6 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
 
     await recordSpecialistReturn(root, 'council', '18', councilReturn());
     await recordSpecialistReturn(root, 'implement', '18', implementReturn('scoped-fix-implementer'));
-    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('scoped-fix-refactorer'));
     runGit(root, ['add', '.']);
     runGit(root, ['commit', '-qm', 'record scoped fix']);
     const scopedFixHash = runGit(root, ['rev-parse', 'HEAD']);
@@ -4586,15 +4708,15 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
   }
 });
 
-test('issue 65 cycle 1 recovery rejects a gate made stale by a later refactor', async () => {
+test('issue 65 recovery rejects a gate made stale by committed HEAD drift', async () => {
   const { root, taskDir } = await prepareScopedCouncilRecovery();
   try {
     const verification = await runVerify(root, '18');
     assert.equal(verification.code, 0, verification.stderr.join('\n'));
-    await recordSpecialistReturn(root, 'refactor', '18', refactorReturn('later-refactorer'));
+    await recordFreshCouncilJudgments(root, { includeAudit: true });
     await writeFile(join(root, 'refactor-marker.txt'), 'later code-changing transition\n', 'utf8');
     runGit(root, ['add', '.']);
-    runGit(root, ['commit', '-qm', 'record later refactor']);
+    runGit(root, ['commit', '-qm', 'record post-gate HEAD drift']);
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
     await assert.rejects(
@@ -4612,7 +4734,7 @@ test('issue 68 scoped recovery archives every judgment and reruns all slots fres
   const { root, taskDir } = await prepareMixedStageReassessment();
   try {
     const afterFix = await readTask(taskDir);
-    assert.equal(afterFix.judgmentHistory.length, 1);
+    assert.equal(afterFix.judgmentHistory.length, 2);
     assert.deepEqual(afterFix.judgmentHistory[0].review, original.review);
     assert.deepEqual(afterFix.judgmentHistory[0].review2, original.review2);
     assert.deepEqual(afterFix.judgmentHistory[0].audit, original.audit);
@@ -4665,17 +4787,20 @@ test('issue 67 scoped completion rejects a fresh gate without passing current ju
   }
 });
 
-test('issue 68 reassessment permits old judges but rejects the scoped implementer atomically', async () => {
+test('issue 68 reassessment rejects old judges and the scoped implementer atomically', async () => {
   const { root, taskDir } = await prepareMixedStageReassessment();
   try {
-    assert.equal((await readTask(taskDir)).judgmentHistory.length, 1);
-    await assert.doesNotReject(
-      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-one', { cycle: 1 })),
-    );
-
+    assert.equal((await readTask(taskDir)).judgmentHistory.length, 2);
+    const cycle = (await readTask(taskDir)).judgmentHistory.length;
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
     await assert.rejects(
-      recordSpecialistReturn(root, 'review', '18', reviewReturn('scoped-fix-implementer', { cycle: 1 })),
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer-one', { cycle })),
+      /\[record-identity\]/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('scoped-fix-implementer', { cycle })),
       /\[record-identity\]/,
     );
     assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
@@ -4685,13 +4810,14 @@ test('issue 68 reassessment permits old judges but rejects the scoped implemente
 });
 
 test('issue 68 reassessment permits a prior-cycle refuter as a fresh reviewer', async () => {
-  const { root } = await prepareMixedStageReassessment();
+  const { root, taskDir } = await prepareMixedStageReassessment();
   try {
+    const cycle = (await readTask(taskDir)).judgmentHistory.length;
     const recorded = await recordSpecialistReturn(
       root,
       'review',
       '18',
-      reviewReturn('refuter', { cycle: 1 }),
+      reviewReturn('refuter', { cycle }),
     );
 
     assert.equal(recorded.review.reviewer_agent_id, 'refuter');
@@ -4708,8 +4834,9 @@ test('issue 68 failed reassessment requires refute and permits no second impleme
       what: 'The scoped recovery still fails reassessment.',
       why: 'The original mixed-stage defect remains reachable after the scoped fix.',
     });
+    const cycle = (await readTask(taskDir)).judgmentHistory.length;
     await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-failing-reviewer', {
-      cycle: 1,
+      cycle,
       verdict: 'needs-work',
       findings: [blocker],
     }));
@@ -4725,7 +4852,7 @@ test('issue 68 failed reassessment requires refute and permits no second impleme
       root,
       'refute',
       '18',
-      refuteReturn('fresh-review-refuter', blocker, { cycle: 1, source: 'review' }),
+      refuteReturn('fresh-review-refuter', blocker, { cycle, source: 'review' }),
     );
     assert.equal(blocked.status, 'blocked');
     assert.equal(blocked.convergence.council.outcome, 'blocked-to-operator');
@@ -4741,7 +4868,7 @@ test('issue 68 failed reassessment requires refute and permits no second impleme
   }
 });
 
-test('issue 67 review cycle 1 scoped completion rejects post-verify HEAD drift atomically', async () => {
+test('issue 67 recovery completion rejects post-verify HEAD drift atomically', async () => {
   const { root, taskDir } = await prepareMixedStageReassessment();
   try {
     const verification = await runVerify(root, '18');
@@ -4810,7 +4937,7 @@ test('issue 67 council scoped completion fails closed when git status probe fail
   }
 });
 
-test('issue 67 review cycle 1 scoped completion rejects persisted pass labels with blockers atomically', async () => {
+test('issue 67 recovery completion rejects persisted pass labels with blockers atomically', async () => {
   const { root, taskDir } = await prepareMixedStageReassessment();
   try {
     const verification = await runVerify(root, '18');
@@ -6558,6 +6685,291 @@ test('required vacant legacy audit is canonicalized when a plan repair archives 
       evidence: [],
     });
     assert.equal((await readTask(taskDir)).stage, 'review');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** @param {string} strategy @param {any} [result] */
+function issue237CouncilReturn(strategy, result = councilReturn()) {
+  const selected = structuredClone(result);
+  selected.council.synthesis.selectedStrategy = strategy;
+  if (!selected.council.synthesis.solutionStrategies.includes(strategy)) {
+    selected.council.synthesis.solutionStrategies.push(strategy);
+  }
+  return selected;
+}
+
+const ISSUE_237_BASELINE_GATE = {
+  hash: 'pre-council-checkpoint',
+  clean: true,
+  green: true,
+  command: 'node --test',
+  at: '2026-07-12T00:30:00Z',
+};
+
+test('issue 237 council selects every bounded code recovery route without leaving the stage machine', async (t) => {
+  const cases = [
+    ['confined-repair', 'implement', 'in_progress', null],
+    ['test-contract-repair', 'plan', 'in_progress', null],
+    ['refactor', 'refactor', 'in_progress', null],
+    ['causal-subgraph-reconstruction', 'plan', 'in_progress', null],
+    ['full-replan', 'plan', 'in_progress', null],
+    ['operator-escalation', 'review', 'blocked', 'blocked-to-operator'],
+  ];
+
+  for (const [strategy, expectedStage, expectedStatus, expectedOutcome] of cases) {
+    await t.test(strategy, async () => {
+      const { root, taskDir } = await makeRoot(councilTask({
+        tests: {
+          authored_by_agent_id: 'original-test-author',
+          green: true,
+          evidence: [{ command: 'node --test', output: 'green' }],
+          gate: ISSUE_237_BASELINE_GATE,
+        },
+      }));
+      const baselineGate = (await readTask(taskDir)).tests.gate;
+      try {
+        await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn(strategy));
+        const recorded = await readTask(taskDir);
+        assert.equal(recorded.stage, expectedStage);
+        assert.equal(recorded.status, expectedStatus);
+        assert.equal(recorded.convergence.council.outcome, expectedOutcome);
+        assert.equal(recorded.convergence.recovery.episode, 1);
+        assert.equal(recorded.convergence.recovery.route, strategy);
+        assert.deepEqual(recorded.convergence.recovery.baselineGate, baselineGate);
+        assert.equal(recorded.convergence.recovery.test_author_agent_id, null);
+        assert.equal(recorded.convergence.recovery.builder_agent_id, null);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await t.test('mixed proof and production findings can select causal reconstruction', async () => {
+    const task = mixedStageCouncilTask();
+    task.audit.findings[0].kickTo = 'plan';
+    task.tests = {
+      authored_by_agent_id: 'original-test-author',
+      green: true,
+      evidence: [{ command: 'node --test', output: 'green' }],
+      gate: ISSUE_237_BASELINE_GATE,
+    };
+    const { root, taskDir } = await makeRoot(task);
+    try {
+      await recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn());
+      const recorded = await readTask(taskDir);
+      assert.equal(recorded.stage, 'plan');
+      assert.equal(recorded.convergence.recovery.route, 'causal-subgraph-reconstruction');
+      assert.deepEqual(recorded.convergence.council.synthesis.survivingBlockers, ['F1', 'F2']);
+      assert.equal(recorded.review.findings[0].kickTo, 'implement');
+      assert.equal(recorded.audit.findings[0].kickTo, 'plan');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 237 test-only and refactor recovery keep author builder and judge identities distinct', async (t) => {
+  await t.test('test-contract repair proceeds from fresh authorship directly to the gate-facing review stage', async () => {
+    const { root, taskDir } = await makeRoot(councilTask());
+    try {
+      await recordSpecialistReturn(
+        root,
+        'council',
+        '18',
+        issue237CouncilReturn('test-contract-repair'),
+      );
+      await recordSpecialistReturn(
+        root,
+        'plan',
+        '18',
+        planReturn({ complexity: 'complex', auditRequired: true }, 'recovery-test-author'),
+      );
+
+      const planned = await readTask(taskDir);
+      assert.equal(planned.stage, 'review');
+      assert.equal(planned.agents.implementer_agent_id, 'implementer');
+      assert.equal(planned.implement, undefined);
+      assert.equal(planned.convergence.recovery.test_author_agent_id, 'recovery-test-author');
+      assert.equal(planned.convergence.recovery.builder_agent_id, null);
+
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          reviewReturn('recovery-test-author', { cycle: 1 }),
+        ),
+        /record-identity.*test author/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('direct refactor recovery records its builder and rejects that identity as a judge', async () => {
+    const { root, taskDir } = await makeRoot(councilTask());
+    try {
+      await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('refactor'));
+      await recordSpecialistReturn(root, 'refactor', '18', observedReturn('recovery-refactorer', {
+        stage: 'refactor',
+        result: 'refactored',
+        files: ['src/core/record.js'],
+        outsideDiff: [],
+        greenRun: { command: 'node --test src/cli/record.test.js', output: 'pass' },
+        summary: ['Harmonized the recovery transition.'],
+      }));
+
+      const refactored = await readTask(taskDir);
+      assert.equal(refactored.stage, 'review');
+      assert.equal(refactored.convergence.recovery.builder_agent_id, 'recovery-refactorer');
+
+      const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+      await assert.rejects(
+        recordSpecialistReturn(
+          root,
+          'review',
+          '18',
+          reviewReturn('recovery-refactorer', { cycle: 1 }),
+        ),
+        /record-identity.*recovery builder/i,
+      );
+      assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test('issue 237 recovery survives resume and exhausts exactly once after a fresh failed judgment', async () => {
+  const { root, taskDir } = await makeRoot(councilTask({
+    tests: {
+      authored_by_agent_id: 'original-test-author',
+      green: true,
+      evidence: [{ command: 'node --test', output: 'green' }],
+      gate: ISSUE_237_BASELINE_GATE,
+    },
+  }));
+  const baselineGate = (await readTask(taskDir)).tests.gate;
+  try {
+    await recordSpecialistReturn(root, 'council', '18', issue237CouncilReturn('full-replan'));
+    assert.equal((await readTask(taskDir)).stage, 'plan');
+
+    await recordSpecialistReturn(
+      root,
+      'plan',
+      '18',
+      planReturn({ complexity: 'complex', auditRequired: true }, 'recovery-plan-author'),
+    );
+    await recordSpecialistReturn(root, 'implement', '18', implementReturn('recovery-implementer'));
+    const recoveryCycle = (await readTask(taskDir)).judgmentHistory.length;
+
+    const finding = blockingFinding({
+      what: 'The replanned recovery still loses accepted evidence.',
+      why: 'The fresh implementation reproduces the same consumer-visible loss.',
+    });
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('recovery-reviewer-one', {
+      cycle: recoveryCycle,
+      verdict: 'needs-work',
+      acLedger: [{ ac: 'AC recovery', claimed: 'write', rederived: 'write', ok: false }],
+      findings: [finding],
+      evidence: [{ command: 'node --test', output: 'recovery failure reproduced' }],
+    }));
+    await recordSpecialistReturn(
+      root,
+      'review',
+      '18',
+      reviewReturn('recovery-reviewer-two', { cycle: recoveryCycle }),
+    );
+    await recordSpecialistReturn(root, 'audit', '18', auditReturn('recovery-auditor', { cycle: recoveryCycle }));
+    await recordSpecialistReturn(
+      root,
+      'refute',
+      '18',
+      refuteReturn('recovery-refuter', finding, { cycle: recoveryCycle, source: 'review' }),
+    );
+
+    const exhausted = await readTask(taskDir);
+    assert.equal(exhausted.status, 'blocked');
+    assert.equal(exhausted.convergence.council.outcome, 'blocked-to-operator');
+    assert.equal(exhausted.convergence.recovery.episode, 1);
+    assert.equal(exhausted.convergence.recovery.route, 'full-replan');
+    assert.equal(exhausted.convergence.recovery.test_author_agent_id, 'recovery-plan-author');
+    assert.equal(exhausted.convergence.recovery.builder_agent_id, 'recovery-implementer');
+    assert.deepEqual(exhausted.convergence.recovery.baselineGate, baselineGate);
+    assert.equal(exhausted.judgmentHistory.length, recoveryCycle);
+
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    await assert.rejects(
+      recordSpecialistReturn(root, 'implement', '18', implementReturn('second-recovery-builder')),
+      /blocked after failed council recovery|recovery.*exhausted/i,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    await assert.rejects(
+      recordSpecialistReturn(
+        root,
+        'council',
+        '18',
+        issue237CouncilReturn('confined-repair'),
+      ),
+      /recovery.*(terminate|exhausted)|recorded block/i,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 237 malformed research or synthesis is rejected atomically', async (t) => {
+  const invalidReturns = [
+    ['missing one independent inquiry', (value) => {
+      delete value.council.members[2].inquiry;
+    }],
+    ['identical inquiry packets', (value) => {
+      value.council.members[1].inquiry = structuredClone(value.council.members[0].inquiry);
+      value.council.members[2].inquiry = structuredClone(value.council.members[0].inquiry);
+    }],
+    ['missing reconstruction question', (value) => {
+      value.council.members[0].inquiry.question = 'Is this finding blocking?';
+    }],
+    ['vote tally inconsistent with independent inquiries', (value) => {
+      value.council.findings[0].blockingVotes = 1;
+      value.council.findings[0].survived = false;
+    }],
+    ['synthesis omits a surviving blocker', (value) => {
+      value.council.synthesis.survivingBlockers = [];
+    }],
+    ['selected repair is absent from materially different strategies', (value) => {
+      value.council.synthesis.selectedStrategy = 'full-replan';
+    }],
+  ];
+
+  for (const [name, mutate] of invalidReturns) {
+    await t.test(name, async () => {
+      const { root, taskDir } = await makeRoot(councilTask());
+      try {
+        const invalid = councilReturn();
+        mutate(invalid);
+        const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+        await assert.rejects(
+          recordSpecialistReturn(root, 'council', '18', invalid),
+          /record-(schema|transition).*council|inquiry|synthesis|strategy/i,
+        );
+        assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  const { root, taskDir } = await makeRoot(councilTask());
+  try {
+    await recordSpecialistReturn(root, 'council', '18', councilReturn());
+    const recorded = await readTask(taskDir);
+    assert.equal(recorded.convergence.recovery.route, 'confined-repair');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

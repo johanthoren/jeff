@@ -1763,3 +1763,91 @@ skill_outside_dispatch_rules() {
     return 1
   }
 }
+
+
+# ===========================================================================
+# task #237: council is one bounded research and recovery episode.
+#
+# These files are released operator and specialist interfaces. The test binds
+# the behavioral vocabulary shared with the checked recorder and validator
+# tests without duplicating the prose itself.
+# ===========================================================================
+
+@test "#237 released prose describes one bounded same-task council recovery contract" {
+  local skill="$REPO/skills/cook/SKILL.md"
+  local schema="$REPO/skills/cook/reference/jeff-state-schema.md"
+  local design="$REPO/docs/specs/jeff-design.md"
+  local brief="$REPO/agents/cook-council.md"
+  local council
+
+  [ -f "$brief" ] || {
+    echo "agents/cook-council.md is missing"
+    return 1
+  }
+
+  council="$(skill_section '^### Council')"
+  grep -qF 'Are these independent defects, or evidence that this part of the design should be reconstructed?' <<<"$council" || {
+    echo "the Council method omits the required reconstruction inquiry"
+    return 1
+  }
+  for route in \
+    confined-repair \
+    test-contract-repair \
+    refactor \
+    causal-subgraph-reconstruction \
+    full-replan \
+    operator-escalation
+  do
+    grep -qF "$route" <<<"$council" || {
+      echo "the Council method omits recovery route $route"
+      return 1
+    }
+  done
+  grep -qiE 'exactly one|one bounded|single bounded' <<<"$council" || {
+    echo "the Council method does not bound recovery to one episode"
+    return 1
+  }
+  grep -qiE 'same-task|same task' <<<"$council" || {
+    echo "the Council method does not keep recovery in the rejected task lineage"
+    return 1
+  }
+  grep -qiE 'test-only|test only' <<<"$council" || {
+    echo "the Council method omits direct test-only recovery"
+    return 1
+  }
+
+  for field in \
+    inquiry \
+    problemRestatement \
+    causalHypotheses \
+    solutionStrategies \
+    findingVotes \
+    decisiveEvidence
+  do
+    grep -qF "$field" "$brief" || {
+      echo "the council specialist brief omits $field"
+      return 1
+    }
+  done
+  grep -qiE '(omit|without|must not)[^.]{0,80}agent_id' "$brief" || {
+    echo "the council specialist brief does not keep host-observed agent_id out of its return"
+    return 1
+  }
+
+  grep -qiE 'optional|historical|compatib' "$schema" || {
+    echo "the state schema omits historical compatibility for recovery state"
+    return 1
+  }
+  grep -qiE 'recovery episode|recovery route' "$schema" || {
+    echo "the state schema omits the typed recovery episode"
+    return 1
+  }
+  grep -qiE 'independent inquiry|problem restatement' "$design" || {
+    echo "the design spec omits council research before synthesis"
+    return 1
+  }
+  grep -qiE 'same-task|same task' "$design" || {
+    echo "the design spec does not retain the original task lineage"
+    return 1
+  }
+}

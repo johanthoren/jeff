@@ -16,6 +16,7 @@
 import { isDeepStrictEqual } from 'node:util';
 
 import { isType } from './validate.js';
+import { councilResearchViolation } from './council.js';
 import {
   archivedJudgeAgentIds,
   forbiddenCouncilAgentIds,
@@ -925,6 +926,10 @@ function convergenceChecks(t, id, ids, out) {
       out.push(`task ${id}: convened council.stage must be ${judgmentStages.join(' or ')} [inv8]`);
     }
   }
+    const researchViolation = councilResearchViolation(cl);
+    if (researchViolation !== null) {
+      out.push(`task ${id}: council.${researchViolation} is invalid canonical research [inv8]`);
+    }
 
   // inv9: per-finding determinism (only when convened).
   if (conv) {
@@ -964,6 +969,51 @@ function convergenceChecks(t, id, ids, out) {
       } else if (fut !== LEDGER_FOLLOWUP && !ids.includes(fut)) {
         out.push(`task ${id}: finding ${fid} followupTaskId ${jqStr(fut)} must be ${jqStr(LEDGER_FOLLOWUP)} or an existing task [inv10]`);
       }
+    }
+  }
+  const recovery = c.recovery;
+  if (recovery !== undefined) {
+    if (t.category === 'operation' || recovery?.episode !== 1 || !conv || cl.verdict !== 'block') {
+      out.push(`task ${id}: recovery must be exactly episode 1 of a blocking code council [inv11]`);
+    }
+    if (recovery?.route !== cl?.synthesis?.selectedStrategy) {
+      out.push(`task ${id}: recovery route must equal council synthesis selectedStrategy [inv11]`);
+    }
+    const councilIds = new Set(jqOr(cl?.members, []).map((/** @type {any} */ member) => member?.agent_id));
+    const currentJudgeIds = [
+      t.agents?.reviewer_agent_id,
+      t.agents?.reviewer2_agent_id,
+      t.agents?.audit_agent_id,
+      t.review?.reviewer_agent_id,
+      t.review2?.reviewer_agent_id,
+      t.audit?.audit_agent_id,
+      ...archivedJudgeAgentIds(t),
+    ].filter(isAgentId);
+    const testAuthor = recovery?.test_author_agent_id;
+    const builder = recovery?.builder_agent_id;
+    if (isAgentId(testAuthor)
+      && (testAuthor !== t.tests?.authored_by_agent_id
+        || testAuthor === t.agents?.implementer_agent_id
+        || testAuthor === builder
+        || councilIds.has(testAuthor)
+        || currentJudgeIds.includes(testAuthor))) {
+      out.push(`task ${id}: recovery test author violates identity separation [inv11]`);
+    }
+    if (isAgentId(builder)
+      && (builder === testAuthor || councilIds.has(builder) || currentJudgeIds.includes(builder))) {
+      out.push(`task ${id}: recovery builder violates identity separation [inv11]`);
+    }
+    if (['test-contract-repair', 'operator-escalation'].includes(recovery?.route)
+      && builder !== null) {
+      out.push(`task ${id}: recovery route cannot carry a production builder [inv11]`);
+    }
+    if (['confined-repair', 'refactor', 'operator-escalation'].includes(recovery?.route)
+      && testAuthor !== null) {
+      out.push(`task ${id}: recovery route cannot carry fresh test authorship [inv11]`);
+    }
+    if (recovery?.route === 'operator-escalation'
+      && (cl.outcome !== 'blocked-to-operator' || t.status !== 'blocked')) {
+      out.push(`task ${id}: operator escalation must block the same task [inv11]`);
     }
   }
 

@@ -272,7 +272,7 @@ test('issue 105 extension registers status and dispatch without a host-specific 
   assert.equal(tools.has('cook_dispatch'), true);
   assert.deepEqual(tools.get('cook_dispatch').parameters.required, ['stage', 'brief']);
   assert.deepEqual(tools.get('cook_dispatch').parameters.properties.stage.enum, [
-    'plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute',
+    'plan', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'refute', 'council',
   ]);
   assert.deepEqual([...tools.keys()], ['cook_dispatch']);
 });

@@ -174,6 +174,36 @@ function isPendingCouncilRecovery(task) {
     && task.convergence.council.verdict === 'block'
     && task.convergence.council.outcome === null;
 }
+/** @param {MutableRecordTask} task */
+function isPendingCodeRecovery(task) {
+  return !isOperation(task)
+    && isPendingCouncilRecovery(task)
+    && task.convergence?.recovery?.episode === 1;
+}
+
+/** @param {MutableRecordTask} task */
+function recoveryParticipantIds(task) {
+  return new Set([
+    task.tests?.authored_by_agent_id,
+    task.agents?.implementer_agent_id,
+    task.agents?.reviewer_agent_id,
+    task.agents?.reviewer2_agent_id,
+    task.agents?.audit_agent_id,
+    task.convergence?.recovery?.test_author_agent_id,
+    task.convergence?.recovery?.builder_agent_id,
+    ...archivedJudgeAgentIds(task),
+    ...(task.convergence?.council?.members ?? [])
+      .map((/** @type {any} */ member) => member.agent_id),
+  ].filter(isAgentId));
+}
+
+/** @param {MutableRecordTask} task @param {string} agentId @param {string} role */
+function assertFreshRecoveryParticipant(task, agentId, role) {
+  if (recoveryParticipantIds(task).has(agentId)) {
+    throw new Error(`[record-identity] recovery ${role} ${agentId} must use a fresh identity`);
+  }
+}
+
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function assertCurrentJudgment(task, result) {
@@ -189,7 +219,16 @@ function assertCurrentJudgment(task, result) {
   if (isPendingCouncilRecovery(task) && builderId === result.agent_id) {
     throw new Error(`[record-identity] recovery judge ${result.agent_id} violates specialist separation`);
   }
-  if (isPendingCouncilRecovery(task) && isOperation(task)) {
+  if (isPendingCodeRecovery(task)) {
+    const recovery = task.convergence.recovery;
+    if (recovery.test_author_agent_id === result.agent_id) {
+      throw new Error(`[record-identity] recovery test author ${result.agent_id} cannot judge its tests`);
+    }
+    if (recovery.builder_agent_id === result.agent_id) {
+      throw new Error(`[record-identity] recovery builder ${result.agent_id} cannot judge its work`);
+    }
+  }
+  if (isPendingCouncilRecovery(task) && (isOperation(task) || isPendingCodeRecovery(task))) {
     const priorRecoveryIds = new Set([
       ...archivedJudgeAgentIds(task),
       ...(task.convergence.council.members ?? [])
@@ -731,7 +770,29 @@ function recordCouncil(task, result, at) {
     return;
   }
   const survivors = council.findings.filter((/** @type {any} */ finding) => finding.survived);
-  const destination = isOperation(task) ? 'execute' : 'implement';
+  const route = !isOperation(task) ? council.synthesis?.selectedStrategy : undefined;
+  if (route !== undefined) {
+    task.convergence.recovery = {
+      episode: 1,
+      route,
+      baselineGate: task.tests?.gate ? structuredClone(task.tests.gate) : null,
+      test_author_agent_id: null,
+      builder_agent_id: null,
+    };
+    if (route === 'operator-escalation') {
+      blockCouncilRecovery(task);
+      return;
+    }
+  }
+  const destination = isOperation(task)
+    ? 'execute'
+    : ({
+      'confined-repair': 'implement',
+      refactor: 'refactor',
+      'test-contract-repair': 'plan',
+      'causal-subgraph-reconstruction': 'plan',
+      'full-replan': 'plan',
+    })[route] ?? 'implement';
   task.kickbacks = [...task.kickbacks, {
     from: council.stage,
     to: destination,
@@ -794,11 +855,25 @@ function recordCouncilRecovery(task, council) {
       judgmentsPass = reviews.length === requiredReviews
         && reviews.every(isPassingJudgment)
         && (!task.audit.required || isPassingJudgment(task.audit));
-      const scopedImplementer = task.implement?.agent_id;
-      hasScopedChange = task.judgmentHistory?.length > 0
-        && task.implement?.result === 'green'
-        && typeof scopedImplementer === 'string'
-        && task.agents.implementer_agent_id === scopedImplementer;
+      const recovery = task.convergence.recovery;
+      const hasRecoveryHistory = task.judgmentHistory?.length > 0;
+      if (recovery?.route === 'test-contract-repair') {
+        hasScopedChange = hasRecoveryHistory
+          && isAgentId(recovery.test_author_agent_id)
+          && task.tests?.authored_by_agent_id === recovery.test_author_agent_id;
+      } else if (recovery?.route === 'refactor') {
+        hasScopedChange = hasRecoveryHistory
+          && isAgentId(recovery.builder_agent_id)
+          && task.refactor?.agent_id === recovery.builder_agent_id
+          && ['refactored', 'clean'].includes(task.refactor?.result);
+      } else {
+        const scopedImplementer = task.implement?.agent_id;
+        hasScopedChange = hasRecoveryHistory
+          && task.implement?.result === 'green'
+          && typeof scopedImplementer === 'string'
+          && task.agents.implementer_agent_id === scopedImplementer
+          && (recovery === undefined || recovery.builder_agent_id === scopedImplementer);
+      }
       const gate = task.tests?.gate;
       if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
         throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
@@ -917,8 +992,21 @@ export function transitionTask(task, stage, result) {
   }
 
   if (stage === 'plan') {
+    const pendingRecovery = isPendingCodeRecovery(next);
+    if (pendingRecovery) {
+      const route = next.convergence.recovery.route;
+      if (!['test-contract-repair', 'causal-subgraph-reconstruction', 'full-replan'].includes(route)
+        || result.result !== 'red') {
+        throw new Error('[record-transition] recovery plan does not match the selected council route');
+      }
+      assertFreshRecoveryParticipant(next, result.agent_id, 'test author');
+      archiveAndResetJudgments(next, at);
+      next.convergence.recovery.test_author_agent_id = result.agent_id;
+    }
     next.complexity = result.complexity;
-    next.audit.required = result.auditRequired;
+    next.audit.required = pendingRecovery
+      ? next.audit.required || result.auditRequired
+      : result.auditRequired;
     if (operation) {
       if (result.result === 'escalation') {
         next.plan = {
@@ -952,7 +1040,14 @@ export function transitionTask(task, stage, result) {
         escalation: result.escalation,
         refactorOpportunity: result.refactorOpportunity,
       };
-      next.stage = result.result === 'escalation' ? 'capture' : 'implement';
+      if (pendingRecovery) {
+        invalidateVerification(next);
+        next.stage = next.convergence.recovery.route === 'test-contract-repair'
+          ? 'review'
+          : 'implement';
+      } else {
+        next.stage = result.result === 'escalation' ? 'capture' : 'implement';
+      }
     }
   } else if (stage === 'execute') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
@@ -1040,6 +1135,15 @@ export function transitionTask(task, stage, result) {
     }
   } else if (stage === 'implement') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
+    const pendingRecovery = isPendingCodeRecovery(next);
+    if (pendingRecovery) {
+      if (!['confined-repair', 'causal-subgraph-reconstruction', 'full-replan']
+        .includes(next.convergence.recovery.route)) {
+        throw new Error('[record-transition] recovery implement does not match the selected council route');
+      }
+      assertFreshRecoveryParticipant(next, result.agent_id, 'builder');
+      next.convergence.recovery.builder_agent_id = result.agent_id;
+    }
     next.agents.implementer_agent_id = result.agent_id;
     next.implement = {
       agent_id: result.agent_id,
@@ -1068,6 +1172,14 @@ export function transitionTask(task, stage, result) {
       else next.stage = 'review';
     }
   } else if (stage === 'refactor') {
+    const pendingRecovery = isPendingCodeRecovery(next);
+    if (pendingRecovery) {
+      if (next.convergence.recovery.route !== 'refactor') {
+        throw new Error('[record-transition] recovery refactor does not match the selected council route');
+      }
+      assertFreshRecoveryParticipant(next, result.agent_id, 'builder');
+      next.convergence.recovery.builder_agent_id = result.agent_id;
+    }
     next.refactor = {
       agent_id: result.agent_id,
       result: result.result,

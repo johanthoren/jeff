@@ -168,10 +168,48 @@
  */
 
 /**
+ * @typedef {Object} CouncilFindingVote
+ * @property {string} id
+ * @property {boolean} blocking
+ * @property {string} rationale
+ */
+
+/**
+ * @typedef {Object} CouncilInquiry
+ * @property {string} question
+ * @property {string} problemRestatement
+ * @property {string[]} causalHypotheses
+ * @property {string[]} solutionStrategies
+ * @property {CouncilFindingVote[]} findingVotes
+ * @property {string[]} decisiveEvidence
+ */
+
+/**
+ * @typedef {Object} CouncilSynthesis
+ * @property {string} problemRestatement
+ * @property {string[]} survivingBlockers
+ * @property {string[]} causalHypotheses
+ * @property {string[]} solutionStrategies
+ * @property {string[]} rejectedAlternatives
+ * @property {'confined-repair' | 'test-contract-repair' | 'refactor' | 'causal-subgraph-reconstruction' | 'full-replan' | 'operator-escalation'} selectedStrategy
+ * @property {string[]} decisiveEvidence
+ */
+
+/**
+ * @typedef {Object} CouncilRecovery
+ * @property {1} episode
+ * @property {CouncilSynthesis['selectedStrategy']} route
+ * @property {TestGate | null} baselineGate
+ * @property {string | null} test_author_agent_id
+ * @property {string | null} builder_agent_id
+ */
+
+/**
  * @typedef {Object} CouncilMember
  * @property {string} agent_id
  * @property {CouncilLens} lens
  * @property {number | null} temperature
+ * @property {CouncilInquiry} [inquiry]
  */
 
 /**
@@ -201,14 +239,15 @@
  * @typedef {Object} CodeConvergence
  * @property {number} cap
  * @property {{review: ConvergenceCounter, audit: ConvergenceCounter}} stages
- * @property {{convened: boolean, stage: 'review' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {{convened: boolean, stage: 'review' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], synthesis?: CouncilSynthesis, verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {CouncilRecovery} [recovery]
  */
 
 /**
  * @typedef {Object} OperationConvergence
  * @property {number} cap
  * @property {{verify: ConvergenceCounter, audit: ConvergenceCounter}} stages
- * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, members: CouncilMember[], findings: OperationCouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, members: CouncilMember[], findings: OperationCouncilFinding[], synthesis?: CouncilSynthesis, verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  */
 
 /** @typedef {CodeConvergence | OperationConvergence} Convergence */

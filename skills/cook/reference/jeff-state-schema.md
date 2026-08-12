@@ -76,10 +76,11 @@ relationships below.
 ### Lifecycle semantics
 
 - Category-specific judgment counters are independent. A council can convene only when its triggering source reaches the exact cap.
-- The complete task-wide council uses three distinct, host-observed member identities. Code separation is scoped to the active judgment cycle. Operation members also differ from archived judges and refuters.
-- Council findings are exactly the active blocking union, matched by source and summary. Every blocker receives a source-bound refute. A majority decides whether each finding survives; demoted findings retain a valid follow-up, while survivors do not.
+- A canonical council records three distinct, host-observed members and three non-identical independent inquiry packets before deterministic synthesis. At least one inquiry carries the exact defects-versus-reconstruction question. Every inquiry votes every active source-bound finding exactly once; persisted tallies, survival, verdict, and synthesis blockers are derived from those votes.
+- A blocking canonical code council may add one optional recovery episode to the same task. The recovery route is one of confined repair, test-contract repair, refactor, causal-subgraph reconstruction, full replan, or operator escalation, and must equal the synthesis selection. Baseline gate, fresh test-author identity, and fresh builder identity remain inspectable in the existing convergence record.
+- The route reuses the linear stage machine. Test-contract repair moves from fresh plan/test authorship directly to the gate-facing review state; reconstruction and replan continue to implement; direct refactor records the refactorer as builder. A clean full-suite gate precedes fresh, identity-separated judgments, and a surviving blocker exhausts the episode to the operator.
+- Findings, inquiries, synthesis, prior checkpoints, judgment history, and recovery evidence remain on the original task. Historical councils may omit inquiry, synthesis, and recovery and retain their prior scoped-fix meaning. Existing operation recovery semantics are unchanged.
 - A source may spend one evidence-scaled bonus cycle only after a confined typed repair strictly reduces its findings.
-- The council blocks if any finding survives. A block permits one scoped implement cycle for code or execute cycle for operation. Operation completion proves one adjacent execution cycle by a fresh executor followed by fresh judgments. Code also requires a fresh clean full-suite gate. An operation approval stop remains resumable, but a scoped execute kickback or failed reassessment ends as blocked-to-operator.
 
 ### Validator invariants (INV-7..INV-11)
 
@@ -93,19 +94,17 @@ consistent with the existing invariants. **Absent `convergence` ⇒ all skipped.
   A recorded `bonusGranted: true` additionally requires its enabling evidence:
   that source's last typed kickback is confined to `implement | refactor` and
   carries strictly fewer findings than its predecessor.
-- **INV-8:** a convened council has exactly three distinct lenses, a category-valid exact-cap trigger stage, and required builder/judge separation. Operation councils also retain cycle and baseline-executor provenance and exclude archived judges/refuters.
+- **INV-8:** a convened council has exactly three distinct lenses, a category-valid exact-cap trigger stage, and required builder/judge separation. When canonical research is present, all three inquiry packets are complete and non-identical, and the required reconstruction question occurs exactly as specified. Operation councils also retain cycle and baseline-executor provenance and exclude archived judges/refuters.
 - **INV-9 (per-finding determinism):** for each finding,
   `survived == (blockingVotes ≥ 2)`; and `verdict == ("block" if any finding
-  survived else "ship")`. The ship/block decision is reproducible from the
-  recorded tallies.
+  survived else "ship")`. Canonical blocking councils additionally derive each
+  tally from the independent votes and require synthesis to list exactly the
+  surviving finding ids and select one of its materially different strategies.
 - **INV-10 (follow-up tracking):** every demoted finding (`survived == false`)
   records a `followupTaskId` that exists in the task set, or the literal
   `"ledger"`, which the validator accepts without reading any file; every
   surviving finding has `followupTaskId == null`.
-- **INV-11 (block resolution / done-gate):**
-  `verdict == "block" && outcome == "blocked-to-operator"` implies `status == "blocked"`.
-  A done task with a convened blocking council requires `outcome == "scoped-fix-shipped"`.
-  Marked operation state additionally proves one adjacent post-council execution and fresh reassessment from its retained cycle provenance.
+- **INV-11 (block resolution / done-gate):** a present code recovery is episode 1, matches the synthesis route, preserves recovery-role identity separation, and cannot attach code routes to operations. `verdict == "block" && outcome == "blocked-to-operator"` implies `status == "blocked"`. A done task with a convened blocking council requires `outcome == "scoped-fix-shipped"`. Marked operation state additionally proves one adjacent post-council execution and fresh reassessment from its retained cycle provenance.
 
 
 ## Code targeted repair and INV-12

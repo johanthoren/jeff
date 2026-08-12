@@ -3809,3 +3809,132 @@ test('Item 6 lite dependency cycles use local edges and ignore unresolved refs',
     }
   });
 });
+
+function issue237PersistedCouncil() {
+  const inquiries = [
+    {
+      question: 'Are these independent defects, or evidence that this part of the design should be reconstructed?',
+      problemRestatement: 'A supported recorder order loses accepted evidence.',
+      causalHypotheses: ['The active judgment union is replaced.'],
+      solutionStrategies: ['confined-repair', 'full-replan'],
+      findingVotes: [{ id: 'F1', blocking: true, rationale: 'Accepted evidence is lost.' }],
+      decisiveEvidence: ['The persisted task omits one accepted result.'],
+    },
+    {
+      question: 'Which state boundary permits the loss?',
+      problemRestatement: 'The atomic recorder contract does not cover all accepted results.',
+      causalHypotheses: ['The merge occurs outside the locked update.'],
+      solutionStrategies: ['causal-subgraph-reconstruction', 'full-replan'],
+      findingVotes: [{ id: 'F1', blocking: true, rationale: 'The loss crosses the durable boundary.' }],
+      decisiveEvidence: ['The completion-order fixture is deterministic.'],
+    },
+    {
+      question: 'What is the narrowest safe same-task response?',
+      problemRestatement: 'One legal transition leaves an incomplete ledger.',
+      causalHypotheses: ['A confined fix may restore the contract.'],
+      solutionStrategies: ['confined-repair', 'operator-escalation'],
+      findingVotes: [{ id: 'F1', blocking: false, rationale: 'A bounded repair remains plausible.' }],
+      decisiveEvidence: ['The failure is isolated to one transition.'],
+    },
+  ];
+  return {
+    convened: true,
+    stage: 'review',
+    members: [
+      { agent_id: 'council-integrity', lens: 'integrity', temperature: 0.3 },
+      { agent_id: 'council-security', lens: 'security', temperature: 0.7 },
+      { agent_id: 'council-pragmatist', lens: 'pragmatist', temperature: 1 },
+    ].map((member, index) => ({ ...member, inquiry: inquiries[index] })),
+    findings: [{
+      id: 'F1',
+      source: 'review',
+      summary: 'The recording path loses a result.',
+      blockingVotes: 2,
+      survived: true,
+      followupTaskId: null,
+    }],
+    synthesis: {
+      problemRestatement: 'A supported completion order can discard accepted task evidence.',
+      survivingBlockers: ['F1'],
+      causalHypotheses: ['The recorder does not preserve the complete active judgment union.'],
+      solutionStrategies: ['confined-repair', 'full-replan'],
+      rejectedAlternatives: ['confined-repair'],
+      selectedStrategy: 'full-replan',
+      decisiveEvidence: ['Two independent inquiries reproduce the durable evidence loss.'],
+    },
+    verdict: 'block',
+    outcome: null,
+  };
+}
+
+test('issue 237 persisted recovery is optional for history and fail-closed when present', async (t) => {
+  const historical = item5CodeLedger({
+    kickbacks: [],
+    council: item5ConvenedCouncil([{
+      id: 'F1',
+      source: 'review',
+      summary: 'Historical finding',
+      blockingVotes: 2,
+      survived: true,
+      followupTaskId: null,
+    }]),
+  });
+  assert.equal((await verdictFor(historical)).ok, true);
+
+  const canonical = item5CodeLedger({
+    kickbacks: [{
+      from: 'review',
+      to: 'plan',
+      reason: 'Council block: The recording path loses a result.',
+      at: '2026-07-12T00:30:00Z',
+    }],
+    council: issue237PersistedCouncil(),
+  });
+  canonical.stage = 'plan';
+  canonical.convergence.recovery = {
+    episode: 1,
+    route: 'full-replan',
+    baselineGate: null,
+    test_author_agent_id: null,
+    builder_agent_id: null,
+  };
+  assert.equal((await verdictFor(canonical)).ok, true);
+
+  const invalidStates = [
+    ['second episode', (task) => {
+      task.convergence.recovery.episode = 2;
+    }],
+    ['unknown route', (task) => {
+      task.convergence.recovery.route = 'workflow-node';
+    }],
+    ['route disagrees with synthesis', (task) => {
+      task.convergence.recovery.route = 'confined-repair';
+    }],
+    ['identical inquiry packets', (task) => {
+      task.convergence.council.members[1].inquiry =
+        structuredClone(task.convergence.council.members[0].inquiry);
+      task.convergence.council.members[2].inquiry =
+        structuredClone(task.convergence.council.members[0].inquiry);
+    }],
+    ['vote tally is not derived from inquiries', (task) => {
+      task.convergence.council.findings[0].blockingVotes = 1;
+      task.convergence.council.findings[0].survived = false;
+      task.convergence.council.findings[0].followupTaskId = 'ledger';
+      task.convergence.council.verdict = 'ship';
+      task.convergence.council.outcome = 'shipped';
+    }],
+    ['recovery test author reuses the builder', (task) => {
+      task.convergence.recovery.test_author_agent_id = task.agents.implementer_agent_id;
+    }],
+  ];
+
+  for (const [name, mutate] of invalidStates) {
+    await t.test(name, async () => {
+      const invalid = structuredClone(canonical);
+      mutate(invalid);
+      const result = await verdictFor(invalid);
+      assert.equal(result.ok, false, `${name} must not validate`);
+      assert.match(result.stderr.join('\n'), /council|recovery|identity|inv/i);
+    });
+  }
+});

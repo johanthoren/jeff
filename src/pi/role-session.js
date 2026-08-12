@@ -25,6 +25,7 @@ const STAGE_TOOLS = {
   verify: COMMAND_TOOLS,
   audit: COMMAND_TOOLS,
   refute: READ_TOOLS,
+  council: READ_TOOLS,
 };
 
 export const STAGES = Object.keys(STAGE_TOOLS);
