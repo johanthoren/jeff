@@ -9,7 +9,7 @@ import { git, treeDirty } from './git.js';
 import { configSchemaViolations, isIsoDateTime, RECOVERY_LINEAGE_FIELDS, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
 import { validateHistoricalCouncilRecoveryReturn, validateSpecialistReturn } from './record-contract.js';
-import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES } from './council.js';
+import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES, requiresCouncilResearchProvenance } from './council.js';
 import {
   activeRefuterAgentIds,
   archivedJudgeAgentIds,
@@ -832,8 +832,9 @@ function recordCouncil(task, result, at) {
   task.status = 'in_progress';
 }
 
-/** @param {Record<string, any>} pending @param {Record<string, any>} returned */
-function isPreservedCouncilBlock(pending, returned) {
+/** @param {MutableRecordTask} task @param {Record<string, any>} returned */
+function isPreservedCouncilBlock(task, returned) {
+  const pending = task.convergence.council;
   const {
     cycle: _pendingCycle,
     executor_agent_id: _pendingExecutorAgentId,
@@ -846,8 +847,9 @@ function isPreservedCouncilBlock(pending, returned) {
     researchProvenance: _returnedResearchProvenance,
     ...returnedSpecialistFields
   } = returned;
-  const historicalOmission = pending.researchProvenance === 'historical-omitted'
+  const historicalOmission = !requiresCouncilResearchProvenance(task)
     && pending.synthesis === undefined
+    && pending.synthesizer_agent_id === undefined
     && returned.synthesis === undefined
     && pending.members.every((member) => member.inquiry === undefined)
     && returned.members.every((member) => member.inquiry === undefined);
@@ -877,7 +879,7 @@ function blockCouncilRecovery(task) {
 /** @param {MutableRecordTask} task @param {Record<string, any>} council */
 function recordCouncilRecovery(task, council) {
   const pending = task.convergence.council;
-  if (!isPreservedCouncilBlock(pending, council)) {
+  if (!isPreservedCouncilBlock(task, council)) {
     throw new Error('[record-transition] council recovery must preserve the recorded block');
   }
   const recoveryStage = isOperation(task) ? 'execute' : 'implement';
