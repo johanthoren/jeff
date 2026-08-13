@@ -151,10 +151,19 @@ function createDispatchAgentRegistry() {
     get(id) { return refs.get(id); },
     /** @param {string} id */
     unregister(id) { refs.delete(id); },
-    /** @param {string} id @param {any} session @param {string | null} sessionFile */
-    attachSession(id, session, sessionFile) {
+    /** @param {string} id @param {any} session @param {string | null} sessionFile @param {any} [expected] */
+    attachSession(id, session, sessionFile, expected) {
       const ref = refs.get(id);
-      if (ref) Object.assign(ref, { session, sessionFile });
+      if (!ref || (expected !== undefined && ref !== expected)) return false;
+      Object.assign(ref, { session, sessionFile });
+      return true;
+    },
+    /** @param {string} id @param {string} status @param {any} [expected] */
+    setStatus(id, status, expected) {
+      const ref = refs.get(id);
+      if (!ref || (expected !== undefined && ref !== expected)) return false;
+      ref.status = status;
+      return true;
     },
   };
 }
