@@ -1763,3 +1763,184 @@ skill_outside_dispatch_rules() {
     return 1
   }
 }
+
+
+# ===========================================================================
+# task #237: council is one bounded research and recovery episode.
+#
+# These files are released operator and specialist interfaces. The test binds
+# the behavioral vocabulary shared with the checked recorder and validator
+# tests without duplicating the prose itself.
+# ===========================================================================
+
+@test "#237 released prose describes one bounded same-task council recovery contract" {
+  local skill="$REPO/skills/cook/SKILL.md"
+  local schema="$REPO/skills/cook/reference/jeff-state-schema.md"
+  local design="$REPO/docs/specs/jeff-design.md"
+  local brief="$REPO/agents/cook-council.md"
+  local synthesis_brief="$REPO/agents/cook-council-synthesis.md"
+  local refactor_brief="$REPO/agents/cook-refactor.md"
+  local council
+
+  [ -f "$brief" ] || {
+    echo "agents/cook-council.md is missing"
+    return 1
+  }
+  [ -f "$synthesis_brief" ] || {
+    echo "agents/cook-council-synthesis.md is missing"
+    return 1
+  }
+
+  council="$(skill_section '^### Council')"
+  grep -qF 'Are these independent defects, or evidence that this part of the design should be reconstructed?' <<<"$council" || {
+    echo "the Council method omits the required reconstruction inquiry"
+    return 1
+  }
+  for route in \
+    confined-repair \
+    test-contract-repair \
+    refactor \
+    causal-subgraph-reconstruction \
+    full-replan \
+    operator-escalation
+  do
+    grep -qF "$route" <<<"$council" || {
+      echo "the Council method omits recovery route $route"
+      return 1
+    }
+  done
+  grep -qiE 'exactly one|one bounded|single bounded' <<<"$council" || {
+    echo "the Council method does not bound recovery to one episode"
+    return 1
+  }
+  grep -qiE 'same-task|same task' <<<"$council" || {
+    echo "the Council method does not keep recovery in the rejected task lineage"
+    return 1
+  }
+  grep -qiE 'test-only|test only' <<<"$council" || {
+    echo "the Council method omits direct test-only recovery"
+    return 1
+  }
+  grep -qiE '(dispatch|fresh|independent)[^.]{0,120}synthesis (specialist|station)|synthesis (specialist|station)[^.]{0,120}(dispatch|fresh|independent)' <<<"$council" || {
+    echo "the Council method does not assign synthesis and route judgment to a fresh specialist"
+    return 1
+  }
+  grep -qF 'scoped-execute' <<<"$council" || {
+    echo "the Council method omits the operation-specific scoped-execute route"
+    return 1
+  }
+  grep -qiE '(clean|green)[^.]{0,100}gate[^.]{0,100}before[^.]{0,100}(fresh )?judgment' <<<"$council" || {
+    echo "the Council method does not require the current recovery gate before fresh judgments"
+    return 1
+  }
+  for lineage in plan test-author builder implementation checkpoint; do
+    grep -qiE "(original|prior|baseline)[^.]{0,100}${lineage}|${lineage}[^.]{0,100}(original|prior|baseline)" <<<"$council" || {
+      echo "the Council method does not retain original $lineage lineage"
+      return 1
+    }
+  done
+
+  for field in \
+    inquiry \
+    problemRestatement \
+    causalHypotheses \
+    solutionStrategies \
+    findingVotes \
+    decisiveEvidence
+  do
+    grep -qF "$field" "$brief" || {
+      echo "the council specialist brief omits $field"
+      return 1
+    }
+  done
+  grep -qiE 'code[^.]{0,200}confined-repair[^.]{0,200}operator-escalation|confined-repair[^.]{0,200}operator-escalation[^.]{0,200}code' "$brief" || {
+    echo "the council inquiry brief does not bind code inquiries to code recovery strategies"
+    return 1
+  }
+  grep -qiE 'operation[^.]{0,200}scoped-execute[^.]{0,200}operator-escalation|scoped-execute[^.]{0,200}operator-escalation[^.]{0,200}operation' "$brief" || {
+    echo "the council inquiry brief does not bind operation inquiries to operation recovery strategies"
+    return 1
+  }
+  grep -qiE 'materially different|distinct strateg' "$brief" || {
+    echo "the council inquiry brief does not require materially different strategies"
+    return 1
+  }
+  grep -qiE '(omit|without|must not)[^.]{0,80}agent_id' "$brief" || {
+    echo "the council specialist brief does not keep host-observed agent_id out of its return"
+    return 1
+  }
+
+  for field in \
+    problemRestatement \
+    survivingBlockers \
+    causalHypotheses \
+    solutionStrategies \
+    rejectedAlternatives \
+    selectedStrategy \
+    decisiveEvidence
+  do
+    grep -qF "$field" "$synthesis_brief" || {
+      echo "the council synthesis specialist brief omits $field"
+      return 1
+    }
+  done
+  grep -qiE '(omit|without|must not)[^.]{0,80}agent_id' "$synthesis_brief" || {
+    echo "the council synthesis brief does not keep host-observed agent_id out of its return"
+    return 1
+  }
+  grep -qiE 'direct[^.]{0,80}recovery[^.]{0,120}result[^.]{0,40}refactored|result[^.]{0,40}refactored[^.]{0,120}direct[^.]{0,80}recovery' "$refactor_brief" || {
+    echo "the refactor brief does not give direct recovery one behavior-changing refactored result"
+    return 1
+  }
+  grep -qiE 'clean[^.]{0,100}(no[- ]change|empty[^.]{0,40}files)|(no[- ]change|empty[^.]{0,40}files)[^.]{0,100}clean' "$refactor_brief" || {
+    echo "the refactor brief does not identify clean and no-change direct recovery returns"
+    return 1
+  }
+  grep -qiE '(clean|no[- ]change|empty[^.]{0,40}files)[^.]{0,180}accept[^.]{0,120}(terminal[^.]{0,60}(failure|evidence)|(failure|evidence)[^.]{0,60}terminal)' "$refactor_brief" || {
+    echo "the refactor brief does not accept clean or no-change as terminal failure evidence"
+    return 1
+  }
+  grep -qiE '(clean|no[- ]change|empty[^.]{0,40}files)[^.]{0,220}block[^.]{0,80}operator|block[^.]{0,80}operator[^.]{0,220}(clean|no[- ]change|empty[^.]{0,40}files)' "$refactor_brief" || {
+    echo "the refactor brief does not block a clean or no-change recovery to the operator"
+    return 1
+  }
+  ! grep -qiE 'clean[^.]{0,80}(invalid|will be rejected|not (valid|allowed|accepted))' "$refactor_brief" || {
+    echo "the refactor brief still rejects a valid clean direct recovery return"
+    return 1
+  }
+
+  grep -qiE 'optional|historical|compatib' "$schema" || {
+    echo "the state schema omits historical compatibility for recovery state"
+    return 1
+  }
+  grep -qiE 'recovery episode|recovery route' "$schema" || {
+    echo "the state schema omits the typed recovery episode"
+    return 1
+  }
+  grep -qiE 'independent inquiry|problem restatement' "$design" || {
+    echo "the design spec omits council research before synthesis"
+    return 1
+  }
+  grep -qiE 'same-task|same task' "$design" || {
+    echo "the design spec does not retain the original task lineage"
+    return 1
+  }
+  for released in "$schema" "$design"; do
+    grep -qF 'scoped-execute' "$released" || {
+      echo "${released#"$REPO/"} omits the operation-specific council route"
+      return 1
+    }
+    grep -qiE 'synthesis (specialist|station)' "$released" || {
+      echo "${released#"$REPO/"} omits independent synthesis ownership"
+      return 1
+    }
+    grep -qiE '(clean|green)[^.]{0,100}gate[^.]{0,100}before[^.]{0,100}(fresh )?judgment' "$released" || {
+      echo "${released#"$REPO/"} omits the post-recovery gate ordering"
+      return 1
+    }
+    grep -qiE '(original|prior)[^.]{0,160}(plan|test-author|builder|implementation|checkpoint)' "$released" || {
+      echo "${released#"$REPO/"} omits original delivery lineage"
+      return 1
+    }
+  done
+}

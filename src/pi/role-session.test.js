@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchRoleSession, loadSdk } from './role-session.js';
+import { dispatchRoleSession, loadSdk, STAGES } from './role-session.js';
 
 const REVIEW_AGENT = `---
 name: cook-review
@@ -292,17 +292,40 @@ function ompSdk(createAgentSession, testOptions = {}) {
   class AgentRegistry {
     constructor() { this.refs = new Map(); }
     /** @param {any} ref */
-    register(ref) { this.refs.set(ref.id, { ...ref }); }
+    register(ref) {
+      const registered = { ...ref };
+      this.refs.set(ref.id, registered);
+      return registered;
+    }
+    /** @param {any} ref @param {any} expected */
+    matchesExpected(ref, expected) {
+      return expected === undefined || ref === expected || ref.session === expected;
+    }
     /** @param {string} id */
     get(id) { return this.refs.get(id); }
     list() { return [...this.refs.values()]; }
-    /** @param {string} id @param {any} session */
-    attachSession(id, session) {
+    /** @param {string} id @param {string} status @param {any} [expected] */
+    setStatus(id, status, expected) {
       const ref = this.refs.get(id);
-      if (ref) ref.session = session;
+      if (!ref || !this.matchesExpected(ref, expected)) return false;
+      ref.status = status;
+      return true;
     }
-    /** @param {string} id */
-    unregister(id) { this.refs.delete(id); }
+    /** @param {string} id @param {any} session @param {string | null} [sessionFile] @param {any} [expected] */
+    attachSession(id, session, sessionFile, expected) {
+      const ref = this.refs.get(id);
+      if (!ref || !this.matchesExpected(ref, expected)) return false;
+      ref.session = session;
+      if (sessionFile !== undefined) ref.sessionFile = sessionFile;
+      return true;
+    }
+    /** @param {string} id @param {any} [expected] */
+    unregister(id, expected) {
+      const ref = this.refs.get(id);
+      if (!ref || !this.matchesExpected(ref, expected)) return false;
+      this.refs.delete(id);
+      return true;
+    }
     onChange() { return () => {}; }
     static global() { return globalRegistry; }
   }
@@ -343,7 +366,7 @@ function ompSdk(createAgentSession, testOptions = {}) {
     createAgentSession: async (/** @type {any} */ options) => {
       const registry = options.agentRegistry ?? globalRegistry;
       const agentId = options.agentId ?? options.parentTaskPrefix ?? 'Main';
-      registry.register({ id: agentId, session: null, status: 'running' });
+      const registeredAgentRef = registry.register({ id: agentId, session: null, status: 'running' });
 
       initializeWithSettings(options.settings);
       applyProviderGlobalsFromSettings(options.settings);
@@ -361,7 +384,7 @@ function ompSdk(createAgentSession, testOptions = {}) {
       try {
         created = await createAgentSession(options);
       } catch (error) {
-        registry.unregister(agentId);
+        registry.unregister(agentId, registeredAgentRef);
         throw error;
       }
       const originalDispose = created.session.dispose?.bind(created.session) ?? (() => {});
@@ -369,10 +392,16 @@ function ompSdk(createAgentSession, testOptions = {}) {
         try {
           await originalDispose();
         } finally {
-          registry.unregister(agentId);
+          registry.unregister(agentId, registeredAgentRef);
         }
       };
-      registry.attachSession(agentId, created.session);
+      if (
+        !registeredAgentRef
+        || !registry.attachSession(agentId, created.session, null, registeredAgentRef)
+        || !registry.setStatus(agentId, 'running', registeredAgentRef)
+      ) {
+        throw new Error(`Agent "${agentId}" was replaced during session initialization.`);
+      }
       return created;
     },
   };
@@ -803,6 +832,52 @@ test('dispatchRoleSession keeps an OMP child private with the compiled root SDK 
     });
 
     assert.equal(visibleFromGlobalRegistry, undefined);
+  });
+});
+
+test('dispatchRoleSession initializes its private OMP registry with boolean stale-ref guards', async () => {
+  await withRepo(async (repoRoot) => {
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    const session = {
+      model: currentModel,
+      thinkingLevel: 'xhigh',
+      /** @type {() => string[]} */
+      getActiveToolNames: () => [],
+      subscribe() {},
+      async prompt() {},
+      dispose() {},
+    };
+    let staleAttachResult;
+    let staleStatusResult;
+    let staleReplacementState;
+    const sdk = ompSdk(async (options) => {
+      session.getActiveToolNames = () => activeOmpTools(options);
+      const registry = options.agentRegistry;
+      const agentId = options.agentId;
+      const original = registry.get(agentId);
+      assert.ok(original);
+      const replacement = registry.register({ ...original });
+      staleAttachResult = registry.attachSession(agentId, session, null, original);
+      staleStatusResult = registry.setStatus?.(agentId, 'idle', original);
+      staleReplacementState = { session: replacement.session, status: replacement.status };
+      registry.register(original);
+      return { session };
+    });
+
+    await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Exercise SDK registry initialization.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      modelRegistry: ompParentModelRegistry(currentModel),
+      sdk,
+      generateAgentId: () => 'omp-review',
+    });
+
+    assert.equal(staleAttachResult, false);
+    assert.equal(staleStatusResult, false);
+    assert.deepEqual(staleReplacementState, { session: null, status: 'running' });
   });
 });
 
@@ -1555,5 +1630,78 @@ test('dispatchRoleSession fails closed when the orchestrator model is unavailabl
       }),
       /orchestrator model/i,
     );
+  });
+});
+
+
+test('issue 237 Pi dispatch exposes fresh read-only inquiry and synthesis sessions', async () => {
+  await withRepo(async (repoRoot) => {
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-council.md'),
+      '---\nname: cook-council\neffort: xhigh\n---\nConduct one independent council inquiry.',
+    );
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-council-synthesis.md'),
+      '---\nname: cook-council-synthesis\neffort: xhigh\n---\nIndependently synthesize the council inquiries.',
+    );
+    /** @type {any[]} */
+    const captured = [];
+    const sdk = {
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (/** @type {any} */ options) => {
+        captured.push(options);
+        return {
+          session: {
+            subscribe() {},
+            async prompt() {},
+            dispose() {},
+          },
+        };
+      },
+    };
+    const lenses = ['integrity', 'security', 'pragmatist'];
+    const results = [];
+
+    assert.equal(STAGES.includes('council'), true);
+    assert.equal(STAGES.includes('council-synthesis'), true);
+    for (const lens of lenses) {
+      results.push(await dispatchRoleSession({
+        stage: 'council',
+        brief: `Use only the ${lens} lens and return one inquiry without agent_id.`,
+        taskDir: '.jeff/tasks/lite-237-3064274374',
+        cwd: repoRoot,
+        repoRoot,
+        currentModel: { provider: 'local', id: 'qwen-dev' },
+        sdk,
+        generateAgentId: () => `council-${lens}`,
+      }));
+    }
+    results.push(await dispatchRoleSession({
+      stage: 'council-synthesis',
+      brief: 'Synthesize the three inquiries and select the recovery route without agent_id.',
+      taskDir: '.jeff/tasks/lite-237-3064274374',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel: { provider: 'local', id: 'qwen-dev' },
+      sdk,
+      generateAgentId: () => 'council-synthesizer',
+    }));
+
+    assert.deepEqual(results.map((result) => result.agent_id), [
+      'council-integrity',
+      'council-security',
+      'council-pragmatist',
+      'council-synthesizer',
+    ]);
+    assert.equal(new Set(results.map((result) => result.agent_id)).size, 4);
+    assert.deepEqual(captured.map((options) => options.tools), [
+      ['read', 'grep', 'find', 'ls'],
+      ['read', 'grep', 'find', 'ls'],
+      ['read', 'grep', 'find', 'ls'],
+      ['read', 'grep', 'find', 'ls'],
+    ]);
+    assert.deepEqual(captured.map((options) => options.thinkingLevel), [
+      'xhigh', 'xhigh', 'xhigh', 'xhigh',
+    ]);
   });
 });

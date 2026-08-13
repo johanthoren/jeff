@@ -1,6 +1,7 @@
 // @ts-check
 
 import { isAgentId, isSourceRefuteAgentForbidden } from './identity-policy.js';
+import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES, requiresCouncilResearchProvenance } from './council.js';
 import {
   hasBoundPendingApprovalRequest,
   hasCompletedApprovalProvenance,
@@ -12,6 +13,7 @@ import {
   OPERATION_STATE_VERSION,
 } from './operation-state.js';
 import { isOneOf, isType } from './validate.js';
+import { validateSpecialistReturn } from './record-contract.js';
 
 const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
 const CODE_STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'audit', 'done'];
@@ -27,6 +29,13 @@ const KEBAB_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OPERATION_FINDING_DESTINATIONS = ['capture', 'plan', 'execute'];
 const CODE_JUDGMENT_SOURCES = ['review', 'review2', 'audit'];
 const CODE_JUDGMENT_DESTINATIONS = ['capture', 'plan', 'implement', 'refactor'];
+export const RECOVERY_LINEAGE_FIELDS = [
+  'plan',
+  'test_author_agent_id',
+  'builder_agent_id',
+  'implement',
+];
+
 const AUDIT_CATEGORIES = [
   'secrets',
   'injection_sql',
@@ -155,14 +164,21 @@ function validateTests(value, out) {
   requireField(out, 'tests.authored_by_agent_id', isNullableString(value.authored_by_agent_id));
   requireField(out, 'tests.green', typeof value.green === 'boolean' || value.green === 'na');
   requireField(out, 'tests.evidence', Array.isArray(value.evidence));
-  if (value.gate === undefined) return;
-  requireField(out, 'tests.gate', isType(value.gate, 'object'));
-  if (!isType(value.gate, 'object')) return;
-  requireField(out, 'tests.gate.hash', typeof value.gate.hash === 'string');
-  requireField(out, 'tests.gate.clean', typeof value.gate.clean === 'boolean');
-  requireField(out, 'tests.gate.green', typeof value.gate.green === 'boolean');
-  requireField(out, 'tests.gate.command', typeof value.gate.command === 'string');
-  requireField(out, 'tests.gate.at', isIsoDateTime(value.gate.at));
+  if (value.gate !== undefined) validateGate(value.gate, 'tests.gate', out);
+}
+/**
+ * @param {any} value
+ * @param {string} field
+ * @param {string[]} out
+ */
+function validateGate(value, field, out) {
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.hash`, typeof value.hash === 'string');
+  requireField(out, `${field}.clean`, typeof value.clean === 'boolean');
+  requireField(out, `${field}.green`, typeof value.green === 'boolean');
+  requireField(out, `${field}.command`, typeof value.command === 'string');
+  requireField(out, `${field}.at`, isIsoDateTime(value.at));
 }
 
 /**
@@ -196,12 +212,139 @@ function validateKickbacks(value, out) {
   });
 }
 
+/** @param {any} value @param {string} field @param {string[]} out */
+function validateCouncilInquiry(value, field, out) {
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.question`, isNonemptyString(value.question));
+  requireField(out, `${field}.problemRestatement`, isNonemptyString(value.problemRestatement));
+  for (const name of ['causalHypotheses', 'solutionStrategies', 'decisiveEvidence']) {
+    requireField(out, `${field}.${name}`, Array.isArray(value[name])
+      && value[name].every(isNonemptyString));
+  }
+  requireField(out, `${field}.findingVotes`, Array.isArray(value.findingVotes));
+  if (!Array.isArray(value.findingVotes)) return;
+  value.findingVotes.forEach((/** @type {any} */ vote, /** @type {number} */ index) => {
+    const voteField = `${field}.findingVotes[${index}]`;
+    requireField(out, voteField, isType(vote, 'object'));
+    if (!isType(vote, 'object')) return;
+    requireField(out, `${voteField}.id`, isNonemptyString(vote.id));
+    requireField(out, `${voteField}.blocking`, typeof vote.blocking === 'boolean');
+    requireField(out, `${voteField}.rationale`, isNonemptyString(vote.rationale));
+  });
+}
+
+/** @param {any} value @param {string[]} out @param {boolean} operation */
+function validateCouncilSynthesis(value, out, operation) {
+  const field = 'convergence.council.synthesis';
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.problemRestatement`, isNonemptyString(value.problemRestatement));
+  for (const name of ['survivingBlockers', 'rejectedAlternatives']) {
+    requireField(out, `${field}.${name}`, Array.isArray(value[name])
+      && value[name].every(isNonemptyString));
+  }
+  for (const name of ['causalHypotheses', 'solutionStrategies', 'decisiveEvidence']) {
+    requireField(out, `${field}.${name}`, Array.isArray(value[name])
+      && value[name].length > 0
+      && value[name].every(isNonemptyString));
+  }
+  const routes = operation ? OPERATION_COUNCIL_ROUTES : COUNCIL_ROUTES;
+  requireField(out, `${field}.selectedStrategy`, isOneOf(value.selectedStrategy, routes));
+}
+
+/** @param {any} value @param {any} original */
+function isStrictStoredCodePlan(value, original) {
+  const fields = ['result', 'slices', 'testFiles', 'redRun', 'escalation', 'refactorOpportunity'];
+  if (!isType(value, 'object') || Object.keys(value).some((field) => !fields.includes(field))) {
+    return false;
+  }
+  try {
+    validateSpecialistReturn('plan', {
+      stage: 'plan',
+      complexity: original.complexity,
+      auditRequired: original.audit_required,
+      ...value,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** @param {any} value */
+function isStrictStoredImplementation(value) {
+  const fields = ['agent_id', 'result', 'files', 'greenRun', 'repairRound'];
+  if (!isType(value, 'object') || Object.keys(value).some((field) => !fields.includes(field))
+    || !isAgentId(value.agent_id)
+    || (value.repairRound !== undefined
+      && (!Number.isInteger(value.repairRound) || value.repairRound < 1))) {
+    return false;
+  }
+  const { agent_id: _agentId, repairRound: _repairRound, ...stored } = value;
+  try {
+    validateSpecialistReturn('implement', {
+      stage: 'implement',
+      ...stored,
+      kickback: stored.result === 'green'
+        ? null
+        : { to: 'plan', reason: 'Stored implementation kickback.' },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** @param {any} value @param {string[]} out */
+function validateRecoveryOriginal(value, out) {
+  const field = 'convergence.recovery.original';
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.complexity`, isOneOf(value.complexity, ['simple', 'complex']));
+  requireField(out, `${field}.audit_required`, typeof value.audit_required === 'boolean');
+  const absenceValid = Array.isArray(value.absentLineage)
+    && new Set(value.absentLineage).size === value.absentLineage.length
+    && value.absentLineage.every((/** @type {unknown} */ name) => (/** @type {ReadonlyArray<unknown>} */ (RECOVERY_LINEAGE_FIELDS)).includes(name));
+  requireField(out, `${field}.absentLineage`, absenceValid);
+  const absent = new Set(absenceValid ? value.absentLineage : []);
+  requireField(out, `${field}.plan`, Object.hasOwn(value, 'plan')
+    && (absent.has('plan') ? value.plan === null : isStrictStoredCodePlan(value.plan, value)));
+  requireField(out, `${field}.test_author_agent_id`, Object.hasOwn(value, 'test_author_agent_id')
+    && (absent.has('test_author_agent_id')
+      ? value.test_author_agent_id === null
+      : isNonemptyString(value.test_author_agent_id)));
+  requireField(out, `${field}.builder_agent_id`, Object.hasOwn(value, 'builder_agent_id')
+    && (absent.has('builder_agent_id')
+      ? value.builder_agent_id === null
+      : isNonemptyString(value.builder_agent_id)));
+  requireField(out, `${field}.implement`, Object.hasOwn(value, 'implement')
+    && (absent.has('implement')
+      ? value.implement === null
+      : isStrictStoredImplementation(value.implement)));
+}
+
+/** @param {any} value @param {string[]} out */
+function validateRecovery(value, out) {
+  const field = 'convergence.recovery';
+  requireField(out, field, isType(value, 'object'));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.episode`, Number.isInteger(value.episode));
+  requireField(out, `${field}.route`, isOneOf(value.route, COUNCIL_ROUTES));
+  if (value.baselineGate !== null) validateGate(value.baselineGate, `${field}.baselineGate`, out);
+  for (const name of ['test_author_agent_id', 'builder_agent_id']) {
+    requireField(out, `${field}.${name}`, isNullableString(value[name]));
+  }
+  validateRecoveryOriginal(value.original, out);
+}
+
 /**
  * @param {any} value
  * @param {string[]} out
  * @param {boolean} operation
+ * @param {boolean} requireResearchProvenance
  */
-function validateConvergence(value, out, operation) {
+function validateConvergence(value, out, operation, requireResearchProvenance) {
   requireField(out, 'convergence', isType(value, 'object'));
   if (!isType(value, 'object')) return;
   requireField(out, 'convergence.cap', Number.isInteger(value.cap));
@@ -228,6 +371,17 @@ function validateConvergence(value, out, operation) {
   requireField(out, 'convergence.council.findings', Array.isArray(council.findings));
   requireField(out, 'convergence.council.verdict', isOneOf(council.verdict, ['ship', 'block', null]));
   requireField(out, 'convergence.council.outcome', isOneOf(council.outcome, ['shipped', 'scoped-fix-shipped', 'blocked-to-operator', null]));
+  if (Object.hasOwn(council, 'researchProvenance')) {
+    requireField(
+      out,
+      'convergence.council.researchProvenance',
+      isOneOf(council.researchProvenance, ['canonical', 'historical-omitted']),
+    );
+  }
+  if (requireResearchProvenance && council.convened === true
+    && council.researchProvenance !== 'canonical') {
+    out.push('convergence.council.researchProvenance must be canonical');
+  }
   if (Array.isArray(council.members)) {
     council.members.forEach((/** @type {any} */ member, /** @type {number} */ index) => {
       const field = `convergence.council.members[${index}]`;
@@ -238,7 +392,27 @@ function validateConvergence(value, out, operation) {
       if (member.temperature !== undefined) {
         requireField(out, `${field}.temperature`, member.temperature === null || typeof member.temperature === 'number');
       }
+      if (member.inquiry !== undefined) {
+        validateCouncilInquiry(member.inquiry, `${field}.inquiry`, out);
+      }
     });
+  }
+  if (council.researchProvenance === 'canonical') {
+    requireField(
+      out,
+      'convergence.council.researchProvenance',
+      council.members.every((/** @type {any} */ member) => isType(member?.inquiry, 'object'))
+        && isType(council.synthesis, 'object')
+        && isAgentId(council.synthesizer_agent_id),
+    );
+  } else if (council.researchProvenance === 'historical-omitted') {
+    requireField(
+      out,
+      'convergence.council.researchProvenance',
+      council.members.every((/** @type {any} */ member) => !Object.hasOwn(member ?? {}, 'inquiry'))
+        && !Object.hasOwn(council, 'synthesis')
+        && !Object.hasOwn(council, 'synthesizer_agent_id'),
+    );
   }
   if (Array.isArray(council.findings)) {
     council.findings.forEach((/** @type {any} */ finding, /** @type {number} */ index) => {
@@ -257,6 +431,11 @@ function validateConvergence(value, out, operation) {
       }
     });
   }
+  if (council.synthesis !== undefined) {
+    validateCouncilSynthesis(council.synthesis, out, operation);
+    requireField(out, 'convergence.council.synthesizer_agent_id', isAgentId(council.synthesizer_agent_id));
+  }
+  if (value.recovery !== undefined) validateRecovery(value.recovery, out);
 }
 
 /** @param {any} value @param {string} field @param {string[]} out */
@@ -917,7 +1096,9 @@ export function taskSchemaViolations(task, { lite }) {
   for (const field of ['blockedReason', 'abandonReason']) {
     requireField(out, field, isNullableString(task[field]));
   }
-  if (task.convergence !== undefined) validateConvergence(task.convergence, out, operation);
+  if (task.convergence !== undefined) {
+    validateConvergence(task.convergence, out, operation, requiresCouncilResearchProvenance(task));
+  }
   if (operation) validateOperationRefutes(task, out);
   if (authoritativeOperation) {
     validateOperationState(task, out);

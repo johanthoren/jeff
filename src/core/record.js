@@ -6,9 +6,10 @@ import { collectTasks, readConfig, readTask, writeTask } from './store.js';
 import { locateTask, withStoreLock } from './store-lock.js';
 import { appendJournalEvents } from './journal.js';
 import { git, treeDirty } from './git.js';
-import { configSchemaViolations, isIsoDateTime, taskSchemaViolations } from './task-schema.js';
+import { configSchemaViolations, isIsoDateTime, RECOVERY_LINEAGE_FIELDS, taskSchemaViolations } from './task-schema.js';
 import { runInvariants } from './invariants.js';
-import { validateSpecialistReturn } from './record-contract.js';
+import { validateHistoricalCouncilRecoveryReturn, validateSpecialistReturn } from './record-contract.js';
+import { COUNCIL_ROUTES, OPERATION_COUNCIL_ROUTES, requiresCouncilResearchProvenance } from './council.js';
 import {
   activeRefuterAgentIds,
   archivedJudgeAgentIds,
@@ -16,6 +17,7 @@ import {
   isAgentId,
   isArchivedVerifierAgentForbidden,
   isRefuteAgentForbidden,
+  isRecoveryParticipantEligible,
 } from './identity-policy.js';
 import {
   currentOperationCycle,
@@ -174,6 +176,39 @@ function isPendingCouncilRecovery(task) {
     && task.convergence.council.verdict === 'block'
     && task.convergence.council.outcome === null;
 }
+/** @param {MutableRecordTask} task */
+function isPendingCodeRecovery(task) {
+  return !isOperation(task)
+    && isPendingCouncilRecovery(task)
+    && task.convergence?.recovery?.episode === 1;
+}
+
+/** @param {MutableRecordTask} task @param {string} agentId @param {'test author' | 'builder'} role */
+function assertFreshRecoveryParticipant(task, agentId, role) {
+  if (!isRecoveryParticipantEligible(task, agentId, role)) {
+    throw new Error(`[record-identity] recovery ${role} ${agentId} must use a fresh identity`);
+  }
+}
+
+
+/** @param {MutableRecordTask} task */
+function assertRecoveryJudgmentGate(task) {
+  const gate = task.tests?.gate;
+  if (!gate || gate.green !== true || gate.clean !== true
+    || typeof gate.hash !== 'string' || gate.hash.length === 0) {
+    throw new Error('[record-transition] recovery requires a current clean green gate before fresh judgment');
+  }
+}
+
+/** @param {string} root @param {MutableRecordTask} task */
+function assertCurrentRecoveryJudgmentGate(root, task) {
+  assertRecoveryJudgmentGate(task);
+  const head = git(root, ['rev-parse', 'HEAD']);
+  if (head.status !== 0 || task.tests.gate.hash !== head.stdout.trim() || treeDirty(root)) {
+    throw new Error('[record-transition] recovery gate must match the clean current checkpoint before judgment');
+  }
+}
+
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function assertCurrentJudgment(task, result) {
@@ -189,7 +224,17 @@ function assertCurrentJudgment(task, result) {
   if (isPendingCouncilRecovery(task) && builderId === result.agent_id) {
     throw new Error(`[record-identity] recovery judge ${result.agent_id} violates specialist separation`);
   }
-  if (isPendingCouncilRecovery(task) && isOperation(task)) {
+  if (isPendingCodeRecovery(task)) assertRecoveryJudgmentGate(task);
+  if (isPendingCodeRecovery(task)) {
+    const recovery = task.convergence.recovery;
+    if (recovery.test_author_agent_id === result.agent_id) {
+      throw new Error(`[record-identity] recovery test author ${result.agent_id} cannot judge its tests`);
+    }
+    if (recovery.builder_agent_id === result.agent_id) {
+      throw new Error(`[record-identity] recovery builder ${result.agent_id} cannot judge its work`);
+    }
+  }
+  if (isPendingCouncilRecovery(task) && (isOperation(task) || isPendingCodeRecovery(task))) {
     const priorRecoveryIds = new Set([
       ...archivedJudgeAgentIds(task),
       ...(task.convergence.council.members ?? [])
@@ -712,12 +757,19 @@ function recordCouncil(task, result, at) {
   if (reused) {
     throw new Error(`[record-identity] council member ${reused.agent_id} reuses a prior judge identity`);
   }
+  const synthesizerId = council.synthesizer_agent_id;
+  if (!isAgentId(synthesizerId)
+    || forbidden.has(synthesizerId)
+    || council.members.some((/** @type {any} */ member) => member.agent_id === synthesizerId)) {
+    throw new Error('[record-identity] council synthesizer must be fresh and distinct');
+  }
   if (council.verdict === 'block' && council.outcome !== null) {
     throw new Error('[record-transition] initial council block must have outcome null');
   }
 
   task.convergence.council = {
     ...council,
+    researchProvenance: 'canonical',
     cycle: activeJudgmentCycle(task),
     executor_agent_id: task.agents.executor_agent_id,
   };
@@ -731,7 +783,46 @@ function recordCouncil(task, result, at) {
     return;
   }
   const survivors = council.findings.filter((/** @type {any} */ finding) => finding.survived);
-  const destination = isOperation(task) ? 'execute' : 'implement';
+  const route = council.synthesis.selectedStrategy;
+  const allowedRoutes = isOperation(task) ? OPERATION_COUNCIL_ROUTES : COUNCIL_ROUTES;
+  if (!allowedRoutes.includes(route)) {
+    throw new Error(`[record-transition] ${isOperation(task) ? 'operation' : 'code'} council selected an incompatible recovery route`);
+  }
+  if (!isOperation(task)) {
+    /** @type {Record<string, any>} */
+    const originalLineage = {
+      plan: task.plan === undefined ? null : structuredClone(task.plan),
+      test_author_agent_id: task.tests?.authored_by_agent_id ?? null,
+      builder_agent_id: task.agents?.implementer_agent_id ?? null,
+      implement: task.implement === undefined ? null : structuredClone(task.implement),
+    };
+    task.convergence.recovery = {
+      episode: 1,
+      route,
+      baselineGate: task.tests?.gate ? structuredClone(task.tests.gate) : null,
+      test_author_agent_id: null,
+      builder_agent_id: null,
+      original: {
+        complexity: task.complexity,
+        audit_required: task.audit.required,
+        absentLineage: RECOVERY_LINEAGE_FIELDS.filter((field) => originalLineage[field] === null),
+        ...originalLineage,
+      },
+    };
+  }
+  if (route === 'operator-escalation') {
+    blockCouncilRecovery(task);
+    return;
+  }
+  const destination = isOperation(task)
+    ? 'execute'
+    : (/** @type {Record<string, string>} */ ({
+      'confined-repair': 'implement',
+      refactor: 'refactor',
+      'test-contract-repair': 'plan',
+      'causal-subgraph-reconstruction': 'plan',
+      'full-replan': 'plan',
+    }))[route];
   task.kickbacks = [...task.kickbacks, {
     from: council.stage,
     to: destination,
@@ -742,12 +833,37 @@ function recordCouncil(task, result, at) {
   task.status = 'in_progress';
 }
 
-/** @param {Record<string, any>} pending @param {Record<string, any>} returned */
-function isPreservedCouncilBlock(pending, returned) {
-  const { cycle: _cycle, executor_agent_id: _executorAgentId, ...specialistFields } = pending;
+/** @param {MutableRecordTask} task @param {Record<string, any>} returned */
+function isPreservedCouncilBlock(task, returned) {
+  const pending = task.convergence.council;
+  const {
+    cycle: _pendingCycle,
+    executor_agent_id: _pendingExecutorAgentId,
+    researchProvenance: _pendingResearchProvenance,
+    ...pendingSpecialistFields
+  } = pending;
+  const {
+    cycle: _returnedCycle,
+    executor_agent_id: _returnedExecutorAgentId,
+    researchProvenance: _returnedResearchProvenance,
+    ...returnedSpecialistFields
+  } = returned;
+  const historicalOmission = !requiresCouncilResearchProvenance(task)
+    && pending.synthesis === undefined
+    && pending.synthesizer_agent_id === undefined
+    && returned.synthesis === undefined
+    && pending.members.every((/** @type {any} */ member) => member.inquiry === undefined)
+    && returned.members.every((/** @type {any} */ member) => member.inquiry === undefined);
+  if (historicalOmission) {
+    delete pendingSpecialistFields.synthesizer_agent_id;
+    delete returnedSpecialistFields.synthesizer_agent_id;
+  }
   return pending.verdict === 'block'
     && pending.outcome === null
-    && isDeepStrictEqual(returned, { ...specialistFields, outcome: returned.outcome });
+    && isDeepStrictEqual(returnedSpecialistFields, {
+      ...pendingSpecialistFields,
+      outcome: returnedSpecialistFields.outcome,
+    });
 }
 
 /** @param {MutableRecordTask} task */
@@ -764,7 +880,7 @@ function blockCouncilRecovery(task) {
 /** @param {MutableRecordTask} task @param {Record<string, any>} council */
 function recordCouncilRecovery(task, council) {
   const pending = task.convergence.council;
-  if (!isPreservedCouncilBlock(pending, council)) {
+  if (!isPreservedCouncilBlock(task, council)) {
     throw new Error('[record-transition] council recovery must preserve the recorded block');
   }
   const recoveryStage = isOperation(task) ? 'execute' : 'implement';
@@ -794,11 +910,25 @@ function recordCouncilRecovery(task, council) {
       judgmentsPass = reviews.length === requiredReviews
         && reviews.every(isPassingJudgment)
         && (!task.audit.required || isPassingJudgment(task.audit));
-      const scopedImplementer = task.implement?.agent_id;
-      hasScopedChange = task.judgmentHistory?.length > 0
-        && task.implement?.result === 'green'
-        && typeof scopedImplementer === 'string'
-        && task.agents.implementer_agent_id === scopedImplementer;
+      const recovery = task.convergence.recovery;
+      const hasRecoveryHistory = task.judgmentHistory?.length > 0;
+      if (recovery?.route === 'test-contract-repair') {
+        hasScopedChange = hasRecoveryHistory
+          && isAgentId(recovery.test_author_agent_id)
+          && task.tests?.authored_by_agent_id === recovery.test_author_agent_id;
+      } else if (recovery?.route === 'refactor') {
+        hasScopedChange = hasRecoveryHistory
+          && isAgentId(recovery.builder_agent_id)
+          && task.refactor?.agent_id === recovery.builder_agent_id
+          && task.refactor?.result === 'refactored';
+      } else {
+        const scopedImplementer = task.implement?.agent_id;
+        hasScopedChange = hasRecoveryHistory
+          && task.implement?.result === 'green'
+          && typeof scopedImplementer === 'string'
+          && task.agents.implementer_agent_id === scopedImplementer
+          && (recovery === undefined || recovery.builder_agent_id === scopedImplementer);
+      }
       const gate = task.tests?.gate;
       if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
         throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
@@ -845,6 +975,7 @@ function judgmentSources(task) {
 
 /** @param {MutableRecordTask} task @param {boolean} isScopedCouncilFix */
 function isRefactorOwed(task, isScopedCouncilFix) {
+  if (isScopedCouncilFix) return false;
   if (task.plan?.refactorOpportunity !== null) return true;
   return judgmentSources(task).some(({ source, outcome }) => (
     (outcome?.findings ?? []).some((/** @type {any} */ finding) => (
@@ -852,11 +983,6 @@ function isRefactorOwed(task, isScopedCouncilFix) {
       && finding.kickTo === 'refactor'
       && finding.refute?.source === source
       && finding.refute.verdict === 'survives'
-      && (!isScopedCouncilFix || task.convergence.council.findings.some((/** @type {any} */ councilFinding) => (
-        councilFinding.source === source
-        && councilFinding.summary === finding.what
-        && councilFinding.survived === true
-      )))
     ))
   ));
 }
@@ -884,7 +1010,11 @@ export function transitionTask(task, stage, result) {
   const isJudgment = stage === 'audit' || (operation ? stage === 'verify' : stage === 'review');
   const recoveryStage = operation ? 'execute' : 'implement';
   const isLegacyCodePlanResume = !operation && stage === 'plan' && next.stage === 'test';
-  if (stage === recoveryStage && next.status === 'blocked'
+  if (((operation && stage === 'execute')
+      || (!operation
+        && ['plan', 'implement', 'refactor'].includes(stage)
+        && next.convergence?.recovery?.episode === 1))
+    && next.status === 'blocked'
     && next.convergence?.council?.outcome === 'blocked-to-operator') {
     throw new Error('[record-transition] task is blocked after failed council recovery');
   }
@@ -917,8 +1047,23 @@ export function transitionTask(task, stage, result) {
   }
 
   if (stage === 'plan') {
-    next.complexity = result.complexity;
-    next.audit.required = result.auditRequired;
+    const pendingRecovery = isPendingCodeRecovery(next);
+    if (pendingRecovery) {
+      const route = next.convergence.recovery.route;
+      if (!['test-contract-repair', 'causal-subgraph-reconstruction', 'full-replan'].includes(route)
+        || !['red', 'escalation'].includes(result.result)) {
+        throw new Error('[record-transition] recovery plan does not match the selected council route');
+      }
+      assertFreshRecoveryParticipant(next, result.agent_id, 'test author');
+      archiveAndResetJudgments(next, at);
+      next.convergence.recovery.test_author_agent_id = result.agent_id;
+    }
+    next.complexity = pendingRecovery && next.convergence.recovery.original.complexity === 'complex'
+      ? 'complex'
+      : result.complexity;
+    next.audit.required = pendingRecovery
+      ? next.convergence.recovery.original.audit_required || result.auditRequired
+      : result.auditRequired;
     if (operation) {
       if (result.result === 'escalation') {
         next.plan = {
@@ -952,7 +1097,18 @@ export function transitionTask(task, stage, result) {
         escalation: result.escalation,
         refactorOpportunity: result.refactorOpportunity,
       };
-      next.stage = result.result === 'escalation' ? 'capture' : 'implement';
+      if (pendingRecovery) {
+        invalidateVerification(next);
+        if (result.result === 'escalation') {
+          blockCouncilRecovery(next);
+          return /** @type {TaskJson} */ (next);
+        }
+        next.stage = next.convergence.recovery.route === 'test-contract-repair'
+          ? 'review'
+          : 'implement';
+      } else {
+        next.stage = result.result === 'escalation' ? 'capture' : 'implement';
+      }
     }
   } else if (stage === 'execute') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
@@ -1040,6 +1196,15 @@ export function transitionTask(task, stage, result) {
     }
   } else if (stage === 'implement') {
     const isScopedCouncilFix = isPendingCouncilRecovery(next);
+    const pendingRecovery = isPendingCodeRecovery(next);
+    if (pendingRecovery) {
+      if (!['confined-repair', 'causal-subgraph-reconstruction', 'full-replan']
+        .includes(next.convergence.recovery.route)) {
+        throw new Error('[record-transition] recovery implement does not match the selected council route');
+      }
+      assertFreshRecoveryParticipant(next, result.agent_id, 'builder');
+      next.convergence.recovery.builder_agent_id = result.agent_id;
+    }
     next.agents.implementer_agent_id = result.agent_id;
     next.implement = {
       agent_id: result.agent_id,
@@ -1068,6 +1233,14 @@ export function transitionTask(task, stage, result) {
       else next.stage = 'review';
     }
   } else if (stage === 'refactor') {
+    const pendingRecovery = isPendingCodeRecovery(next);
+    if (pendingRecovery) {
+      if (next.convergence.recovery.route !== 'refactor') {
+        throw new Error('[record-transition] recovery refactor does not match the selected council route');
+      }
+      assertFreshRecoveryParticipant(next, result.agent_id, 'builder');
+      next.convergence.recovery.builder_agent_id = result.agent_id;
+    }
     next.refactor = {
       agent_id: result.agent_id,
       result: result.result,
@@ -1076,6 +1249,10 @@ export function transitionTask(task, stage, result) {
       greenRun: result.greenRun,
       summary: result.summary,
     };
+    if (pendingRecovery && (result.result === 'clean' || result.files.length === 0)) {
+      blockCouncilRecovery(next);
+      return /** @type {TaskJson} */ (next);
+    }
     const scopedJudgmentRepair = resetJudgmentsAfterFix(next, at, result.files);
     if (scopedJudgmentRepair) {
       next.refactor.repairRound = currentCodeRepairRound(next);
@@ -1271,7 +1448,41 @@ export async function recordApproval(root, id, grantedBy) {
   }, { journal: { event: 'record', stage: 'execute', agent: grantedBy } });
 }
 
-/** @param {string} root @param {string} stage @param {string} id @param {string} file @param {string} [observedAgentId] */
+/**
+ * @param {Record<string, any>} specialistReturn
+ * @param {unknown} observedIdentity
+ */
+function bindCouncilObservedIdentity(specialistReturn, observedIdentity) {
+  if (observedIdentity === null || typeof observedIdentity !== 'object') {
+    throw new Error('[record-identity] observed council identity is invalid');
+  }
+  const observed = /** @type {Record<string, any>} */ (observedIdentity);
+  const memberIds = observed.member_agent_ids;
+  const returnedIds = specialistReturn.council.members
+    .map((/** @type {Record<string, any>} */ member) => member.agent_id);
+  if (!Array.isArray(memberIds)
+    || memberIds.length !== 3
+    || memberIds.some((agentId) => !isAgentId(agentId))
+    || !isDeepStrictEqual(memberIds, returnedIds)
+    || !isAgentId(observed.synthesizer_agent_id)) {
+    throw new Error('[record-identity] observed council identities do not match the aggregate');
+  }
+  return {
+    ...specialistReturn,
+    council: {
+      ...specialistReturn.council,
+      synthesizer_agent_id: observed.synthesizer_agent_id,
+    },
+  };
+}
+
+/**
+ * @param {string} root
+ * @param {string} stage
+ * @param {string} id
+ * @param {string} file
+ * @param {string | {member_agent_ids: string[], synthesizer_agent_id: string}} [observedAgentId]
+ */
 export async function recordSpecialistFile(root, stage, id, file, observedAgentId) {
   let parsed;
   try { parsed = JSON.parse(await readFile(file, 'utf8')); }
@@ -1279,27 +1490,66 @@ export async function recordSpecialistFile(root, stage, id, file, observedAgentI
   return recordSpecialistReturn(root, stage, id, parsed, observedAgentId);
 }
 
-/** @param {string} root @param {string} stage @param {string} id @param {unknown} value @param {string} [observedAgentId] */
+/**
+ * @param {string} root
+ * @param {string} stage
+ * @param {string} id
+ * @param {unknown} value
+ * @param {string | {member_agent_ids: string[], synthesizer_agent_id: string}} [observedAgentId]
+ */
 export async function recordSpecialistReturn(root, stage, id, value, observedAgentId) {
-  const specialistReturn = validateSpecialistReturn(stage, value);
+  let specialistReturn;
+  try {
+    specialistReturn = validateSpecialistReturn(stage, value);
+  } catch (error) {
+    if (stage !== 'council') throw error;
+    specialistReturn = validateHistoricalCouncilRecoveryReturn(value);
+  }
   if (stage !== 'council' && (typeof observedAgentId !== 'string' || observedAgentId.length === 0)) {
     throw new Error('[record-identity] observed agent is invalid');
   }
+  /** @type {Record<string, any>} */
   const transitionReturn = stage === 'council'
-    ? specialistReturn
+    ? bindCouncilObservedIdentity(specialistReturn, observedAgentId)
     : { ...specialistReturn, agent_id: observedAgentId };
+  /** @type {string | undefined} */
+  let currentPipelineVersion;
+  if (stage === 'council') {
+    try {
+      const packageJson = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
+      if (typeof packageJson.version !== 'string' || packageJson.version.length === 0) throw new Error();
+      currentPipelineVersion = packageJson.version;
+    } catch {
+      throw new Error('[record-transition] could not read the installed pipeline version');
+    }
+  }
   /** @type {import('./journal.js').JournalAppend | import('./journal.js').JournalAppend[]} */
   const journal = stage === 'council'
-    ? specialistReturn.council.members.map((/** @type {{agent_id: string}} */ member) => ({
-      event: 'record',
-      stage: 'council',
-      agent: member.agent_id,
-    }))
+    ? [
+        ...transitionReturn.council.members.map((/** @type {{agent_id: string}} */ member) => ({
+          event: 'record',
+          stage: 'council',
+          agent: member.agent_id,
+        })),
+        {
+          event: 'record',
+          stage: 'council',
+          agent: transitionReturn.council.synthesizer_agent_id,
+        },
+      ]
     : { event: 'record', stage, agent: /** @type {string} */ (observedAgentId) };
   return updateTask(
     root,
     id,
-    (task) => transitionTask(task, stage, transitionReturn),
+    (task) => {
+      if (['review', 'audit'].includes(stage) && isPendingCodeRecovery(task)) {
+        assertCurrentRecoveryJudgmentGate(root, task);
+      }
+      const versionedTask = stage === 'council' && task.convergence?.council?.convened !== true && !requiresCouncilResearchProvenance(task)
+        ? { ...task, pipelineVersion: currentPipelineVersion }
+        : task;
+      return transitionTask(versionedTask, stage, transitionReturn);
+    },
     {
       allowTransientTerminal: true,
       journal,

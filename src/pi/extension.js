@@ -4,7 +4,11 @@ import { truncateToVisualLines } from '@earendil-works/pi-coding-agent';
 import { readConfig } from '../core/store.js';
 import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
 import { recordSpecialistReturn } from '../core/record.js';
-import { validateSpecialistReturn } from '../core/record-contract.js';
+import {
+  validateCouncilInquiryReturn,
+  validateCouncilSynthesisReturn,
+  validateSpecialistReturn,
+} from '../core/record-contract.js';
 
 const DISPLAY_ITEM_LIMIT = 8;
 const DISPLAY_TEXT_LIMIT = 96;
@@ -299,7 +303,7 @@ export default function jeffExtension(pi, dependencies = {}) {
     name: 'cook_dispatch',
     label: 'Cook Dispatch',
     description: 'Dispatch a jeff specialist in a fresh Pi role session.',
-    promptSnippet: 'Dispatch a jeff plan, implement, refactor, execute, review, verify, audit, or refute role session.',
+    promptSnippet: 'Dispatch a jeff plan, implement, refactor, execute, review, verify, audit, refute, or read-only council role session.',
     parameters: DispatchParams,
     renderCall: renderDispatchCall,
     renderResult: renderDispatchResult,
@@ -312,6 +316,10 @@ export default function jeffExtension(pi, dependencies = {}) {
      */
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       await assertActiveJeffProject(ctx.cwd);
+      const isCouncilWork = ['council', 'council-synthesis'].includes(params.stage);
+      if (isCouncilWork && params.taskId !== undefined) {
+        throw new Error('cook_dispatch: council sessions are read-only and cannot record a task');
+      }
       const result = await dispatchRoleSession({
         stage: params.stage,
         brief: params.brief,
@@ -326,7 +334,9 @@ export default function jeffExtension(pi, dependencies = {}) {
       let specialistReturn;
       try {
         specialistReturn = JSON.parse(result.transcript);
-        validateSpecialistReturn(params.stage, specialistReturn);
+        if (params.stage === 'council') validateCouncilInquiryReturn(specialistReturn);
+        else if (params.stage === 'council-synthesis') validateCouncilSynthesisReturn(specialistReturn);
+        else validateSpecialistReturn(params.stage, specialistReturn);
       } catch {
         throw new Error('cook_dispatch: specialist return is invalid');
       }
@@ -339,7 +349,9 @@ export default function jeffExtension(pi, dependencies = {}) {
         }
       }
 
-      const details = displayProjection(specialistReturn);
+      const details = isCouncilWork
+        ? { ...specialistReturn, agent_id: result.agent_id }
+        : displayProjection(specialistReturn);
       return {
         content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
         details,

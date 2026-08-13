@@ -299,15 +299,17 @@ async function main() {
 
   if (sub === 'record') {
     const councilRecord = rest[0] === 'council';
-    const expectedArguments = councilRecord ? 3 : 4;
+    const expectedArguments = councilRecord ? 7 : 4;
     if (rest.length !== expectedArguments) {
       process.stderr.write('cook: usage: cook record <stage> <id> <observed-agent-id> <file>\n');
-      process.stderr.write('       or: cook record council <id> <file>\n');
+      process.stderr.write('       or: cook record council <id> <member-agent-id> <member-agent-id> <member-agent-id> <synthesizer-agent-id> <file>\n');
       return process.exit(1);
     }
     try {
-      const observedAgentId = councilRecord ? undefined : rest[2];
-      const file = councilRecord ? rest[2] : rest[3];
+      const observedAgentId = councilRecord
+        ? { member_agent_ids: rest.slice(2, 5), synthesizer_agent_id: rest[5] }
+        : rest[2];
+      const file = councilRecord ? rest[6] : rest[3];
       await recordSpecialistFile(root, rest[0], rest[1], file, observedAgentId);
       return emit({ code: 0, stdout: [`cook: recorded ${rest[0]} for task ${rest[1]}`], stderr: [] });
     } catch (error) {

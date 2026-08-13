@@ -168,10 +168,70 @@
  */
 
 /**
+ * @typedef {Object} CouncilFindingVote
+ * @property {string} id
+ * @property {boolean} blocking
+ * @property {string} rationale
+ */
+
+/**
+ * @template {CodeCouncilRoute | OperationCouncilRoute} Route
+ * @typedef {Object} CouncilInquiry
+ * @property {string} question
+ * @property {string} problemRestatement
+ * @property {string[]} causalHypotheses
+ * @property {Route[]} solutionStrategies
+ * @property {CouncilFindingVote[]} findingVotes
+ * @property {string[]} decisiveEvidence
+ */
+
+/** @typedef {'confined-repair' | 'test-contract-repair' | 'refactor' | 'causal-subgraph-reconstruction' | 'full-replan' | 'operator-escalation'} CodeCouncilRoute */
+/** @typedef {'scoped-execute' | 'operator-escalation'} OperationCouncilRoute */
+/** @typedef {'canonical' | 'historical-omitted'} CouncilResearchProvenance */
+
+/**
+ * @template {CodeCouncilRoute | OperationCouncilRoute} Route
+ * @typedef {Object} CouncilSynthesisFields
+ * @property {string} problemRestatement
+ * @property {string[]} survivingBlockers
+ * @property {string[]} causalHypotheses
+ * @property {Route[]} solutionStrategies
+ * @property {Route[]} rejectedAlternatives
+ * @property {string[]} decisiveEvidence
+ */
+
+/** @typedef {CouncilSynthesisFields<CodeCouncilRoute> & {selectedStrategy: CodeCouncilRoute}} CodeCouncilSynthesis */
+/** @typedef {CouncilSynthesisFields<OperationCouncilRoute> & {selectedStrategy: OperationCouncilRoute}} OperationCouncilSynthesis */
+/** @typedef {CodeCouncilSynthesis | OperationCouncilSynthesis} CouncilSynthesis */
+
+/**
+ * @typedef {Object} OriginalDeliveryLineage
+ * @property {'simple' | 'complex'} complexity
+ * @property {boolean} audit_required
+ * @property {('plan' | 'test_author_agent_id' | 'builder_agent_id' | 'implement')[]} absentLineage
+ * @property {Record<string, unknown> | null} plan
+ * @property {string | null} test_author_agent_id
+ * @property {string | null} builder_agent_id
+ * @property {Record<string, unknown> | null} implement
+ */
+
+/**
+ * @typedef {Object} CouncilRecovery
+ * @property {1} episode
+ * @property {CodeCouncilRoute} route
+ * @property {TestGate | null} baselineGate
+ * @property {string | null} test_author_agent_id
+ * @property {string | null} builder_agent_id
+ * @property {OriginalDeliveryLineage} original
+ */
+
+/**
+ * @template {CodeCouncilRoute | OperationCouncilRoute} Route
  * @typedef {Object} CouncilMember
  * @property {string} agent_id
  * @property {CouncilLens} lens
  * @property {number | null} temperature
+ * @property {CouncilInquiry<Route>} [inquiry]
  */
 
 /**
@@ -201,14 +261,15 @@
  * @typedef {Object} CodeConvergence
  * @property {number} cap
  * @property {{review: ConvergenceCounter, audit: ConvergenceCounter}} stages
- * @property {{convened: boolean, stage: 'review' | 'audit' | null, members: CouncilMember[], findings: CouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {{convened: boolean, stage: 'review' | 'audit' | null, synthesizer_agent_id?: string, researchProvenance?: CouncilResearchProvenance, members: CouncilMember<CodeCouncilRoute>[], findings: CouncilFinding[], synthesis?: CodeCouncilSynthesis, verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {CouncilRecovery} [recovery]
  */
 
 /**
  * @typedef {Object} OperationConvergence
  * @property {number} cap
  * @property {{verify: ConvergenceCounter, audit: ConvergenceCounter}} stages
- * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, members: CouncilMember[], findings: OperationCouncilFinding[], verdict: CouncilVerdict, outcome: CouncilOutcome}} council
+ * @property {{convened: boolean, stage: 'verify' | 'audit' | null, cycle?: number, executor_agent_id?: string, synthesizer_agent_id?: string, researchProvenance?: CouncilResearchProvenance, members: CouncilMember<OperationCouncilRoute>[], findings: OperationCouncilFinding[], synthesis?: OperationCouncilSynthesis, verdict: CouncilVerdict, outcome: CouncilOutcome}} council
  */
 
 /** @typedef {CodeConvergence | OperationConvergence} Convergence */
