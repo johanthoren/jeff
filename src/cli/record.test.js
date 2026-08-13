@@ -144,7 +144,7 @@ function observedAgentId(value) {
 function recordSpecialistReturn(root, stage, id, value) {
   const observedIdentity = stage === 'council'
     ? {
-        member_agent_ids: value.council.members.map((member) => member.agent_id),
+        member_agent_ids: value.council.members.map((/** @type {any} */ member) => member.agent_id),
         synthesizer_agent_id: COUNCIL_SYNTHESIZER_AGENT_ID,
       }
     : observedAgentId(value);
@@ -624,7 +624,7 @@ function mixedStageCouncilReturn(outcome = null) {
     ...result,
     council: {
       ...result.council,
-      members: result.council.members.map((member) => ({
+      members: result.council.members.map((/** @type {any} */ member) => ({
         ...member,
         inquiry: {
           ...member.inquiry,
@@ -1437,7 +1437,7 @@ test('issue 176 explicit operation reverify preserves execution and fails closed
       ...result,
       council: {
         ...result.council,
-        findings: result.council.findings.map((councilFinding) => ({
+        findings: result.council.findings.map((/** @type {any} */ councilFinding) => ({
           ...councilFinding,
           summary: finding.what,
         })),
@@ -2424,7 +2424,7 @@ test('issue 101 cycle 2: either capped operation source triggers one council wit
       ...baseCouncil,
       council: {
         ...baseCouncil.council,
-        members: baseCouncil.council.members.map((member, index) => ({
+        members: baseCouncil.council.members.map((/** @type {any} */ member, /** @type {number} */ index) => ({
           ...member,
           inquiry: {
             ...member.inquiry,
@@ -2473,6 +2473,7 @@ test('issue 101 cycle 2: either capped operation source triggers one council wit
 
 test('issue 101 cycle 2: scoped execute kickbacks terminate but an exact approval stop remains resumable', async (t) => {
   const mutation = 'Rewrite the exact council-scoped registry entry.';
+  /** @type {Array<[string, () => Record<string, any>]>} */
   const attempts = [
     ['executed', () => executeReturn('later-executed')],
     ['kickback', () => executeReturn('later-kickback', {
@@ -4766,7 +4767,7 @@ test('issue 238 markerless historical councils complete open recoveries', async 
         assert.equal(Object.hasOwn(recovered.convergence.council, 'researchProvenance'), false);
         assert.equal(Object.hasOwn(recovered.convergence.council, 'synthesizer_agent_id'), false);
         assert.equal(Object.hasOwn(recovered.convergence.council, 'synthesis'), false);
-        assert.equal(recovered.convergence.council.members.some((member) => Object.hasOwn(member, 'inquiry')), false);
+        assert.equal(recovered.convergence.council.members.some((/** @type {any} */ member) => Object.hasOwn(member, 'inquiry')), false);
       } finally {
         await rm(root, { recursive: true, force: true });
       }
@@ -4792,7 +4793,7 @@ test('issue 238 markerless historical councils complete open recoveries', async 
         assert.equal(Object.hasOwn(recovered.convergence.council, 'researchProvenance'), false);
         assert.equal(Object.hasOwn(recovered.convergence.council, 'synthesizer_agent_id'), false);
         assert.equal(Object.hasOwn(recovered.convergence.council, 'synthesis'), false);
-        assert.equal(recovered.convergence.council.members.some((member) => Object.hasOwn(member, 'inquiry')), false);
+        assert.equal(recovered.convergence.council.members.some((/** @type {any} */ member) => Object.hasOwn(member, 'inquiry')), false);
       } finally {
         await rm(root, { recursive: true, force: true });
       }
@@ -5131,7 +5132,7 @@ test('issue 67 council scoped completion fails closed when git status probe fail
     const councilResult = mixedStageCouncilReturn('scoped-fix-shipped');
     const file = await writeReturn(root, councilResult);
     const observedIdentity = {
-      member_agent_ids: councilResult.council.members.map((member) => member.agent_id),
+      member_agent_ids: councilResult.council.members.map((/** @type {any} */ member) => member.agent_id),
       synthesizer_agent_id: COUNCIL_SYNTHESIZER_AGENT_ID,
     };
     const recorded = spawnSync(process.execPath, [
@@ -5333,7 +5334,7 @@ test('Item 3 journal contract', async (t) => {
   await t.test('successful council record appends one ordered real-agent event per member', async () => {
     const councilResult = councilReturn();
     const councilAgents = [
-      ...councilResult.council.members.map(({ agent_id }) => agent_id),
+      ...councilResult.council.members.map((/** @type {{agent_id: string}} */ { agent_id }) => agent_id),
       COUNCIL_SYNTHESIZER_AGENT_ID,
     ];
     const { root, taskDir } = await makeRoot(councilTask());
@@ -6932,7 +6933,7 @@ function issue237CouncilReturn(strategy, result = councilReturn()) {
     selected.council.synthesis.solutionStrategies.push(strategy);
   }
   selected.council.synthesis.rejectedAlternatives =
-    selected.council.synthesis.solutionStrategies.filter((route) => route !== strategy);
+    selected.council.synthesis.solutionStrategies.filter((/** @type {string} */ route) => route !== strategy);
   return selected;
 }
 
@@ -6996,7 +6997,7 @@ function issue238ResearchCollectionVariant(field, variant) {
     ? [values, [values[1], values[2], values[0]], [values[2], values[0], values[1]]]
     : [values, [values[0], ...values], [...values, values[2]]];
   const inquiry = structuredClone(result.council.members[0].inquiry);
-  result.council.members = result.council.members.map((member, index) => ({
+  result.council.members = result.council.members.map((/** @type {any} */ member, /** @type {number} */ index) => ({
     ...member,
     inquiry: {
       ...structuredClone(inquiry),
@@ -7015,6 +7016,7 @@ const ISSUE_237_BASELINE_GATE = {
 };
 
 test('issue 237 council selects every bounded code recovery route without leaving the stage machine', async (t) => {
+  /** @type {Array<[string, string, string, string | null]>} */
   const cases = [
     ['confined-repair', 'implement', 'in_progress', null],
     ['test-contract-repair', 'plan', 'in_progress', null],
@@ -7320,6 +7322,7 @@ test('issue 239 live council synthesis requires causal hypotheses and decisive e
 });
 
 test('issue 237 malformed research or synthesis is rejected atomically', async (t) => {
+  /** @type {Array<[string, (value: any) => void]>} */
   const invalidReturns = [
     ['missing one independent inquiry', (value) => {
       delete value.council.members[2].inquiry;
@@ -7344,9 +7347,9 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
         const inquiry = structuredClone(value.council.members[0].inquiry);
         inquiry.question += suffix;
         inquiry.problemRestatement += suffix;
-        inquiry.causalHypotheses = inquiry.causalHypotheses.map((item) => `${item}${suffix}`);
-        inquiry.decisiveEvidence = inquiry.decisiveEvidence.map((item) => `${item}${suffix}`);
-        inquiry.findingVotes = inquiry.findingVotes.map((vote) => ({
+        inquiry.causalHypotheses = inquiry.causalHypotheses.map((/** @type {any} */ item) => `${item}${suffix}`);
+        inquiry.decisiveEvidence = inquiry.decisiveEvidence.map((/** @type {any} */ item) => `${item}${suffix}`);
+        inquiry.findingVotes = inquiry.findingVotes.map((/** @type {any} */ vote) => ({
           ...vote,
           rationale: `${vote.rationale}${suffix}`,
         }));
@@ -7506,7 +7509,7 @@ test('issue 237 malformed research or synthesis is rejected atomically', async (
 
 test('issue 238 unordered inquiry research rejects order and repetition atomically', async (t) => {
   for (const field of ISSUE_238_UNORDERED_INQUIRY_FIELDS) {
-    for (const variant of ['order', 'repetition']) {
+    for (const variant of /** @type {Array<'order' | 'repetition'>} */ (['order', 'repetition'])) {
       await t.test(`${field} ${variant}-only difference`, async () => {
         const { task, result } = issue238ResearchCollectionVariant(field, variant);
         const { root, taskDir } = await makeRoot(task);
@@ -7576,6 +7579,7 @@ test('issue 239 current councils advance legacy provenance and preserve current 
 });
 
 test('issue 237 live council binds member and synthesizer identities to host observations', async (t) => {
+  /** @type {Array<[string, {member_agent_ids: string[], synthesizer_agent_id: string}]>} */
   const cases = [
     ['member', {
       member_agent_ids: ['spoofed-member', 'council-security', 'council-pragmatist'],
@@ -7618,7 +7622,7 @@ test('issue 237 cook record council accepts four exact host observations and rej
     assert.equal(result.code, 0, result.stderr);
     const recorded = await readTask(validRoot.taskDir);
     assert.deepEqual(
-      recorded.convergence.council.members.map((member) => member.agent_id),
+      recorded.convergence.council.members.map((/** @type {any} */ member) => member.agent_id),
       validObservations.slice(0, 3),
     );
     assert.equal(recorded.convergence.council.synthesizer_agent_id, validObservations[3]);
@@ -7831,6 +7835,7 @@ test('issue 237 recovery marks lineage that was legitimately absent at council e
 });
 
 test('issue 238 direct refactor terminal conditions independently exhaust the sole episode', async (t) => {
+  /** @type {Array<[string, {result: string, files: string[], summary: string[]}]>} */
   const cases = [
     ['clean with nonempty files', {
       result: 'clean',
@@ -7922,10 +7927,10 @@ test('issue 237 operation council honors its scoped-execute synthesis route', as
     }
   });
 
-  for (const [name, strategies] of [
+  for (const [name, strategies] of /** @type {Array<[string, string[]]>} */ ([
     ['operation inquiry rejects code-only strategies', ['confined-repair', 'operator-escalation']],
     ['operation inquiry requires materially different strategies', ['scoped-execute', 'scoped-execute']],
-  ]) {
+  ])) {
     await t.test(name, async () => {
       const { root, taskDir } = await makeRoot(operationCouncilTask());
       try {

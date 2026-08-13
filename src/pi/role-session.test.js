@@ -1569,10 +1569,11 @@ test('issue 237 Pi dispatch exposes fresh read-only inquiry and synthesis sessio
       join(repoRoot, 'agents', 'cook-council-synthesis.md'),
       '---\nname: cook-council-synthesis\neffort: xhigh\n---\nIndependently synthesize the council inquiries.',
     );
+    /** @type {any[]} */
     const captured = [];
     const sdk = {
       SessionManager: { inMemory: () => ({}) },
-      createAgentSession: async (options) => {
+      createAgentSession: async (/** @type {any} */ options) => {
         captured.push(options);
         return {
           session: {

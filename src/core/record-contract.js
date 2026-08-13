@@ -330,7 +330,7 @@ function validateCouncilSynthesis(value, path) {
   const routes = [...COUNCIL_ROUTES, ...OPERATION_COUNCIL_ROUTES];
   oneOf(value.selectedStrategy, `${path}.selectedStrategy`, routes);
   if (value.solutionStrategies.length < 2
-    || !value.solutionStrategies.every((route) => routes.includes(route))
+    || !value.solutionStrategies.every((/** @type {string} */ route) => routes.includes(route))
     || !value.solutionStrategies.includes(value.selectedStrategy)) {
     invalid(`${path}.solutionStrategies`);
   }

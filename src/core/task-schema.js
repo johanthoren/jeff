@@ -305,7 +305,7 @@ function validateRecoveryOriginal(value, out) {
   requireField(out, `${field}.audit_required`, typeof value.audit_required === 'boolean');
   const absenceValid = Array.isArray(value.absentLineage)
     && new Set(value.absentLineage).size === value.absentLineage.length
-    && value.absentLineage.every((name) => RECOVERY_LINEAGE_FIELDS.includes(name));
+    && value.absentLineage.every((/** @type {unknown} */ name) => (/** @type {ReadonlyArray<unknown>} */ (RECOVERY_LINEAGE_FIELDS)).includes(name));
   requireField(out, `${field}.absentLineage`, absenceValid);
   const absent = new Set(absenceValid ? value.absentLineage : []);
   requireField(out, `${field}.plan`, Object.hasOwn(value, 'plan')
@@ -342,6 +342,7 @@ function validateRecovery(value, out) {
  * @param {any} value
  * @param {string[]} out
  * @param {boolean} operation
+ * @param {boolean} requireResearchProvenance
  */
 function validateConvergence(value, out, operation, requireResearchProvenance) {
   requireField(out, 'convergence', isType(value, 'object'));
@@ -400,7 +401,7 @@ function validateConvergence(value, out, operation, requireResearchProvenance) {
     requireField(
       out,
       'convergence.council.researchProvenance',
-      council.members.every((member) => isType(member?.inquiry, 'object'))
+      council.members.every((/** @type {any} */ member) => isType(member?.inquiry, 'object'))
         && isType(council.synthesis, 'object')
         && isAgentId(council.synthesizer_agent_id),
     );
@@ -408,7 +409,7 @@ function validateConvergence(value, out, operation, requireResearchProvenance) {
     requireField(
       out,
       'convergence.council.researchProvenance',
-      council.members.every((member) => !Object.hasOwn(member ?? {}, 'inquiry'))
+      council.members.every((/** @type {any} */ member) => !Object.hasOwn(member ?? {}, 'inquiry'))
         && !Object.hasOwn(council, 'synthesis')
         && !Object.hasOwn(council, 'synthesizer_agent_id'),
     );

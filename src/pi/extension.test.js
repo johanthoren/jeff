@@ -947,7 +947,7 @@ test('issue 237 registered Pi tool returns validated council work with host-obse
     await mkdir(join(cwd, '.jeff'));
     await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
     const tool = registeredDispatchTool({
-      dispatchRoleSession: async ({ stage }) => ({
+      dispatchRoleSession: async (/** @type {any} */ { stage }) => ({
         stage,
         agent_id: stage === 'council' ? 'host-inquiry-agent' : 'host-synthesis-agent',
         brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },

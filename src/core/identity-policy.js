@@ -1,11 +1,11 @@
 // @ts-check
 
-/** @param {unknown} value */
+/** @param {unknown} value @returns {value is string} */
 export function isAgentId(value) {
   return typeof value === 'string' && value.length > 0;
 }
 
-/** @param {unknown[]} values */
+/** @param {unknown[]} values @returns {string[]} */
 function agentIds(values) {
   return values.filter(isAgentId);
 }
@@ -85,7 +85,7 @@ export function forbiddenRefuteAgentIds(task) {
 
 /** @param {Record<string, any>} task @param {unknown} agentId */
 export function isRefuteAgentForbidden(task, agentId) {
-  return forbiddenRefuteAgentIds(task).has(agentId);
+  return (/** @type {ReadonlySet<unknown>} */ (forbiddenRefuteAgentIds(task))).has(agentId);
 }
 
 /** @param {Record<string, any>} task */

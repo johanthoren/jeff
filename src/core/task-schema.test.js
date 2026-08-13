@@ -3962,6 +3962,7 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
     });
   }
 
+  /** @type {Array<[string, (task: any) => void]>} */
   const invalidStates = [
     ['second episode', (task) => {
       task.convergence.recovery.episode = 2;
@@ -4006,9 +4007,9 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
         const inquiry = structuredClone(task.convergence.council.members[0].inquiry);
         inquiry.question += suffix;
         inquiry.problemRestatement += suffix;
-        inquiry.causalHypotheses = inquiry.causalHypotheses.map((item) => `${item}${suffix}`);
-        inquiry.decisiveEvidence = inquiry.decisiveEvidence.map((item) => `${item}${suffix}`);
-        inquiry.findingVotes = inquiry.findingVotes.map((vote) => ({
+        inquiry.causalHypotheses = inquiry.causalHypotheses.map((/** @type {any} */ item) => `${item}${suffix}`);
+        inquiry.decisiveEvidence = inquiry.decisiveEvidence.map((/** @type {any} */ item) => `${item}${suffix}`);
+        inquiry.findingVotes = inquiry.findingVotes.map((/** @type {any} */ vote) => ({
           ...vote,
           rationale: `${vote.rationale}${suffix}`,
         }));
@@ -4130,6 +4131,7 @@ test('issue 237 persisted recovery is optional for history and fail-closed when 
   testOnlyRecovery.convergence.recovery.route = 'test-contract-repair';
   assert.equal((await verdictFor(testOnlyRecovery)).ok, true);
 
+  /** @type {Array<[string, Record<string, any>, string, (task: any, agentId: string) => void]>} */
   const forbiddenRecoveryIdentityCases = [
     [
       'recovery test author reuses the council synthesizer',
@@ -4220,7 +4222,7 @@ function issue238PersistedResearchVariant(field, variant) {
     ? [values, [values[1], values[2], values[0]], [values[2], values[0], values[1]]]
     : [values, [values[0], ...values], [...values, values[2]]];
   const inquiry = structuredClone(council.members[0].inquiry);
-  council.members = council.members.map((member, index) => ({
+  council.members = council.members.map((/** @type {any} */ member, /** @type {number} */ index) => ({
     ...member,
     inquiry: {
       ...structuredClone(inquiry),
@@ -4232,7 +4234,7 @@ function issue238PersistedResearchVariant(field, variant) {
 
 test('issue 238 persisted unordered inquiry research rejects order and repetition', async (t) => {
   for (const field of ISSUE_238_UNORDERED_INQUIRY_FIELDS) {
-    for (const variant of ['order', 'repetition']) {
+    for (const variant of /** @type {Array<'order' | 'repetition'>} */ (['order', 'repetition'])) {
       await t.test(`${field} ${variant}-only difference`, async () => {
         const result = await verdictFor(issue238PersistedResearchVariant(field, variant));
         assert.equal(result.ok, false, `${field} ${variant} must not validate`);
@@ -4243,6 +4245,7 @@ test('issue 238 persisted unordered inquiry research rejects order and repetitio
 });
 
 test('issue 238 persisted original delivery snapshots are strict and builder-bound', async (t) => {
+  /** @type {Array<[string, (task: any) => void]>} */
   const cases = [
     ['empty original plan snapshot', (task) => {
       task.convergence.recovery.original.plan = {};
