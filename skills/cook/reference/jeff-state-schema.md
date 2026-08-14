@@ -30,7 +30,7 @@ completion gates.
 
 - Capture locks `category` by primary outcome. Historical omission remains code. Canonical operation ledgers carry the current operation-state marker; unmarked schema-v1 operation ledgers use the checked legacy branch, while code ledgers never enter it.
 - Code and operation follow separate closed stage graphs. Historical code ledgers may resume from the retired `test` stage. A terminal status and terminal stage remain equivalent.
-- Pipeline-version data is optional provenance and does not participate in a 6.0 gate. Canonical writers include it. The deprecated branch value and historical brain data remain accepted and ignored; new records omit both.
+- Pipeline-version data is optional provenance. Canonical writers include it, and council ingress upgrades missing or explicit pre-6.1 provenance to the current pipeline version before canonical 6.1 research, synthesis, and recovery validation. Historical pre-6.1 records remain compatible. The deprecated branch value and historical brain data remain accepted and ignored; new records omit both.
 - Dependencies schedule work. Full mode accepts live predecessors and terminal predecessors retained by prune provenance, while lite mode checks only local dependency cycles. Discovery provenance records origin but never schedules. Historical omission preserves the earlier behavior.
 - Complexity describes complecting and non-local risk, not difficulty or Git topology. Historical omission defaults to complex.
 - Code plans retain a named behavior-preserving refactor opportunity or `null`. Operation plans retain their runbook, preconditions, recovery and approval boundaries, postconditions, and deterministic verification seams. An unresolved operation fork remains parked at plan until an answered plan replaces it.
@@ -56,9 +56,7 @@ persistence, all under the shared store lock. If later task persistence fails,
 the appended provenance remains because there is no cross-file rollback.
 Malformed JSON or invalid events warn and are skipped when reading; their bytes
 stay unchanged. Appends fail closed and surface containment, lock, read, or write
-errors. The journal is operational provenance, not validated state: `cook
-validate` ignores it in 6.0, and historical task directories without one remain
-valid.
+errors. The journal is operational provenance, not validated state: `cook validate` ignores it, and historical task directories without one remain valid.
 
 ## `convergence` (optional bounded judgment-loop termination)
 
