@@ -131,6 +131,14 @@ pub struct ConnectionParts {
     pub reader_done: Arc<AtomicBool>,
 }
 
+struct ReaderOwnership {
+    pending: Arc<AtomicUsize>,
+    closed: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+    connection_bytes: Arc<AtomicUsize>,
+    global_bytes: Arc<AtomicUsize>,
+}
+
 pub fn spawn_connection(
     id: ConnectionId,
     stream: UnixStream,
@@ -145,7 +153,13 @@ pub fn spawn_connection(
     let writer_frames = Arc::new(AtomicUsize::new(0));
     let closed = Arc::new(AtomicBool::new(false));
     let reader_done = Arc::new(AtomicBool::new(false));
-    let ingress_bytes = Arc::new(AtomicUsize::new(0));
+    let reader_ownership = ReaderOwnership {
+        pending: pending.clone(),
+        closed: closed.clone(),
+        done: reader_done.clone(),
+        connection_bytes: Arc::new(AtomicUsize::new(0)),
+        global_bytes: global_ingress_bytes,
+    };
     let writer_capacity = limits
         .egress_frames
         .saturating_add(limits.cold_waiters)
@@ -153,22 +167,8 @@ pub fn spawn_connection(
         .saturating_add(1);
     let (writer, writer_rx) = mpsc::sync_channel(writer_capacity);
     let writer_handle = thread::spawn(move || write_frames(writer_stream, writer_rx));
-    let reader_pending = pending.clone();
-    let reader_closed = closed.clone();
-    let reader_done_flag = reader_done.clone();
-    let reader_handle = thread::spawn(move || {
-        read_frames(
-            id,
-            stream,
-            limits,
-            owner,
-            reader_pending,
-            reader_closed,
-            reader_done_flag,
-            ingress_bytes,
-            global_ingress_bytes,
-        )
-    });
+    let reader_handle =
+        thread::spawn(move || read_frames(id, stream, limits, owner, reader_ownership));
     Ok(ConnectionParts {
         writer,
         control_stream,
@@ -187,12 +187,15 @@ fn read_frames(
     mut stream: UnixStream,
     limits: Limits,
     owner: SyncSender<OwnerMessage>,
-    pending: Arc<AtomicUsize>,
-    closed: Arc<AtomicBool>,
-    reader_done: Arc<AtomicBool>,
-    connection_bytes: Arc<AtomicUsize>,
-    global_bytes: Arc<AtomicUsize>,
+    ownership: ReaderOwnership,
 ) {
+    let ReaderOwnership {
+        pending,
+        closed,
+        done: reader_done,
+        connection_bytes,
+        global_bytes,
+    } = ownership;
     let mut frame = Vec::new();
     let mut ingress = IngressPermit::new(connection_bytes.clone(), global_bytes.clone());
     let mut chunk = [0_u8; 8192];
