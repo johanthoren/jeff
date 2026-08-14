@@ -212,19 +212,23 @@ impl Server {
                 _ => false,
             };
             if ends_subscription {
-                self.end_project_subscriptions(&id, "project_removed");
+                let restart_gets = matches!(
+                    (previous, next),
+                    (Some(a), Some(b)) if a.path != b.path && b.enabled
+                );
                 let was_deferred = self
                     .deferred_snapshots
                     .iter()
                     .any(|project_id| project_id == &id);
                 self.deferred_snapshots
                     .retain(|project_id| project_id != &id);
+                self.end_project_subscriptions(&id, "project_removed", restart_gets);
                 if let Some(active) = self.active.get(&id) {
                     active.cancelled.store(true, Ordering::Release);
                 }
                 self.dirty.remove(&id);
-                if was_deferred
-                    && next.is_some_and(|record| record.enabled)
+                if restart_gets
+                    && was_deferred
                     && self
                         .waiters
                         .get(&id)

@@ -1,7 +1,7 @@
 use super::{ActiveSnapshot, Limits, Server, WaitKind};
 use crate::config::PROTOCOL_VERSION;
 use crate::protocol::{OwnerMessage, SnapshotRun};
-use crate::snapshot::{run_snapshot_with_cancel, SnapshotFailure};
+use crate::snapshot::{injected_thread_failure, run_snapshot_with_cancel, SnapshotFailure};
 use crate::state::{retained_projection_bytes, ProjectCache, SNAPSHOT_STALE};
 use jeff_project::{GraphProjection, ProjectRecord, Snapshot};
 use serde_json::json;
@@ -82,6 +82,15 @@ impl Server {
                 cancelled: cancelled.clone(),
             },
         );
+        if injected_thread_failure(&run.record.id, "supervisor") {
+            self.finish_snapshot(
+                run,
+                Err(SnapshotFailure::Launch(
+                    "snapshot supervisor thread: injected launch failure".to_owned(),
+                )),
+            );
+            return;
+        }
         let sender = self.messages_tx.clone();
         let timeout = self.config.snapshot_timeout();
         let output_limit = self.limits.snapshot_bytes;
@@ -120,6 +129,7 @@ impl Server {
             return;
         }
         self.active.remove(&project_id);
+        super::signal_test_fifo("_JEFFD_TEST_SNAPSHOT_DONE");
         let is_current = self.registry_generations.get(&project_id) == Some(&run.generation)
             && self
                 .projects

@@ -28,7 +28,12 @@ impl Server {
         }
     }
 
-    pub(super) fn end_project_subscriptions(&mut self, project_id: &str, reason: &str) {
+    pub(super) fn end_project_subscriptions(
+        &mut self,
+        project_id: &str,
+        reason: &str,
+        restart_gets: bool,
+    ) {
         let subscriptions: HashSet<_> = self
             .subscriptions
             .iter()
@@ -51,15 +56,24 @@ impl Server {
         }
         let mut remaining = Vec::new();
         for waiter in self.take_waiters(project_id) {
-            if matches!(&waiter.kind, WaitKind::Subscribe(_)) {
-                self.send_error(
-                    waiter.connection,
-                    &waiter.request_id,
-                    "unavailable",
-                    "subscription ended because the project was replaced",
-                );
-            } else {
-                remaining.push(waiter);
+            match waiter.kind {
+                WaitKind::Subscribe(_) => {
+                    self.send_error(
+                        waiter.connection,
+                        &waiter.request_id,
+                        "unavailable",
+                        "subscription ended because the project was replaced",
+                    );
+                }
+                WaitKind::Get if restart_gets => remaining.push(waiter),
+                WaitKind::Get => {
+                    self.send_shutdown_error(
+                        waiter.connection,
+                        &waiter.request_id,
+                        "unavailable",
+                        "snapshot unavailable because the project was removed or disabled",
+                    );
+                }
             }
         }
         if !remaining.is_empty() {

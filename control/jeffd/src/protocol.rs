@@ -22,6 +22,7 @@ pub enum OwnerMessage {
         connection: ConnectionId,
         frame: Value,
         pending: Arc<AtomicUsize>,
+        ingress: IngressPermit,
     },
     FrameTooLarge {
         connection: ConnectionId,
@@ -31,6 +32,46 @@ pub enum OwnerMessage {
         run: SnapshotRun,
         result: Result<Snapshot, SnapshotFailure>,
     },
+}
+
+pub(crate) struct IngressPermit {
+    connection_bytes: Arc<AtomicUsize>,
+    global_bytes: Arc<AtomicUsize>,
+    bytes: usize,
+}
+
+impl IngressPermit {
+    fn new(connection_bytes: Arc<AtomicUsize>, global_bytes: Arc<AtomicUsize>) -> Self {
+        Self {
+            connection_bytes,
+            global_bytes,
+            bytes: 0,
+        }
+    }
+
+    fn try_grow(&mut self, count: usize, limits: Limits) -> bool {
+        if !try_reserve(
+            &self.connection_bytes,
+            count,
+            limits.connection_ingress_bytes,
+        ) {
+            return false;
+        }
+        if !try_reserve(&self.global_bytes, count, limits.global_ingress_bytes) {
+            self.connection_bytes.fetch_sub(count, Ordering::AcqRel);
+            return false;
+        }
+        self.bytes += count;
+        true
+    }
+}
+
+impl Drop for IngressPermit {
+    fn drop(&mut self) {
+        self.connection_bytes
+            .fetch_sub(self.bytes, Ordering::AcqRel);
+        self.global_bytes.fetch_sub(self.bytes, Ordering::AcqRel);
+    }
 }
 
 pub struct OutboundFrame {
@@ -95,6 +136,7 @@ pub fn spawn_connection(
     stream: UnixStream,
     limits: Limits,
     owner: SyncSender<OwnerMessage>,
+    global_ingress_bytes: Arc<AtomicUsize>,
 ) -> std::io::Result<ConnectionParts> {
     let control_stream = stream.try_clone()?;
     let writer_stream = stream.try_clone()?;
@@ -103,6 +145,7 @@ pub fn spawn_connection(
     let writer_frames = Arc::new(AtomicUsize::new(0));
     let closed = Arc::new(AtomicBool::new(false));
     let reader_done = Arc::new(AtomicBool::new(false));
+    let ingress_bytes = Arc::new(AtomicUsize::new(0));
     let writer_capacity = limits
         .egress_frames
         .saturating_add(limits.cold_waiters)
@@ -122,6 +165,8 @@ pub fn spawn_connection(
             reader_pending,
             reader_closed,
             reader_done_flag,
+            ingress_bytes,
+            global_ingress_bytes,
         )
     });
     Ok(ConnectionParts {
@@ -145,8 +190,11 @@ fn read_frames(
     pending: Arc<AtomicUsize>,
     closed: Arc<AtomicBool>,
     reader_done: Arc<AtomicBool>,
+    connection_bytes: Arc<AtomicUsize>,
+    global_bytes: Arc<AtomicUsize>,
 ) {
     let mut frame = Vec::new();
+    let mut ingress = IngressPermit::new(connection_bytes.clone(), global_bytes.clone());
     let mut chunk = [0_u8; 8192];
     'read: loop {
         let count = match stream.read(&mut chunk) {
@@ -158,14 +206,31 @@ fn read_frames(
             let rest = &chunk[offset..count];
             if let Some(newline) = rest.iter().position(|byte| *byte == b'\n') {
                 if frame.len() + newline > limits.frame_bytes {
-                    frame
-                        .extend_from_slice(&rest[..limits.frame_bytes.saturating_sub(frame.len())]);
+                    let retained = limits.frame_bytes.saturating_sub(frame.len());
+                    if !ingress.try_grow(retained, limits) {
+                        crate::server::signal_test_fifo("_JEFFD_TEST_INGRESS_BYTES_FULL");
+                        break 'read;
+                    }
+                    frame.extend_from_slice(&rest[..retained]);
                     report_oversized(id, &frame, &owner, &closed);
-                    return;
+                    break 'read;
+                }
+                if !ingress.try_grow(newline, limits) {
+                    crate::server::signal_test_fifo("_JEFFD_TEST_INGRESS_BYTES_FULL");
+                    break 'read;
                 }
                 frame.extend_from_slice(&rest[..newline]);
                 let decoded = serde_json::from_slice::<Value>(&frame);
-                frame.clear();
+                if frame.capacity() > chunk.len() {
+                    frame = Vec::new();
+                    crate::server::signal_test_fifo("_JEFFD_TEST_FRAME_BUFFER_RELEASED");
+                } else {
+                    frame.clear();
+                }
+                let request_ingress = std::mem::replace(
+                    &mut ingress,
+                    IngressPermit::new(connection_bytes.clone(), global_bytes.clone()),
+                );
                 let Ok(value) = decoded else {
                     break 'read;
                 };
@@ -181,6 +246,7 @@ fn read_frames(
                     connection: id,
                     frame: value,
                     pending: pending.clone(),
+                    ingress: request_ingress,
                 }) {
                     Ok(()) => {}
                     Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
@@ -191,10 +257,18 @@ fn read_frames(
                 offset += newline + 1;
             } else {
                 if frame.len() + rest.len() > limits.frame_bytes {
-                    frame
-                        .extend_from_slice(&rest[..limits.frame_bytes.saturating_sub(frame.len())]);
+                    let retained = limits.frame_bytes.saturating_sub(frame.len());
+                    if !ingress.try_grow(retained, limits) {
+                        crate::server::signal_test_fifo("_JEFFD_TEST_INGRESS_BYTES_FULL");
+                        break 'read;
+                    }
+                    frame.extend_from_slice(&rest[..retained]);
                     report_oversized(id, &frame, &owner, &closed);
-                    return;
+                    break 'read;
+                }
+                if !ingress.try_grow(rest.len(), limits) {
+                    crate::server::signal_test_fifo("_JEFFD_TEST_INGRESS_BYTES_FULL");
+                    break 'read;
                 }
                 frame.extend_from_slice(rest);
                 break;

@@ -143,6 +143,8 @@ pub(crate) fn run_snapshot_with_cancel(
         .spawn()
         .map_err(|error| SnapshotFailure::Spawn(error.to_string()))?;
     let process_group = child.id() as i32;
+    record_injected_failure_pid(&project.id, "stdout", process_group);
+    record_injected_failure_pid(&project.id, "stderr", process_group);
     let stdout = child.stdout.take().expect("captured stdout");
     let stderr = child.stderr.take().expect("captured stderr");
     let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
@@ -247,15 +249,28 @@ pub(crate) fn run_snapshot_with_cancel(
 }
 
 #[cfg(debug_assertions)]
-fn injected_thread_failure(project_id: &str, reader: &str) -> bool {
+pub(crate) fn injected_thread_failure(project_id: &str, reader: &str) -> bool {
     std::env::var("_JEFFD_TEST_SNAPSHOT_THREAD_FAILURE")
         .is_ok_and(|failure| failure == format!("{project_id}:{reader}"))
 }
 
 #[cfg(not(debug_assertions))]
-fn injected_thread_failure(_: &str, _: &str) -> bool {
+pub(crate) fn injected_thread_failure(_: &str, _: &str) -> bool {
     false
 }
+
+#[cfg(debug_assertions)]
+fn record_injected_failure_pid(project_id: &str, reader: &str, process_group: i32) {
+    if !injected_thread_failure(project_id, reader) {
+        return;
+    }
+    if let Ok(path) = std::env::var("_JEFFD_TEST_SNAPSHOT_FAILURE_PID") {
+        let _ = std::fs::write(path, format!("{process_group}\n"));
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn record_injected_failure_pid(_: &str, _: &str, _: i32) {}
 
 fn terminate_group(process_group: i32, child: &mut std::process::Child) {
     unsafe {

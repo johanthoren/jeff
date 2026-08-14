@@ -29,6 +29,8 @@ pub(crate) struct Limits {
     pub(crate) frame_bytes: usize,
     ingress: usize,
     pub(crate) in_flight: usize,
+    pub(crate) connection_ingress_bytes: usize,
+    pub(crate) global_ingress_bytes: usize,
     pub(crate) cold_waiters: usize,
     pub(crate) egress_frames: usize,
     pub(crate) egress_bytes: usize,
@@ -51,6 +53,8 @@ impl Limits {
             frame_bytes,
             ingress: 256,
             in_flight: 32,
+            connection_ingress_bytes: 32 * 1024 * 1024,
+            global_ingress_bytes: 256 * 1024 * 1024,
             cold_waiters: 512,
             egress_frames: 64,
             egress_bytes: 32 * 1024 * 1024,
@@ -88,6 +92,8 @@ impl Limits {
                 "ingress" => self.ingress = value,
                 "in_flight" => self.in_flight = value,
                 "cold_waiters" => self.cold_waiters = value,
+                "connection_ingress_bytes" => self.connection_ingress_bytes = value,
+                "global_ingress_bytes" => self.global_ingress_bytes = value,
                 "egress_frames" => self.egress_frames = value,
                 "egress_bytes" => {
                     self.egress_bytes = value;
@@ -225,6 +231,7 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         next_subscription: 1,
         next_registry_generation,
         global_writer_bytes: Arc::new(AtomicUsize::new(0)),
+        global_ingress_bytes: Arc::new(AtomicUsize::new(0)),
         started: Instant::now(),
         registry_due: None,
         registry_poll_due: registry_watch::REGISTRY_POLL_INTERVAL,
@@ -263,6 +270,7 @@ struct Server {
     next_subscription: u64,
     next_registry_generation: u64,
     global_writer_bytes: Arc<AtomicUsize>,
+    global_ingress_bytes: Arc<AtomicUsize>,
     started: Instant,
     registry_due: Option<Duration>,
     registry_poll_due: Duration,
@@ -334,7 +342,13 @@ impl Server {
             closed,
             pending,
             reader_done,
-        } = spawn_connection(id, stream, self.limits, self.messages_tx.clone())?;
+        } = spawn_connection(
+            id,
+            stream,
+            self.limits,
+            self.messages_tx.clone(),
+            self.global_ingress_bytes.clone(),
+        )?;
         self.connections.insert(
             id,
             Connection {
@@ -359,11 +373,13 @@ impl Server {
                 connection,
                 frame,
                 pending,
+                ingress,
             } => {
                 pending.fetch_sub(1, Ordering::AcqRel);
                 if self.connections.contains_key(&connection) {
                     self.handle_request(connection, frame);
                 }
+                drop(ingress);
             }
             OwnerMessage::FrameTooLarge {
                 connection,
