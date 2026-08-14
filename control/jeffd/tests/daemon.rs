@@ -4848,7 +4848,7 @@ fn task_236_council_contract_stderr_launch_failure_reaps_and_releases_slot() {
     );
 }
 
-fn task_236_retained_cost(fixture: &Fixture, project_id: &str, path: &Path) -> usize {
+fn task_236_retained_cost(project_id: &str, path: &Path) -> usize {
     let snapshot: Value = serde_json::from_str(&support::snapshot("2026-08-14T13:00:00Z", "first"))
         .expect("parse cache-accounting fixture");
     serialized_len(&json!({
@@ -4874,7 +4874,7 @@ fn task_236_council_contract_registry_changes_release_exact_cache_ownership() {
             .collect();
         let budget = ids
             .iter()
-            .map(|project_id| task_236_retained_cost(&fixture, project_id, &root.join(project_id)))
+            .map(|project_id| task_236_retained_cost(project_id, &root.join(project_id)))
             .max()
             .expect("removal cache fixtures have a cost");
         fixture.write_registry(json!(records));
@@ -4920,9 +4920,9 @@ fn task_236_council_contract_registry_changes_release_exact_cache_ownership() {
         let other_path = root.join("path-replacement-b");
         fs::create_dir_all(other_path.join(".jeff")).expect("create competing cache path");
         let budget = [
-            task_236_retained_cost(&fixture, "path-replacement-a", &old_path),
-            task_236_retained_cost(&fixture, "path-replacement-a", &replacement_path),
-            task_236_retained_cost(&fixture, "path-replacement-b", &other_path),
+            task_236_retained_cost("path-replacement-a", &old_path),
+            task_236_retained_cost("path-replacement-a", &replacement_path),
+            task_236_retained_cost("path-replacement-b", &other_path),
         ]
         .into_iter()
         .max()
