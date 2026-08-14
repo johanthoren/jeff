@@ -216,7 +216,7 @@ fn read_frames(
                     }
                     frame.extend_from_slice(&rest[..retained]);
                     report_oversized(id, &frame, &owner, &closed);
-                    break 'read;
+                    return;
                 }
                 if !ingress.try_grow(newline, limits) {
                     crate::server::signal_test_fifo("_JEFFD_TEST_INGRESS_BYTES_FULL");
@@ -267,7 +267,7 @@ fn read_frames(
                     }
                     frame.extend_from_slice(&rest[..retained]);
                     report_oversized(id, &frame, &owner, &closed);
-                    break 'read;
+                    return;
                 }
                 if !ingress.try_grow(rest.len(), limits) {
                     crate::server::signal_test_fifo("_JEFFD_TEST_INGRESS_BYTES_FULL");
