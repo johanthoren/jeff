@@ -1,6 +1,6 @@
 {
   "name": "jeff",
-  "version": "6.1.0",
+  "version": "6.1.1",
   "description": "Jeff is a model-native quality control plane and cooperative workflow protocol, not a security sandbox.",
   "author": {
     "name": "Johan Thorén"

@@ -106,14 +106,11 @@ adopting a graph runtime or weakening a quality gate:
 
 ### Bounded convergence
 
-Blocking findings follow a bounded path: one independent refute before a typed
-kickback, a bounded per-source retry cap, one task-wide council, and at most one
-scoped recovery cycle. Fresh judgment after that cycle either completes the task
-or returns it to the Chef.
+At the cap, Jeff dispatches three fresh, mutually blind inquiry specialists and deterministically derives each finding's vote result. A fourth fresh synthesis specialist selects one typed recovery route. The one bounded recovery episode preserves the original lineage, runs the applicable fresh gate and judgment round, then either completes the task or returns it to the Chef.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/convergence-dark.svg">
-  <img src="docs/img/convergence-light.svg" width="900" alt="Jeff bounded convergence: a blocking finding receives independent refutation, typed repair, capped retries, a three-member council, and one scoped recovery cycle before fresh judgment completes the task or returns it to the Chef.">
+  <img src="docs/img/convergence-light.svg" width="900" alt="Jeff bounded convergence: a cap dispatches three mutually blind inquiry specialists, Jeff derives each finding's vote result, a fourth fresh synthesis specialist selects one typed recovery route, and one lineage-preserving recovery episode runs the applicable fresh gate and judgment before the task finishes or returns to the Chef.">
 </picture>
 
 The detailed contracts and tradeoffs are recorded in the
@@ -312,8 +309,8 @@ Re-fire until it's worthy.
   pipeline graphs, and checked control plane.
 - [6.0 Graph Engineering slate](docs/specs/graph-slate-6.0.md): field survey,
   throughput mechanisms, targeted repair, DAG drain, and projection contracts.
-- [Visual system atlas](docs/img/atlas-light.svg): architecture, Graph
-  Engineering, and bounded convergence in one sheet
+- [Visual system atlas](docs/img/atlas-light.svg): Architecture, Graph
+  Engineering, and bounded convergence from three mutually blind inquiry specialists through a fourth fresh synthesis specialist in one sheet
   ([dark theme](docs/img/atlas-dark.svg)).
 - [State schema](skills/cook/reference/jeff-state-schema.md): persisted records
   and validator-derived invariants.
