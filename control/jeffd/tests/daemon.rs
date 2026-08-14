@@ -4527,6 +4527,618 @@ fn task_236_surviving_contract_aggregate_cache_budget_rejects_newest_and_retains
     assert!(fixture.stop_and_wait().status.success());
 }
 
+fn task_236_registry_record(
+    fixture: &Fixture,
+    project_id: &str,
+    path: &Path,
+    enabled: bool,
+) -> Value {
+    json!({
+        "id": project_id,
+        "path": path,
+        "name": project_id,
+        "enabled": enabled,
+        "cook": [fixture.fake_cook, "--fixture"]
+    })
+}
+
+fn task_236_deferred_get_registry_terminal(disable: bool) {
+    let mut fixture = Fixture::new(true);
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let blocker_path = root.join("deferred-blocker");
+    let target_path = root.join("deferred-target");
+    let reuse_path = root.join("deferred-reuse");
+    for path in [&blocker_path, &target_path, &reuse_path] {
+        fs::create_dir_all(path.join(".jeff")).expect("create deferred project fixture");
+    }
+    let blocker_record =
+        task_236_registry_record(&fixture, "deferred-blocker", &blocker_path, true);
+    let target_record = task_236_registry_record(&fixture, "deferred-target", &target_path, true);
+    let reuse_record = task_236_registry_record(&fixture, "deferred-reuse", &reuse_path, true);
+    fixture.write_registry(json!([
+        blocker_record.clone(),
+        target_record.clone(),
+        reuse_record.clone()
+    ]));
+
+    let mut snapshot_gate = FifoPair::new(&root);
+    let mut saturated = RecoveryGate::new(&root, "deferred-get-saturated");
+    fixture.start_with_env(&[
+        ("FAKE_READY_FIFO", snapshot_gate.ready_path.as_path()),
+        (
+            "FAKE_RELEASE_FIFO",
+            snapshot_gate.release_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_ACTIVE_SNAPSHOTS_SATURATED",
+            saturated.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_LIMITS",
+            Path::new("active_snapshots=1,cold_waiters=2"),
+        ),
+    ]);
+    let mut observer = fixture.client();
+    assert_ok(&observer.request("observer-ready", "server.hello", json!({})));
+    let mut blocker = fixture.client();
+    blocker.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "blocking-get",
+        "method": "snapshot.get",
+        "params": {"projectId": "deferred-blocker"}
+    }));
+    snapshot_gate.wait_for_run();
+
+    let mut target = fixture.client();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "accepted-deferred-get",
+        "method": "snapshot.get",
+        "params": {"projectId": "deferred-target"}
+    }));
+    saturated.wait();
+
+    let changed_registry = if disable {
+        json!([
+            blocker_record,
+            task_236_registry_record(&fixture, "deferred-target", &target_path, false),
+            reuse_record
+        ])
+    } else {
+        json!([blocker_record, reuse_record])
+    };
+    fixture.write_registry(changed_registry);
+    let updated = observer.recv_until(|frame| {
+        frame["name"] == "project.updated"
+            && frame["payload"]["projectId"] == "deferred-target"
+    });
+    assert_eq!(updated["payload"]["enabled"], false);
+
+    let terminal = target.recv_until(|frame| frame["id"] == "accepted-deferred-get");
+    assert!(
+        terminal["ok"] == false && terminal["error"]["code"] == "unavailable",
+        "registry removal or disable must terminally answer an accepted deferred GET: {terminal}"
+    );
+    assert_ok(&target.request("target-remains-usable", "server.hello", json!({})));
+
+    let mut reused = fixture.client();
+    reused.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "waiter-ownership-reused",
+        "method": "snapshot.get",
+        "params": {"projectId": "deferred-reuse"}
+    }));
+    snapshot_gate.release();
+    snapshot_gate.wait_for_run();
+    snapshot_gate.release();
+
+    assert_ok(&blocker.recv_until(|frame| frame["id"] == "blocking-get"));
+    let replacement = reused.recv_until(|frame| frame["id"] == "waiter-ownership-reused");
+    assert_eq!(assert_ok(&replacement)["projectId"], "deferred-reuse");
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_council_contract_removed_deferred_get_answers_and_releases_waiter() {
+    task_236_deferred_get_registry_terminal(false);
+}
+
+#[test]
+fn task_236_council_contract_disabled_deferred_get_answers_and_releases_waiter() {
+    task_236_deferred_get_registry_terminal(true);
+}
+
+#[test]
+fn task_236_council_contract_maximum_id_subscribe_reserves_inclusive_frame_headroom() {
+    const RESPONSE_ID_BYTES: usize = 4 * 1024;
+
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    fixture.start();
+    let mut client = fixture.client();
+    let prime = client.request(
+        "prime-subscribe",
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    assert_eq!(
+        assert_ok(&prime)["snapshot"]["tasks"][0]["title"],
+        "first"
+    );
+
+    let worst_id = "\0".repeat(RESPONSE_ID_BYTES);
+    let empty_snapshot: Value =
+        serde_json::from_str(&support::snapshot("2026-08-14T12:00:00Z", ""))
+            .expect("parse empty subscribe-boundary snapshot");
+    let empty_projection = json!({
+        "projectId": "project-a",
+        "path": fixture.project,
+        "schemaVersion": empty_snapshot["schemaVersion"],
+        "generatedAt": empty_snapshot["generatedAt"],
+        "mode": empty_snapshot["mode"],
+        "tasks": empty_snapshot["tasks"],
+        "degraded": ["snapshot_stale"]
+    });
+    let empty_get_bytes = serialized_len(&json!({
+        "v": 1,
+        "kind": "res",
+        "id": &worst_id,
+        "ok": true,
+        "result": &empty_projection
+    }));
+    let title = "x".repeat(
+        MAX_FRAME_BYTES
+            .checked_sub(empty_get_bytes)
+            .expect("empty maximum-ID get response fits the frame"),
+    );
+    let raw = support::snapshot("2026-08-14T12:00:00Z", &title);
+    assert!(
+        raw.len() <= MAX_FRAME_BYTES,
+        "raw snapshot must fit the inclusive 16 MiB input ceiling"
+    );
+    let snapshot: Value = serde_json::from_str(&raw).expect("parse subscribe-boundary snapshot");
+    let stale_projection = json!({
+        "projectId": "project-a",
+        "path": fixture.project,
+        "schemaVersion": snapshot["schemaVersion"],
+        "generatedAt": snapshot["generatedAt"],
+        "mode": snapshot["mode"],
+        "tasks": snapshot["tasks"],
+        "degraded": ["snapshot_stale"]
+    });
+    assert_eq!(
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "res",
+            "id": &worst_id,
+            "ok": true,
+            "result": &stale_projection
+        })),
+        MAX_FRAME_BYTES,
+        "the maximum-ID GET probe must fit at the inclusive 16 MiB boundary"
+    );
+    assert!(
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "res",
+            "id": &worst_id,
+            "ok": true,
+            "result": {
+                "subscriptionId": format!("s-{}-{}", usize::MAX, u64::MAX),
+                "snapshot": &stale_projection
+            }
+        })) > MAX_FRAME_BYTES,
+        "the distinct maximum-ID subscribe envelope must exceed the GET boundary"
+    );
+    assert!(
+        serialized_len(&json!({
+            "v": 1,
+            "kind": "req",
+            "id": &worst_id,
+            "method": "snapshot.subscribe",
+            "params": {"projectId": "project-a"}
+        })) <= MAX_FRAME_BYTES,
+        "the maximum legal serialized ID must remain an admissible subscribe request"
+    );
+
+    fixture.set_raw_snapshot(&raw);
+    fixture.touch_project(&fixture.project, "maximum-id-subscribe-boundary");
+    let failure = client.recv_until(|frame| frame["name"] == "snapshot.failed");
+    assert_eq!(failure["payload"]["projectId"], "project-a");
+    let retained = client.request(
+        &worst_id,
+        "snapshot.subscribe",
+        json!({"projectId": "project-a"}),
+    );
+    assert_eq!(
+        assert_ok(&retained)["snapshot"]["tasks"][0]["title"],
+        "first",
+        "subscribe-specific envelope rejection must preserve coherent last-good service"
+    );
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_council_contract_supervisor_launch_failure_completes_and_releases_slot() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([
+        task_236_project_record(&fixture, "supervisor-failure"),
+        task_236_project_record(&fixture, "supervisor-recovery")
+    ]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut completed = RecoveryGate::new(&root, "supervisor-snapshot-done");
+    fixture.start_with_env(&[
+        ("_JEFFD_TEST_LIMITS", Path::new("active_snapshots=1")),
+        (
+            "_JEFFD_TEST_SNAPSHOT_THREAD_FAILURE",
+            Path::new("supervisor-failure:supervisor"),
+        ),
+        (
+            "_JEFFD_TEST_SNAPSHOT_DONE",
+            completed.ready_path.as_path(),
+        ),
+    ]);
+    let mut client = fixture.client();
+
+    let failure = client.request(
+        "supervisor-launch-failure",
+        "snapshot.get",
+        json!({"projectId": "supervisor-failure"}),
+    );
+    assert!(
+        failure["ok"] == false && failure["error"]["code"] == "unavailable",
+        "a failed supervisor launch must terminally fail its accepted waiter: {failure}"
+    );
+    completed.wait();
+    let recovered = client.request(
+        "after-supervisor-launch-failure",
+        "snapshot.get",
+        json!({"projectId": "supervisor-recovery"}),
+    );
+    assert_ok(&recovered);
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_council_contract_stderr_launch_failure_reaps_and_releases_slot() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([
+        task_236_project_record(&fixture, "stderr-failure"),
+        task_236_project_record(&fixture, "stderr-recovery")
+    ]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut completed = RecoveryGate::new(&root, "stderr-snapshot-done");
+    let failure_pid = root.join("stderr-launch-failure.pid");
+    fixture.start_with_env(&[
+        ("_JEFFD_TEST_LIMITS", Path::new("active_snapshots=1")),
+        (
+            "_JEFFD_TEST_SNAPSHOT_THREAD_FAILURE",
+            Path::new("stderr-failure:stderr"),
+        ),
+        (
+            "_JEFFD_TEST_SNAPSHOT_DONE",
+            completed.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_SNAPSHOT_FAILURE_PID",
+            failure_pid.as_path(),
+        ),
+    ]);
+    let mut client = fixture.client();
+
+    let failure = client.request(
+        "stderr-launch-failure",
+        "snapshot.get",
+        json!({"projectId": "stderr-failure"}),
+    );
+    assert!(
+        failure["ok"] == false && failure["error"]["code"] == "unavailable",
+        "a failed stderr-reader launch must terminally fail its accepted waiter: {failure}"
+    );
+    completed.wait();
+    let pid: i32 = fs::read_to_string(&failure_pid)
+        .expect("stderr launch-failure injection records the spawned child pid")
+        .trim()
+        .parse()
+        .expect("parse injected launch-failure child pid");
+    let recovered = client.request(
+        "after-stderr-launch-failure",
+        "snapshot.get",
+        json!({"projectId": "stderr-recovery"}),
+    );
+    assert_ok(&recovered);
+    assert!(fixture.stop_and_wait().status.success());
+
+    let process_group_alive = unsafe { libc::kill(-pid, 0) } == 0;
+    if process_group_alive {
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+    assert!(
+        !process_group_alive,
+        "stderr-reader launch failure must terminate and reap the spawned process group"
+    );
+}
+
+fn task_236_retained_cost(fixture: &Fixture, project_id: &str, path: &Path) -> usize {
+    let snapshot: Value =
+        serde_json::from_str(&support::snapshot("2026-08-14T13:00:00Z", "first"))
+            .expect("parse cache-accounting fixture");
+    serialized_len(&json!({
+        "projectId": project_id,
+        "path": path,
+        "schemaVersion": snapshot["schemaVersion"],
+        "generatedAt": snapshot["generatedAt"],
+        "mode": snapshot["mode"],
+        "tasks": snapshot["tasks"],
+        "degraded": ["snapshot_stale"]
+    }))
+}
+
+#[test]
+fn task_236_council_contract_registry_changes_release_exact_cache_ownership() {
+    {
+        let mut fixture = Fixture::new(true);
+        let root = fixture.home.parent().expect("fixture root").to_path_buf();
+        let ids = ["removal-a", "removal-b", "removal-c"];
+        let records: Vec<_> = ids
+            .iter()
+            .map(|project_id| task_236_project_record(&fixture, project_id))
+            .collect();
+        let budget = ids
+            .iter()
+            .map(|project_id| {
+                task_236_retained_cost(&fixture, project_id, &root.join(project_id))
+            })
+            .max()
+            .expect("removal cache fixtures have a cost");
+        fixture.write_registry(json!(records));
+        let limits = format!("cache_bytes={budget}");
+        fixture.start_with_env(&[("_JEFFD_TEST_LIMITS", Path::new(&limits))]);
+        let mut client = fixture.client();
+
+        assert_ok(&client.request(
+            "populate-removal-a",
+            "snapshot.get",
+            json!({"projectId": "removal-a"}),
+        ));
+        fixture.write_registry(json!([
+            task_236_project_record(&fixture, "removal-b"),
+            task_236_project_record(&fixture, "removal-c")
+        ]));
+        client.recv_until(|frame| {
+            frame["name"] == "project.updated" && frame["payload"]["projectId"] == "removal-a"
+        });
+        assert_ok(&client.request(
+            "reuse-after-removal",
+            "snapshot.get",
+            json!({"projectId": "removal-b"}),
+        ));
+        let newest = client.request(
+            "reject-after-removal-reuse",
+            "snapshot.get",
+            json!({"projectId": "removal-c"}),
+        );
+        assert!(
+            newest["ok"] == false && newest["error"]["code"] == "unavailable",
+            "removal must release exactly one retained-cache owner while reject-newest remains intact: {newest}"
+        );
+        assert!(fixture.stop_and_wait().status.success());
+    }
+
+    {
+        let mut fixture = Fixture::new(true);
+        let root = fixture.home.parent().expect("fixture root").to_path_buf();
+        let old_path = root.join("path-replacement-a");
+        fs::create_dir_all(old_path.join(".jeff")).expect("create old cache path");
+        let replacement_path = fixture.other_project.clone();
+        let other_path = root.join("path-replacement-b");
+        fs::create_dir_all(other_path.join(".jeff")).expect("create competing cache path");
+        let budget = [
+            task_236_retained_cost(&fixture, "path-replacement-a", &old_path),
+            task_236_retained_cost(&fixture, "path-replacement-a", &replacement_path),
+            task_236_retained_cost(&fixture, "path-replacement-b", &other_path),
+        ]
+        .into_iter()
+        .max()
+        .expect("replacement cache fixtures have a cost");
+        fixture.write_registry(json!([
+            task_236_registry_record(&fixture, "path-replacement-a", &old_path, true),
+            task_236_registry_record(&fixture, "path-replacement-b", &other_path, true)
+        ]));
+        let limits = format!("cache_bytes={budget}");
+        fixture.start_with_env(&[("_JEFFD_TEST_LIMITS", Path::new(&limits))]);
+        let mut client = fixture.client();
+
+        assert_ok(&client.request(
+            "populate-path-replacement",
+            "snapshot.get",
+            json!({"projectId": "path-replacement-a"}),
+        ));
+        fixture.write_registry(json!([
+            task_236_registry_record(
+                &fixture,
+                "path-replacement-a",
+                &replacement_path,
+                true
+            ),
+            task_236_registry_record(&fixture, "path-replacement-b", &other_path, true)
+        ]));
+        client.recv_until(|frame| {
+            frame["name"] == "project.updated"
+                && frame["payload"]["projectId"] == "path-replacement-a"
+        });
+        let replaced = client.request(
+            "reuse-after-path-replacement",
+            "snapshot.get",
+            json!({"projectId": "path-replacement-a"}),
+        );
+        assert_eq!(
+            assert_ok(&replaced)["path"],
+            json!(replacement_path),
+            "enabled path replacement must restart against the replacement cache owner"
+        );
+        let newest = client.request(
+            "reject-after-path-replacement-reuse",
+            "snapshot.get",
+            json!({"projectId": "path-replacement-b"}),
+        );
+        assert!(
+            newest["ok"] == false && newest["error"]["code"] == "unavailable",
+            "path replacement must release exactly one retained-cache owner while reject-newest remains intact: {newest}"
+        );
+        assert!(fixture.stop_and_wait().status.success());
+    }
+}
+
+fn task_236_valid_near_limit_request(id: &str, frame_bytes: usize) -> Vec<u8> {
+    assert!(id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'));
+    let mut frame = format!(
+        r#"{{"v":1,"kind":"req","id":"{id}","method":"server.hello","params":{{"padding":""#
+    )
+    .into_bytes();
+    let suffix = br#""}}"#;
+    frame.resize(
+        frame_bytes
+            .checked_sub(suffix.len())
+            .expect("valid request envelope fits ingress frame"),
+        b'x',
+    );
+    frame.extend_from_slice(suffix);
+    assert_eq!(frame.len(), frame_bytes);
+    serde_json::from_slice::<Value>(&frame).expect("near-limit request is valid JSON");
+    frame.push(b'\n');
+    frame
+}
+
+#[test]
+fn task_236_council_contract_per_connection_ingress_bytes_reject_newest() {
+    const FRAME_BYTES: usize = 4096;
+
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut owner_gate = RecoveryGate::new(&root, "connection-ingress-owner");
+    let mut full_gate = RecoveryGate::new(&root, "connection-ingress-full");
+    let limits = PathBuf::from(
+        "frame_bytes=4096,ingress=8,in_flight=8,connection_ingress_bytes=4096,global_ingress_bytes=8192",
+    );
+    let mut environment = owner_gate.environment().to_vec();
+    environment.extend([
+        (
+            "_JEFFD_TEST_INGRESS_BYTES_FULL",
+            full_gate.ready_path.as_path(),
+        ),
+        ("_JEFFD_TEST_LIMITS", limits.as_path()),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+    let mut offender = fixture.client();
+    assert_ok(&offender.request("accepted-before-byte-pause", "server.hello", json!({})));
+
+    owner_gate.arm();
+    owner_gate.wait();
+    offender.write_raw(&task_236_valid_near_limit_request(
+        "connection-byte-owner",
+        FRAME_BYTES,
+    ));
+    offender.write_raw(&task_236_valid_near_limit_request(
+        "connection-byte-newest",
+        FRAME_BYTES,
+    ));
+    full_gate.wait();
+    owner_gate.release();
+    offender.read_eof();
+
+    let mut healthy = fixture.client();
+    assert_ok(&healthy.request("healthy-after-connection-bytes", "server.hello", json!({})));
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_council_contract_global_ingress_bytes_reject_newest_connection() {
+    const FRAME_BYTES: usize = 4096;
+
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut owner_gate = RecoveryGate::new(&root, "global-ingress-owner");
+    let mut full_gate = RecoveryGate::new(&root, "global-ingress-full");
+    let limits = PathBuf::from(
+        "frame_bytes=4096,ingress=8,in_flight=8,connection_ingress_bytes=8192,global_ingress_bytes=4096",
+    );
+    let mut environment = owner_gate.environment().to_vec();
+    environment.extend([
+        (
+            "_JEFFD_TEST_INGRESS_BYTES_FULL",
+            full_gate.ready_path.as_path(),
+        ),
+        ("_JEFFD_TEST_LIMITS", limits.as_path()),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+    let mut owner = fixture.client();
+    let mut offender = fixture.client();
+    assert_ok(&owner.request("global-owner-ready", "server.hello", json!({})));
+    assert_ok(&offender.request("global-offender-ready", "server.hello", json!({})));
+
+    owner_gate.arm();
+    owner_gate.wait();
+    owner.write_raw(&task_236_valid_near_limit_request(
+        "global-byte-owner",
+        FRAME_BYTES,
+    ));
+    offender.write_raw(&task_236_valid_near_limit_request(
+        "global-byte-newest",
+        FRAME_BYTES,
+    ));
+    full_gate.wait();
+    owner_gate.release();
+    offender.read_eof();
+
+    let owner_response = owner.recv_until(|frame| frame["id"] == "global-byte-owner");
+    assert_ok(&owner_response);
+    assert_ok(&owner.request("healthy-after-global-bytes", "server.hello", json!({})));
+    assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn task_236_council_contract_exact_frame_releases_reader_buffer_capacity() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut released = RecoveryGate::new(&root, "frame-buffer-released");
+    let limits = PathBuf::from(format!(
+        "connection_ingress_bytes={MAX_FRAME_BYTES},global_ingress_bytes={MAX_FRAME_BYTES}"
+    ));
+    fixture.start_with_env(&[
+        ("_JEFFD_TEST_LIMITS", limits.as_path()),
+        (
+            "_JEFFD_TEST_FRAME_BUFFER_RELEASED",
+            released.ready_path.as_path(),
+        ),
+    ]);
+    let mut client = fixture.client();
+
+    client.write_raw(&task_236_valid_near_limit_request(
+        "inclusive-frame-owner",
+        MAX_FRAME_BYTES,
+    ));
+    let inclusive = client.recv_until(|frame| frame["id"] == "inclusive-frame-owner");
+    assert_ok(&inclusive);
+    released.wait();
+    assert_ok(&client.request(
+        "after-frame-buffer-release",
+        "server.hello",
+        json!({})
+    ));
+    assert!(fixture.stop_and_wait().status.success());
+}
+
 const LIFECYCLE_WRITE_INTERPOSER: &str = r#"
 #define _GNU_SOURCE
 #include <dlfcn.h>
