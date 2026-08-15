@@ -7569,8 +7569,19 @@ test('issue 239 current councils advance legacy provenance and preserve current 
         await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(recorded, null, 2)}\n`, 'utf8');
 
         const stripped = await validateStore(root);
-        assert.equal(stripped.ok, false, 'new canonical research stripping must fail closed');
-        assert.match(stripped.stderr.join('\n'), /council|research|provenance|inv/i);
+        if (versionName === 'newer') {
+          // #221: a store stamped newer than the installed validator fails open;
+          // strip deny is only enforceable when this validator understands the store.
+          assert.equal(stripped.ok, true, 'newer pipelineVersion must fail open after strip');
+          assert.equal(stripped.code, 0);
+          assert.ok(!stripped.stderr.some((line) => line.includes('validation FAILED')));
+          const streams = [...stripped.stdout, ...stripped.stderr].join('\n');
+          assert.match(streams, /7\.0\.0/);
+          assert.match(streams, new RegExp(String(packageJson.version).replace(/\./g, '\\.')));
+        } else {
+          assert.equal(stripped.ok, false, 'new canonical research stripping must fail closed');
+          assert.match(stripped.stderr.join('\n'), /council|research|provenance|inv/i);
+        }
       } finally {
         await rm(root, { recursive: true, force: true });
       }
