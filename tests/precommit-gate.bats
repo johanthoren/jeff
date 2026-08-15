@@ -590,3 +590,55 @@ EOF
 
   rm -rf "$fake_root"
 }
+
+# ---------------------------------------------------------------------------
+# #221: older installed validator vs newer store writer → fail-open allow
+#
+# Detection: max task pipelineVersion vs installed package version (REPO
+# package.json). A store stamped newer than the installed validator must not
+# hard-deny commits on false invalid findings. Unversioned / same-version
+# invalid stores keep deny-on-real-invalid (AC1a / AC3 already cover baseline;
+# the same-version case is pinned here).
+# ---------------------------------------------------------------------------
+
+@test "gate/#221: newer pipelineVersion than installed package fails open on commit" {
+  write_config_full
+  write_invalid_done_task "$BK/tasks/0001-newer-writer"
+  local newer="99.0.0"
+  jq --arg v "$newer" '.pipelineVersion = $v' \
+    "$BK/tasks/0001-newer-writer/task.json" > "$BK/tasks/0001-newer-writer/task.json.tmp"
+  mv "$BK/tasks/0001-newer-writer/task.json.tmp" "$BK/tasks/0001-newer-writer/task.json"
+
+  local p
+  p="$(payload "git commit -m 'release'")"
+  run bash -c "printf '%s' '$p' | CLAUDE_PLUGIN_ROOT=\"$REPO\" \"$HOOK\""
+
+  [ "$status" -eq 0 ]
+  local decision
+  decision="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.permissionDecision' 2>/dev/null)"
+  [ "$decision" != "deny" ]
+  [ -z "$output" ] || [ "$decision" = "null" ] || [ "$decision" = "" ]
+}
+
+@test "gate/#221: same pipelineVersion as installed package still denies real invalid" {
+  write_config_full
+  write_invalid_done_task "$BK/tasks/0001-invalid"
+  local installed
+  installed="$(node -p "require('$REPO/package.json').version")"
+  jq --arg v "$installed" '.pipelineVersion = $v' \
+    "$BK/tasks/0001-invalid/task.json" > "$BK/tasks/0001-invalid/task.json.tmp"
+  mv "$BK/tasks/0001-invalid/task.json.tmp" "$BK/tasks/0001-invalid/task.json"
+
+  local p
+  p="$(payload "git commit -m 'release'")"
+  run bash -c "printf '%s' '$p' | CLAUDE_PLUGIN_ROOT=\"$REPO\" \"$HOOK\""
+
+  [ "$status" -eq 0 ]
+  local decision
+  decision="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.permissionDecision' 2>/dev/null)"
+  [ "$decision" = "deny" ]
+  local reason
+  reason="$(printf '%s' "$output" | jq -r '.hookSpecificOutput.permissionDecisionReason' 2>/dev/null)"
+  [ -n "$reason" ]
+}
+
