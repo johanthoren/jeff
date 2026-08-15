@@ -42,6 +42,77 @@ function pass(stdout) {
 }
 
 /**
+ * Parse a dotted numeric core from a package-style version stamp.
+ * Returns null when the stamp is not a comparable dotted-numeric series.
+ *
+ * @param {unknown} stamp
+ * @returns {number[] | null}
+ */
+function parseDottedNumericVersion(stamp) {
+  if (typeof stamp !== 'string' || stamp.length === 0) return null;
+  const core = stamp.trim().split(/[-+]/, 1)[0];
+  if (!core || !/^\d+(?:\.\d+)*$/.test(core)) return null;
+  return core.split('.').map((part) => Number(part));
+}
+
+/**
+ * True when `left` is strictly newer than `right` under dotted-numeric order.
+ * Unparsable stamps never count as newer.
+ *
+ * @param {unknown} left
+ * @param {unknown} right
+ * @returns {boolean}
+ */
+function isStrictlyNewerVersion(left, right) {
+  const a = parseDottedNumericVersion(left);
+  const b = parseDottedNumericVersion(right);
+  if (a === null || b === null) return false;
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i += 1) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    if (av > bv) return true;
+    if (av < bv) return false;
+  }
+  return false;
+}
+
+/**
+ * Maximum comparable nonempty pipelineVersion among collected tasks, or null.
+ *
+ * @param {object[]} tasks
+ * @returns {string | null}
+ */
+function maxComparablePipelineVersion(tasks) {
+  /** @type {string | null} */
+  let max = null;
+  for (const task of tasks) {
+    const stamp = /** @type {any} */ (task).pipelineVersion;
+    if (typeof stamp !== 'string' || stamp.length === 0) continue;
+    if (parseDottedNumericVersion(stamp) === null) continue;
+    if (max === null || isStrictlyNewerVersion(stamp, max)) max = stamp;
+  }
+  return max;
+}
+
+/**
+ * Installed plugin package version, or null when unreadable/empty.
+ *
+ * @returns {Promise<string | null>}
+ */
+async function readInstalledPipelineVersion() {
+  try {
+    const raw = await readFile(new URL('../../package.json', import.meta.url), 'utf8');
+    const version = JSON.parse(raw).version;
+    if (typeof version !== 'string' || version.length === 0) return null;
+    return version;
+  } catch {
+    return null;
+  }
+}
+
+
+/**
  * @param {string} root - repository root (COOK_ROOT-resolved)
  * @returns {Promise<Verdict>}
  */
@@ -68,6 +139,22 @@ export async function validateStore(root) {
     stderr.push('cook: validation FAILED: could not parse the task store (unreadable or malformed task path/JSON under .jeff/tasks/).');
     return fail(stderr);
   }
+
+  // 1b. Fail open when the store was written by a newer pipeline than this
+  // installed validator understands. Unversioned / same / older / unparsable
+  // stamps keep the deny-on-real-invalid path below.
+  const installed = await readInstalledPipelineVersion();
+  const maxPipeline = maxComparablePipelineVersion(tasks);
+  if (
+    installed !== null
+    && maxPipeline !== null
+    && isStrictlyNewerVersion(maxPipeline, installed)
+  ) {
+    return pass([
+      `cook: validation skipped: store pipelineVersion ${maxPipeline} is newer than installed validator ${installed}`,
+    ]);
+  }
+
 
   // 2. Collect persisted-shape and semantic violations. Schema failures remain
   // authoritative but include fail-closed invariant markers.

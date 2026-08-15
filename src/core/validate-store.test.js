@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateStore } from './validate-store.js';
@@ -369,3 +369,88 @@ test('validateStore: item 4 : array/scalar profile front-matter is reported unpa
     await rm(rootNull, { recursive: true, force: true });
   }
 });
+
+/**
+ * #221: older installed validator vs newer store writer must fail open.
+ * Detection is max task pipelineVersion vs this package's version; no new store field.
+ */
+async function installedPipelineVersion() {
+  const raw = await readFile(new URL('../../package.json', import.meta.url), 'utf8');
+  const version = JSON.parse(raw).version;
+  assert.equal(typeof version, 'string');
+  assert.ok(version.length > 0);
+  return version;
+}
+
+/** Done task that current invariants reject (review.verdict block). */
+function invalidDoneTask(overrides = {}) {
+  return validTask({
+    status: 'done',
+    stage: 'done',
+    tests: { authored_by_agent_id: 'agent-a', green: true, evidence: ['green'] },
+    review: { verdict: 'block', reviewer_agent_id: 'agent-b', evidence: [] },
+    ...overrides,
+  });
+}
+
+test('validateStore: #221 newer pipelineVersion than installed validator fails open', async () => {
+  const root = await makeRoot();
+  try {
+    const installed = await installedPipelineVersion();
+    await writeTaskDir(
+      root,
+      '0001-newer-writer',
+      invalidDoneTask({ pipelineVersion: '99.0.0' }),
+    );
+
+    const result = await validateStore(root);
+    assert.equal(result.ok, true, result.stderr.join('\n'));
+    assert.equal(result.code, 0);
+    assert.ok(!result.stderr.some((line) => line.includes('validation FAILED')));
+    const streams = [...result.stdout, ...result.stderr].join('\n');
+    assert.match(streams, /99\.0\.0/);
+    assert.match(streams, new RegExp(installed.replace(/\./g, '\\.')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('validateStore: #221 understood store still denies real invalid state', async () => {
+  const rootAbsent = await makeRoot();
+  const rootPinned = await makeRoot();
+  try {
+    const installed = await installedPipelineVersion();
+    await writeTaskDir(rootAbsent, '0001-invalid', invalidDoneTask());
+    const absent = await validateStore(rootAbsent);
+    assert.equal(absent.ok, false);
+    assert.equal(absent.code, 1);
+    assert.ok(absent.stderr.some((line) => line.includes('validation FAILED')));
+
+    await writeTaskDir(
+      rootPinned,
+      '0001-invalid',
+      invalidDoneTask({ pipelineVersion: installed }),
+    );
+    const pinned = await validateStore(rootPinned);
+    assert.equal(pinned.ok, false);
+    assert.equal(pinned.code, 1);
+    assert.ok(pinned.stderr.some((line) => line.includes('validation FAILED')));
+  } finally {
+    await rm(rootAbsent, { recursive: true, force: true });
+    await rm(rootPinned, { recursive: true, force: true });
+  }
+});
+
+test('validateStore: #221 unversioned historical ledger alone does not fail open', async () => {
+  const root = await makeRoot();
+  try {
+    await writeTaskDir(root, '0001-legacy', invalidDoneTask());
+    const result = await validateStore(root);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 1);
+    assert.ok(result.stderr.some((line) => line.includes('validation FAILED')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
