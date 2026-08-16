@@ -1,5 +1,7 @@
 // @ts-check
 
+import { isType } from './validate.js';
+
 export const OPERATION_STATE_VERSION = 1;
 
 /** @param {Record<string, any>} task */
@@ -78,7 +80,7 @@ export function hasCompletedApprovalProvenance(task) {
   if (task.plan?.requiresApproval !== true
     || execution?.result !== 'executed'
     || request === undefined
-    || grant === undefined
+    || !isType(grant, 'object')
     || request.id !== task.approvalRequests.length - 1
     || execution.approvalRequestId !== request.id
     || request.mutation !== task.plan.approvalBoundary

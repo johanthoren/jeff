@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { validateStore } from './validate-store.js';
 import { runInvariants } from './invariants.js';
 import { taskSchemaViolations } from './task-schema.js';
+import { hasCompletedApprovalProvenance } from './operation-state.js';
 const AUDIT_CATEGORIES = [
   'secrets',
   'injection_sql',
@@ -4383,4 +4384,134 @@ test('issue 238 persisted council research provenance fails closed and keeps his
     assert.equal(result.ok, false, 'historical provenance cannot label canonical research');
     assert.match(result.stderr.join('\n'), /council|research|provenance|inv/i);
   });
+});
+
+/**
+ * Authoritative approval-gated ledger with a present-but-null grant and one
+ * well-formed request. Used by the #108 degenerate-input contract.
+ *
+ * @returns {Record<string, any>}
+ */
+function issue108NullGrantTask() {
+  const mutation = 'Rewrite the shared release registry entry from source to destination.';
+  const request = {
+    id: 0,
+    mutation,
+    requestedBy: 'approval-requester',
+    requestedAt: '2026-07-26T15:20:00Z',
+    cycle: 0,
+  };
+  const completed = completedOperationTask();
+  return completedOperationTask({
+    plan: {
+      ...completed.plan,
+      approvalBoundary: mutation,
+      requiresApproval: true,
+    },
+    approvalRequests: [request],
+    execution: {
+      ...completed.execution,
+      recordedAt: '2026-07-26T15:40:00Z',
+      approvalRequestId: request.id,
+      approval: null,
+    },
+  });
+}
+
+test('issue 108: taskSchemaViolations names a null authoritative grant instead of throwing', () => {
+  const completed = completedOperationTask();
+  const mutation = 'Rewrite the shared release registry entry from source to destination.';
+  const request = {
+    id: 0,
+    mutation,
+    requestedBy: 'approval-requester',
+    requestedAt: '2026-07-26T15:20:00Z',
+    cycle: 0,
+  };
+  const task = canonicalOperationTask({
+    stage: 'execute',
+    agents: {
+      ...canonicalOperationTask().agents,
+      executor_agent_id: request.requestedBy,
+    },
+    plan: {
+      ...completed.plan,
+      requiresApproval: true,
+      approvalBoundary: mutation,
+    },
+    approvalRequests: [request],
+    execution: {
+      result: 'approval-required',
+      executor_agent_id: request.requestedBy,
+      cycle: request.cycle,
+      recordedAt: request.requestedAt,
+      approvalRequestId: request.id,
+      actions: ['Captured the recoverable pre-mutation state.'],
+      evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
+      approvalRequired: mutation,
+      approval: null,
+    },
+  });
+  let violations;
+  assert.doesNotThrow(() => {
+    violations = taskSchemaViolations(task, { lite: true });
+  });
+  assert.ok(
+    violations.some((line) => line.includes('[schema] execution.approval')),
+    `expected a named [schema] execution.approval violation, got:\n${violations.join('\n')}`,
+  );
+});
+
+test('issue 108: hasCompletedApprovalProvenance returns false for a null grant', () => {
+  const task = issue108NullGrantTask();
+  let completed;
+  assert.doesNotThrow(() => {
+    completed = hasCompletedApprovalProvenance(task);
+  });
+  assert.equal(completed, false);
+});
+
+test('issue 108: taskSchemaViolations names a null approvalRequests predecessor instead of throwing', () => {
+  const completed = completedOperationTask();
+  const mutation = completed.plan.approvalBoundary;
+  const task = completedOperationTask({
+    plan: {
+      ...completed.plan,
+      requiresApproval: true,
+    },
+    approvalRequests: [null, {
+      id: 1,
+      mutation,
+      requestedBy: 'approval-requester',
+      requestedAt: '2026-07-26T15:20:00Z',
+      cycle: 0,
+    }],
+    execution: {
+      ...completed.execution,
+      recordedAt: '2026-07-26T15:40:00Z',
+    },
+  });
+  let violations;
+  assert.doesNotThrow(() => {
+    violations = taskSchemaViolations(task, { lite: true });
+  });
+  assert.ok(
+    violations.some((line) => line.includes('[schema] approvalRequests')),
+    `expected a named [schema] approvalRequests violation, got:\n${violations.join('\n')}`,
+  );
+});
+
+test('issue 108: a null grant plus one valid request yields a named schema violation and a normal nonzero verdict', async () => {
+  const result = await verdictFor(issue108NullGrantTask());
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 1);
+  assertNamedFailure(result, '[schema] execution.approval');
+  assert.ok(
+    result.stderr.some((line) => /cook: validation FAILED \(\d+ issue\(s\)\)/.test(line)),
+    `expected a normal nonzero verdict line, got:\n${result.stderr.join('\n')}`,
+  );
+  assert.ok(
+    !result.stderr.some((line) => line.includes('TypeError') || line.includes('    at ')),
+    `expected no stack-trace path, got:\n${result.stderr.join('\n')}`,
+  );
 });
