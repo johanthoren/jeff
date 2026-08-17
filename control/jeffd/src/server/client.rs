@@ -265,11 +265,7 @@ impl Server {
                     let _ = connection.control_stream.shutdown(Shutdown::Both);
                     return false;
                 };
-                TerminalFrame::from_outbound(
-                    frame,
-                    capacity,
-                    connection.required_deliveries.clone(),
-                )
+                TerminalFrame::from_outbound(frame, capacity)
             }
         };
         match connection.writer.try_send(WriterMessage::Terminal(frame)) {

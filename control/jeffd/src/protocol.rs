@@ -150,7 +150,7 @@ enum TerminalBytes {
 pub struct TerminalFrame {
     bytes: TerminalBytes,
     _capacity: CapacityPermit,
-    required_deliveries: Arc<AtomicUsize>,
+    required_deliveries: Option<Arc<AtomicUsize>>,
 }
 
 impl TerminalFrame {
@@ -166,16 +166,12 @@ impl TerminalFrame {
         )
     }
 
-    pub(crate) fn from_outbound(
-        frame: OutboundFrame,
-        capacity: CapacityPermit,
-        required_deliveries: Arc<AtomicUsize>,
-    ) -> Self {
-        Self::with_bytes(
-            TerminalBytes::Accounted(frame),
-            capacity,
-            required_deliveries,
-        )
+    pub(crate) fn from_outbound(frame: OutboundFrame, capacity: CapacityPermit) -> Self {
+        Self {
+            bytes: TerminalBytes::Accounted(frame),
+            _capacity: capacity,
+            required_deliveries: None,
+        }
     }
 
     fn with_bytes(
@@ -187,7 +183,7 @@ impl TerminalFrame {
         Self {
             bytes,
             _capacity: capacity,
-            required_deliveries,
+            required_deliveries: Some(required_deliveries),
         }
     }
 
@@ -201,7 +197,9 @@ impl TerminalFrame {
 
 impl Drop for TerminalFrame {
     fn drop(&mut self) {
-        self.required_deliveries.fetch_sub(1, Ordering::AcqRel);
+        if let Some(required_deliveries) = &self.required_deliveries {
+            required_deliveries.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 
