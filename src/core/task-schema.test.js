@@ -4452,7 +4452,8 @@ test('issue 108: taskSchemaViolations names a null authoritative grant instead o
       approval: null,
     },
   });
-  let violations;
+  /** @type {string[]} */
+  let violations = [];
   assert.doesNotThrow(() => {
     violations = taskSchemaViolations(task, { lite: true });
   });
@@ -4464,7 +4465,8 @@ test('issue 108: taskSchemaViolations names a null authoritative grant instead o
 
 test('issue 108: hasCompletedApprovalProvenance returns false for a null grant', () => {
   const task = issue108NullGrantTask();
-  let completed;
+  /** @type {boolean} */
+  let completed = true;
   assert.doesNotThrow(() => {
     completed = hasCompletedApprovalProvenance(task);
   });
@@ -4491,7 +4493,8 @@ test('issue 108: taskSchemaViolations names a null approvalRequests predecessor 
       recordedAt: '2026-07-26T15:40:00Z',
     },
   });
-  let violations;
+  /** @type {string[]} */
+  let violations = [];
   assert.doesNotThrow(() => {
     violations = taskSchemaViolations(task, { lite: true });
   });

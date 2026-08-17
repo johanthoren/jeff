@@ -526,7 +526,8 @@ test('issue 108: a throwing schema pass becomes a named store-level failure, not
       abandonReason: null,
     });
 
-    let result;
+    /** @type {{ ok: boolean, code: number, stderr: string[] }} */
+    let result = { ok: true, code: 0, stderr: [] };
     await assert.doesNotReject(async () => {
       result = await validateStore(root);
     });
