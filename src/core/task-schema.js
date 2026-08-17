@@ -613,7 +613,7 @@ function validateApprovalRequests(task, out) {
     requireField(out, `${field}.requestedAt`, isIsoDateTime(request.requestedAt));
     requireField(out, `${field}.cycle`, isOperationCycle(request.cycle));
     const previous = task.approvalRequests[index - 1];
-    if (previous !== undefined) {
+    if (isType(previous, 'object')) {
       requireField(out, `${field}.requestedAt ordering`,
         Date.parse(previous.requestedAt) <= Date.parse(request.requestedAt));
       requireField(out, `${field}.cycle ordering`, previous.cycle <= request.cycle);
@@ -637,11 +637,11 @@ function validateOperationApproval(task, out, authoritative) {
       out.push('[approval-provenance] pending approval must retain its exact latest request');
     }
   }
-  if (grant !== undefined) {
+  if (isType(grant, 'object')) {
     requireField(out, 'execution.approval.mutation', requiresApproval
-      && grant?.mutation === planned);
+      && grant.mutation === planned);
     requireField(out, 'execution.approval.grantedBy provenance',
-      grant?.grantedBy !== execution.executor_agent_id);
+      grant.grantedBy !== execution.executor_agent_id);
     requireField(out, 'execution.approval retained', Array.isArray(task.approvals)
       && task.approvals.some((/** @type {any} */ approval) => isSameApproval(approval, grant)));
     if (authoritative) {

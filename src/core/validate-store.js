@@ -158,9 +158,15 @@ export async function validateStore(root) {
 
   // 2. Collect persisted-shape and semantic violations. Schema failures remain
   // authoritative but include fail-closed invariant markers.
+  let taskViolations;
+  try {
+    taskViolations = tasks.flatMap((task) => taskSchemaViolations(task, { lite }));
+  } catch {
+    taskViolations = ['cook: validation FAILED: the schema pass could not evaluate the task store.'];
+  }
   const schemaViolations = [
     ...configSchemaViolations(config, { lite }),
-    ...tasks.flatMap((task) => taskSchemaViolations(task, { lite })),
+    ...taskViolations,
   ];
   let invariantViolations;
   try {

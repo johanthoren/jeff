@@ -454,3 +454,95 @@ test('validateStore: #221 unversioned historical ledger alone does not fail open
   }
 });
 
+test('issue 108: a throwing schema pass becomes a named store-level failure, not a thrown stack', async () => {
+  const root = await makeRoot();
+  try {
+    const mutation = 'Rewrite the shared release registry entry from source to destination.';
+    const request = {
+      id: 0,
+      mutation,
+      requestedBy: 'approval-requester',
+      requestedAt: '2026-07-26T15:20:00Z',
+      cycle: 0,
+    };
+    await writeTaskDir(root, '0001-degenerate-approval', {
+      schemaVersion: 1,
+      operationStateVersion: 1,
+      id: '#108',
+      slug: 'degenerate-approval',
+      title: 'Degenerate approval',
+      category: 'operation',
+      status: 'done',
+      stage: 'done',
+      priority: 'p2',
+      deps: [],
+      createdAt: '2026-07-12T00:00:00.000Z',
+      updatedAt: '2026-07-12T00:00:00.000Z',
+      complexity: 'complex',
+      agents: {
+        executor_agent_id: 'executor',
+        verifier_agent_id: 'verifier',
+        audit_agent_id: null,
+      },
+      plan: {
+        result: 'plan',
+        slices: ['Move the bounded registry entry.'],
+        runbook: ['Confirm the source entry, then move it to the destination.'],
+        preconditions: ['The source entry exists exactly once.'],
+        recoveryBoundary: 'Before the shared registry write, restore the captured source entry.',
+        approvalBoundary: mutation,
+        requiresApproval: true,
+        postconditions: ['The registry has exactly one destination entry.'],
+        verificationSeams: ['Read the source and destination entries independently.'],
+        escalation: null,
+      },
+      execution: {
+        result: 'executed',
+        executor_agent_id: 'executor',
+        cycle: 0,
+        recordedAt: '2026-07-26T15:40:00Z',
+        actions: ['Moved the bounded registry entry.'],
+        evidence: [{ command: 'inspect registry', output: 'entry moved' }],
+        approvalRequired: null,
+        approvalRequestId: request.id,
+        approval: null,
+      },
+      verification: {
+        verdict: 'pass',
+        verifier_agent_id: 'verifier',
+        postconditions: [{
+          postcondition: 'The registry has exactly one destination entry.',
+          ok: true,
+          evidence: 'source absent; destination present once',
+        }],
+        findings: [],
+        evidence: [{ command: 'inspect registry', output: 'postconditions satisfied' }],
+      },
+      approvalRequests: [request],
+      audit: { required: false, verdict: 'na', audit_agent_id: null, evidence: [] },
+      commits: [],
+      kickbacks: [],
+      blockedReason: null,
+      abandonReason: null,
+    });
+
+    /** @type {{ ok: boolean, code: number, stderr: string[] }} */
+    let result = { ok: true, code: 0, stderr: [] };
+    await assert.doesNotReject(async () => {
+      result = await validateStore(root);
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 1);
+    assert.ok(
+      result.stderr.some((line) => line.includes('[schema]') || line.includes('the schema pass could not evaluate the task store')),
+      `expected a named schema failure or wrapped schema-pass failure, got:\n${result.stderr.join('\n')}`,
+    );
+    assert.ok(
+      result.stderr.some((line) => line.includes('cook: validation FAILED')),
+      `expected a normal nonzero verdict line, got:\n${result.stderr.join('\n')}`,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
