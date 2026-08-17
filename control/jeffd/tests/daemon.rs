@@ -925,6 +925,74 @@ impl EgressWriteBarrier {
     }
 }
 
+enum CloseBoundaryReached {
+    Admitted,
+    Eof,
+}
+
+struct CloseBoundary {
+    ready_path: PathBuf,
+    ready: BufReader<File>,
+}
+
+impl CloseBoundary {
+    fn new(root: &Path) -> Self {
+        let ready_path = root.join("close-boundary-ready.fifo");
+        make_race_fifo(&ready_path);
+        Self {
+            ready: BufReader::new(
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&ready_path)
+                    .expect("open close-boundary ready FIFO"),
+            ),
+            ready_path,
+        }
+    }
+
+    fn environment(&self) -> [(&'static str, &Path); 1] {
+        [("_JEFFD_TEST_CLOSE_ADMITTED", self.ready_path.as_path())]
+    }
+
+    fn wait(&mut self, client: &support::Client) -> CloseBoundaryReached {
+        let mut descriptors = [
+            libc::pollfd {
+                fd: self.ready.get_ref().as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: client.raw_fd(),
+                events: libc::POLLIN | libc::POLLHUP,
+                revents: 0,
+            },
+        ];
+        loop {
+            let result =
+                unsafe { libc::poll(descriptors.as_mut_ptr(), descriptors.len() as _, -1) };
+            if result < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                panic!("wait for close boundary: {error}");
+            }
+            if descriptors[0].revents & libc::POLLIN != 0 {
+                let mut line = String::new();
+                self.ready
+                    .read_line(&mut line)
+                    .expect("read close-admitted signal");
+                assert_eq!(line, "run\n", "unexpected close-admitted signal");
+                return CloseBoundaryReached::Admitted;
+            }
+            if descriptors[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                return CloseBoundaryReached::Eof;
+            }
+        }
+    }
+}
+
 const EGRESS_WRITE_INTERPOSER: &str = r#"
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -5361,6 +5429,7 @@ fn task_252_reused_terminal_boundary(stale_terminals: usize) {
     let mut snapshot_done = FifoPair::new(&snapshot_done_root);
     let mut write_barrier = EgressWriteBarrier::new(&root);
     let mut shutdown_done = RecoveryGate::new(&root, "task-252-boundary-shutdown-done");
+    let mut close_boundary = CloseBoundary::new(&root);
     let limits = PathBuf::from(format!(
         "ingress=32,in_flight=32,cold_waiters=1,egress_frames={stale_terminals},egress_bytes=1048576,global_egress_bytes=1048576,connection_subscriptions=1,global_subscriptions=1,active_snapshots=1"
     ));
@@ -5378,11 +5447,10 @@ fn task_252_reused_terminal_boundary(stale_terminals: usize) {
         ),
         ("_JEFFD_TEST_LIMITS", limits.as_path()),
     ]);
+    environment.extend(close_boundary.environment());
     fixture.start_with_env(&environment);
     drop(environment);
 
-    let mut observer = fixture.client();
-    assert_ok(&observer.request("terminal-observer-ready", "server.hello", json!({})));
     let mut target = fixture.client();
     target.send(&json!({
         "v": 1,
@@ -5422,10 +5490,6 @@ fn task_252_reused_terminal_boundary(stale_terminals: usize) {
         let mut registry = vec![warm_record.clone(), fresh_record.clone()];
         registry.extend(stale_records.iter().skip(removed + 1).cloned());
         fixture.write_registry(Value::Array(registry));
-        let removed_id = format!("terminal-stale-{removed}");
-        observer.recv_until(|frame| {
-            frame["name"] == "project.updated" && frame["payload"]["projectId"] == removed_id
-        });
         snapshot_done.wait_for_run();
         if removed + 1 < stale_terminals {
             let next_id = format!("terminal-stale-{}", removed + 1);
@@ -5451,9 +5515,18 @@ fn task_252_reused_terminal_boundary(stale_terminals: usize) {
 
     fixture.signal(libc::SIGTERM);
     shutdown_done.wait();
-    write_barrier.release();
     snapshot_gate.release();
-    let frames = target.recv_all_until_eof(16);
+    let frames = match close_boundary.wait(&target) {
+        CloseBoundaryReached::Admitted => {
+            write_barrier.release();
+            target.recv_all_until_eof(16)
+        }
+        CloseBoundaryReached::Eof => {
+            let frames = target.recv_all_until_eof(16);
+            write_barrier.release();
+            frames
+        }
+    };
     fixture.wait_for_exit();
 
     for request_id in (0..stale_terminals)

@@ -319,7 +319,12 @@ impl Server {
             .try_send(WriterMessage::Close(closed_tx))
             .is_ok()
         {
-            let _ = closed_rx.recv_timeout(Duration::from_millis(100));
+            super::signal_test_fifo("_JEFFD_TEST_CLOSE_ADMITTED");
+            if client.required_deliveries.load(Ordering::Acquire) == 0 {
+                let _ = closed_rx.recv_timeout(Duration::from_millis(100));
+            } else {
+                let _ = closed_rx.recv();
+            }
         }
         let _ = client.control_stream.shutdown(Shutdown::Both);
         let _ = client.writer_handle.join();

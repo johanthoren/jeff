@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -317,6 +318,10 @@ impl Client {
             .expect("bound socket writes");
         let reader = BufReader::new(writer.try_clone().expect("clone client socket"));
         Self { writer, reader }
+    }
+
+    pub fn raw_fd(&self) -> RawFd {
+        self.reader.get_ref().as_raw_fd()
     }
 
     pub fn send(&mut self, value: &Value) {
