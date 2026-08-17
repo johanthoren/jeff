@@ -5199,3 +5199,301 @@ ssize_t send(int descriptor, const void *buffer, size_t count, int flags) {
 }
 #endif
 "#;
+
+fn task_252_registry_saturation_case(scope: &str, change: &str, method: &str) {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([fixture.default_record()]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut snapshot_gate = FifoPair::new(&root);
+    let mut write_barrier = EgressWriteBarrier::new(&root);
+    let mut snapshot_done = RecoveryGate::new(&root, "task-252-registry-snapshot-done");
+    let mut shutdown_done = RecoveryGate::new(&root, "task-252-registry-shutdown-done");
+    let blocked_id = "b".repeat(700);
+    let blocked_bytes = serialized_len(&json!({
+        "v": 1,
+        "kind": "res",
+        "id": &blocked_id,
+        "ok": true,
+        "result": {
+            "protocolVersion": 1,
+            "serverVersion": env!("CARGO_PKG_VERSION"),
+            "snapshotSchemaMin": 1,
+            "snapshotSchemaMax": 1
+        }
+    }));
+    let limits = match scope {
+        "connection" => PathBuf::from(format!(
+            "ingress=32,in_flight=32,cold_waiters=2,egress_frames=4,egress_bytes={blocked_bytes},global_egress_bytes=8192,connection_subscriptions=2,global_subscriptions=2"
+        )),
+        "global" => PathBuf::from(format!(
+            "ingress=32,in_flight=32,cold_waiters=2,egress_frames=4,egress_bytes=8192,global_egress_bytes={blocked_bytes},connection_subscriptions=2,global_subscriptions=2"
+        )),
+        _ => panic!("unknown egress scope {scope}"),
+    };
+    let mut environment = write_barrier.environment();
+    environment.extend([
+        ("FAKE_READY_FIFO", snapshot_gate.ready_path.as_path()),
+        ("FAKE_RELEASE_FIFO", snapshot_gate.release_path.as_path()),
+        (
+            "_JEFFD_TEST_SNAPSHOT_DONE",
+            snapshot_done.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_SHUTDOWN_TERMINALS_DONE",
+            shutdown_done.ready_path.as_path(),
+        ),
+        ("_JEFFD_TEST_LIMITS", limits.as_path()),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+
+    let request_id = format!("{scope}-{change}-{method}");
+    let mut target = fixture.client();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": &request_id,
+        "method": method,
+        "params": {"projectId": "project-a"}
+    }));
+    snapshot_gate.wait_for_run();
+
+    write_barrier.arm();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": &blocked_id,
+        "method": "server.hello",
+        "params": {}
+    }));
+    write_barrier.wait();
+
+    let next_registry = match change {
+        "removed" => json!([]),
+        "disabled" => json!([task_236_registry_record(
+            &fixture,
+            "project-a",
+            &fixture.project,
+            false
+        )]),
+        "replaced" => json!([task_236_registry_record(
+            &fixture,
+            "project-a",
+            &fixture.other_project,
+            true
+        )]),
+        _ => panic!("unknown registry change {change}"),
+    };
+    fixture.write_registry(next_registry);
+    snapshot_done.wait();
+
+    write_barrier.release();
+    snapshot_gate.release();
+    snapshot_gate.release();
+    fixture.signal(libc::SIGTERM);
+    shutdown_done.wait();
+    let frames = target.recv_all_until_eof(16);
+    fixture.wait_for_exit();
+
+    let terminal = frames
+        .iter()
+        .filter(|frame| frame["kind"] == "res" && frame["id"] == request_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        terminal.len(),
+        1,
+        "{scope} saturation must preserve one {change} {method} terminal through EOF: {frames:?}"
+    );
+    assert!(
+        terminal[0]["ok"] == false && terminal[0]["error"]["code"] == "unavailable",
+        "{scope} saturation must yield one coherent {change} {method} terminal: {frames:?}"
+    );
+}
+
+#[test]
+fn task_252_contract_registry_lifecycle_survives_per_connection_egress_saturation() {
+    for change in ["removed", "disabled", "replaced"] {
+        for method in ["snapshot.get", "snapshot.subscribe"] {
+            task_252_registry_saturation_case("connection", change, method);
+        }
+    }
+}
+
+#[test]
+fn task_252_contract_registry_lifecycle_survives_global_egress_saturation() {
+    for change in ["removed", "disabled", "replaced"] {
+        for method in ["snapshot.get", "snapshot.subscribe"] {
+            task_252_registry_saturation_case("global", change, method);
+        }
+    }
+}
+
+fn task_252_reused_terminal_boundary(stale_terminals: usize) {
+    let mut fixture = Fixture::new(true);
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let warm_path = root.join("terminal-warm");
+    let fresh_path = root.join("terminal-fresh");
+    let stale_paths = (0..stale_terminals)
+        .map(|index| root.join(format!("terminal-stale-{index}")))
+        .collect::<Vec<_>>();
+    for path in std::iter::once(&warm_path)
+        .chain(std::iter::once(&fresh_path))
+        .chain(stale_paths.iter())
+    {
+        fs::create_dir_all(path.join(".jeff")).expect("create terminal-boundary project fixture");
+    }
+    let warm_record = task_236_registry_record(&fixture, "terminal-warm", &warm_path, true);
+    let fresh_record = task_236_registry_record(&fixture, "terminal-fresh", &fresh_path, true);
+    let stale_records = stale_paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            task_236_registry_record(&fixture, &format!("terminal-stale-{index}"), path, true)
+        })
+        .collect::<Vec<_>>();
+    let mut initial_registry = vec![warm_record.clone(), fresh_record.clone()];
+    initial_registry.extend(stale_records.iter().cloned());
+    fixture.write_registry(Value::Array(initial_registry));
+
+    let mut snapshot_gate = FifoPair::new(&root);
+    let snapshot_done_root = root.join("terminal-snapshot-done");
+    fs::create_dir(&snapshot_done_root).expect("create snapshot-done signal root");
+    let mut snapshot_done = FifoPair::new(&snapshot_done_root);
+    let mut write_barrier = EgressWriteBarrier::new(&root);
+    let mut shutdown_done = RecoveryGate::new(&root, "task-252-boundary-shutdown-done");
+    let limits = PathBuf::from(format!(
+        "ingress=32,in_flight=32,cold_waiters=1,egress_frames={stale_terminals},egress_bytes=1048576,global_egress_bytes=1048576,connection_subscriptions=1,global_subscriptions=1,active_snapshots=1"
+    ));
+    let mut environment = write_barrier.environment();
+    environment.extend([
+        ("FAKE_READY_FIFO", snapshot_gate.ready_path.as_path()),
+        ("FAKE_RELEASE_FIFO", snapshot_gate.release_path.as_path()),
+        (
+            "_JEFFD_TEST_SNAPSHOT_DONE",
+            snapshot_done.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_SHUTDOWN_TERMINALS_DONE",
+            shutdown_done.ready_path.as_path(),
+        ),
+        ("_JEFFD_TEST_LIMITS", limits.as_path()),
+    ]);
+    fixture.start_with_env(&environment);
+    drop(environment);
+
+    let mut observer = fixture.client();
+    assert_ok(&observer.request("terminal-observer-ready", "server.hello", json!({})));
+    let mut target = fixture.client();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "terminal-warm-subscription",
+        "method": "snapshot.subscribe",
+        "params": {"projectId": "terminal-warm"}
+    }));
+    snapshot_gate.wait_for_run();
+    snapshot_gate.release();
+    let returned = target.recv_until(|frame| frame["id"] == "terminal-warm-subscription");
+    let subscription_id = assert_ok(&returned)["subscriptionId"]
+        .as_str()
+        .expect("warm subscription id")
+        .to_owned();
+    snapshot_done.wait_for_run();
+
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "terminal-stale-0",
+        "method": "snapshot.get",
+        "params": {"projectId": "terminal-stale-0"}
+    }));
+    snapshot_gate.wait_for_run();
+    write_barrier.arm();
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "terminal-blocked-writer",
+        "method": "server.hello",
+        "params": {}
+    }));
+    write_barrier.wait();
+
+    for removed in 0..stale_terminals {
+        let mut registry = vec![warm_record.clone(), fresh_record.clone()];
+        registry.extend(stale_records.iter().skip(removed + 1).cloned());
+        fixture.write_registry(Value::Array(registry));
+        let removed_id = format!("terminal-stale-{removed}");
+        observer.recv_until(|frame| {
+            frame["name"] == "project.updated" && frame["payload"]["projectId"] == removed_id
+        });
+        snapshot_done.wait_for_run();
+        if removed + 1 < stale_terminals {
+            let next_id = format!("terminal-stale-{}", removed + 1);
+            target.send(&json!({
+                "v": 1,
+                "kind": "req",
+                "id": &next_id,
+                "method": "snapshot.get",
+                "params": {"projectId": &next_id}
+            }));
+            snapshot_gate.wait_for_run();
+        }
+    }
+
+    target.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "terminal-fresh-waiter",
+        "method": "snapshot.get",
+        "params": {"projectId": "terminal-fresh"}
+    }));
+    snapshot_gate.wait_for_run();
+
+    fixture.signal(libc::SIGTERM);
+    shutdown_done.wait();
+    write_barrier.release();
+    snapshot_gate.release();
+    let frames = target.recv_all_until_eof(16);
+    fixture.wait_for_exit();
+
+    for request_id in (0..stale_terminals)
+        .map(|index| format!("terminal-stale-{index}"))
+        .chain(std::iter::once("terminal-fresh-waiter".to_owned()))
+    {
+        let terminal = frames
+            .iter()
+            .filter(|frame| frame["kind"] == "res" && frame["id"] == request_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal.len(),
+            1,
+            "reused terminal capacity must preserve {request_id} through EOF: {frames:?}"
+        );
+        assert!(
+            terminal[0]["ok"] == false && terminal[0]["error"]["code"] == "unavailable",
+            "reused terminal capacity must preserve a coherent {request_id} outcome: {frames:?}"
+        );
+    }
+    let ended = frames
+        .iter()
+        .filter(|frame| {
+            frame["name"] == "subscription.ended"
+                && frame["payload"]["subscriptionId"] == subscription_id
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ended.len(),
+        1,
+        "the final returned-subscription terminal must precede EOF: {frames:?}"
+    );
+}
+
+#[test]
+fn task_252_contract_one_reused_terminal_preserves_close_capacity() {
+    task_252_reused_terminal_boundary(1);
+}
+
+#[test]
+fn task_252_contract_two_reused_terminals_preserve_the_final_terminal() {
+    task_252_reused_terminal_boundary(2);
+}

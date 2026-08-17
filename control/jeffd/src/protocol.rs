@@ -73,19 +73,53 @@ impl Drop for IngressPermit {
         self.global_bytes.fetch_sub(self.bytes, Ordering::AcqRel);
     }
 }
+pub(crate) struct CapacityPermit {
+    primary: Arc<AtomicUsize>,
+    secondary: Option<Arc<AtomicUsize>>,
+}
+
+impl CapacityPermit {
+    pub(crate) fn try_acquire(counter: Arc<AtomicUsize>, limit: usize) -> Option<Self> {
+        try_reserve(&counter, 1, limit).then_some(Self {
+            primary: counter,
+            secondary: None,
+        })
+    }
+
+    pub(crate) fn try_acquire_pair(
+        primary: Arc<AtomicUsize>,
+        primary_limit: usize,
+        secondary: Arc<AtomicUsize>,
+        secondary_limit: usize,
+    ) -> Option<Self> {
+        let mut permit = Self::try_acquire(primary, primary_limit)?;
+        if !try_reserve(&secondary, 1, secondary_limit) {
+            return None;
+        }
+        permit.secondary = Some(secondary);
+        Some(permit)
+    }
+}
+
+impl Drop for CapacityPermit {
+    fn drop(&mut self) {
+        self.primary.fetch_sub(1, Ordering::AcqRel);
+        if let Some(secondary) = &self.secondary {
+            secondary.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
+}
 
 pub struct OutboundFrame {
     pub bytes: Vec<u8>,
     connection_bytes: Arc<AtomicUsize>,
     global_bytes: Arc<AtomicUsize>,
-    writer_frames: Option<Arc<AtomicUsize>>,
+    writer_slot: Option<CapacityPermit>,
 }
 
 impl Drop for OutboundFrame {
     fn drop(&mut self) {
-        if let Some(writer_frames) = self.writer_frames.take() {
-            writer_frames.fetch_sub(1, Ordering::AcqRel);
-        }
+        drop(self.writer_slot.take());
         self.connection_bytes
             .fetch_sub(self.bytes.len(), Ordering::AcqRel);
         self.global_bytes
@@ -99,23 +133,81 @@ impl OutboundFrame {
         writer_frames: Arc<AtomicUsize>,
         limit: usize,
     ) -> Option<Self> {
-        if !try_reserve(&writer_frames, 1, limit) {
-            return None;
-        }
-        self.writer_frames = Some(writer_frames);
+        self.writer_slot = Some(CapacityPermit::try_acquire(writer_frames, limit)?);
         Some(self)
     }
 
     fn begin_write(&mut self) {
-        if let Some(writer_frames) = self.writer_frames.take() {
-            writer_frames.fetch_sub(1, Ordering::AcqRel);
+        drop(self.writer_slot.take());
+    }
+}
+
+enum TerminalBytes {
+    Required(Vec<u8>),
+    Accounted(OutboundFrame),
+}
+
+pub struct TerminalFrame {
+    bytes: TerminalBytes,
+    _capacity: CapacityPermit,
+    required_deliveries: Arc<AtomicUsize>,
+}
+
+impl TerminalFrame {
+    pub(crate) fn new(
+        bytes: Vec<u8>,
+        capacity: CapacityPermit,
+        required_deliveries: Arc<AtomicUsize>,
+    ) -> Self {
+        Self::with_bytes(
+            TerminalBytes::Required(bytes),
+            capacity,
+            required_deliveries,
+        )
+    }
+
+    pub(crate) fn from_outbound(
+        frame: OutboundFrame,
+        capacity: CapacityPermit,
+        required_deliveries: Arc<AtomicUsize>,
+    ) -> Self {
+        Self::with_bytes(
+            TerminalBytes::Accounted(frame),
+            capacity,
+            required_deliveries,
+        )
+    }
+
+    fn with_bytes(
+        bytes: TerminalBytes,
+        capacity: CapacityPermit,
+        required_deliveries: Arc<AtomicUsize>,
+    ) -> Self {
+        required_deliveries.fetch_add(1, Ordering::AcqRel);
+        Self {
+            bytes,
+            _capacity: capacity,
+            required_deliveries,
         }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        match &self.bytes {
+            TerminalBytes::Required(bytes) => bytes,
+            TerminalBytes::Accounted(frame) => &frame.bytes,
+        }
+    }
+}
+
+impl Drop for TerminalFrame {
+    fn drop(&mut self) {
+        self.required_deliveries.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
 pub enum WriterMessage {
     Frame(OutboundFrame),
-    Terminal(Vec<u8>),
+    Terminal(TerminalFrame),
     Close(mpsc::SyncSender<()>),
 }
 
@@ -126,6 +218,7 @@ pub struct ConnectionParts {
     pub writer_handle: JoinHandle<()>,
     pub writer_bytes: Arc<AtomicUsize>,
     pub writer_frames: Arc<AtomicUsize>,
+    pub required_deliveries: Arc<AtomicUsize>,
     pub closed: Arc<AtomicBool>,
     pub pending: Arc<AtomicUsize>,
     pub reader_done: Arc<AtomicBool>,
@@ -151,6 +244,7 @@ pub fn spawn_connection(
     let pending = Arc::new(AtomicUsize::new(0));
     let writer_bytes = Arc::new(AtomicUsize::new(0));
     let writer_frames = Arc::new(AtomicUsize::new(0));
+    let required_deliveries = Arc::new(AtomicUsize::new(0));
     let closed = Arc::new(AtomicBool::new(false));
     let reader_done = Arc::new(AtomicBool::new(false));
     let reader_ownership = ReaderOwnership {
@@ -176,6 +270,7 @@ pub fn spawn_connection(
         writer_handle,
         writer_bytes,
         writer_frames,
+        required_deliveries,
         closed,
         pending,
         reader_done,
@@ -398,7 +493,7 @@ pub fn reserve_outbound(
         bytes,
         connection_bytes,
         global_bytes,
-        writer_frames: None,
+        writer_slot: None,
     })
 }
 
@@ -422,8 +517,8 @@ fn write_frames(mut stream: UnixStream, messages: Receiver<WriterMessage>) {
                     break;
                 }
             }
-            WriterMessage::Terminal(bytes) => {
-                if stream.write_all(&bytes).is_err()
+            WriterMessage::Terminal(frame) => {
+                if stream.write_all(frame.bytes()).is_err()
                     || stream.write_all(b"\n").is_err()
                     || stream.flush().is_err()
                 {

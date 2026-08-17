@@ -1,6 +1,8 @@
-use super::{Server, WaitKind};
+use super::{Server, Subscription, WaitKind};
 use crate::config::PROTOCOL_VERSION;
-use crate::protocol::{reserve_outbound, ConnectionId, WriterMessage};
+use crate::protocol::{
+    reserve_outbound, CapacityPermit, ConnectionId, TerminalFrame, WriterMessage,
+};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::io::{self, Write};
@@ -8,6 +10,12 @@ use std::net::Shutdown;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, TrySendError};
 use std::time::Duration;
+
+#[derive(Clone, Copy)]
+enum TerminalAccounting {
+    Required,
+    Egress,
+}
 
 impl Server {
     pub(super) fn send_project_event(&self, project_id: &str, name: &str, payload: Value) {
@@ -22,18 +30,13 @@ impl Server {
         }
     }
 
-    pub(super) fn broadcast_event(&self, name: &str, payload: Value) {
+    pub(super) fn broadcast_lifecycle_event(&self, name: &str, payload: Value) {
         for connection in self.connections.keys().copied() {
-            self.send_event(connection, name, payload.clone());
+            self.send_lifecycle_event(connection, name, payload.clone());
         }
     }
 
-    pub(super) fn end_project_subscriptions(
-        &mut self,
-        project_id: &str,
-        reason: &str,
-        restart_gets: bool,
-    ) {
+    pub(super) fn end_project_subscriptions(&mut self, project_id: &str, reason: &str) {
         let subscriptions: HashSet<_> = self
             .subscriptions
             .iter()
@@ -41,53 +44,47 @@ impl Server {
             .map(|(id, _)| id.clone())
             .collect();
         for subscription_id in &subscriptions {
-            if let Some(subscription) = self
-                .subscriptions
-                .get(subscription_id)
-                .filter(|subscription| subscription.returned)
-            {
-                self.send_event(
-                    subscription.connection,
-                    "subscription.ended",
-                    json!({"subscriptionId": subscription_id, "reason": reason}),
-                );
+            if let Some(subscription) = self.remove_subscription(subscription_id) {
+                if subscription.returned {
+                    self.send_shutdown_event(
+                        subscription.connection,
+                        "subscription.ended",
+                        json!({"subscriptionId": subscription_id, "reason": reason}),
+                        subscription.permit,
+                    );
+                }
             }
-            self.remove_subscription(subscription_id);
         }
-        let mut remaining = Vec::new();
         for waiter in self.take_waiters(project_id) {
-            match waiter.kind {
+            match &waiter.kind {
                 WaitKind::Subscribe(_) => {
-                    self.send_error(
+                    self.send_shutdown_error(
                         waiter.connection,
                         &waiter.request_id,
                         "unavailable",
                         "subscription ended because the project was replaced",
+                        waiter.permit,
                     );
                 }
-                WaitKind::Get if restart_gets => remaining.push(waiter),
                 WaitKind::Get => {
                     self.send_shutdown_error(
                         waiter.connection,
                         &waiter.request_id,
                         "unavailable",
-                        "snapshot unavailable because the project was removed or disabled",
+                        "snapshot unavailable because the project was removed, disabled, or replaced",
+                        waiter.permit,
                     );
                 }
             }
         }
-        if !remaining.is_empty() {
-            self.waiter_count += remaining.len();
-            self.waiters.insert(project_id.to_owned(), remaining);
-        }
     }
 
-    pub(super) fn remove_subscription(&mut self, subscription_id: &str) {
-        if let Some(subscription) = self.subscriptions.remove(subscription_id) {
-            if let Some(connection) = self.connections.get_mut(&subscription.connection) {
-                connection.subscriptions.remove(subscription_id);
-            }
+    pub(super) fn remove_subscription(&mut self, subscription_id: &str) -> Option<Subscription> {
+        let subscription = self.subscriptions.remove(subscription_id)?;
+        if let Some(connection) = self.connections.get_mut(&subscription.connection) {
+            connection.subscriptions.remove(subscription_id);
         }
+        Some(subscription)
     }
 
     pub(super) fn send_result(&self, connection: ConnectionId, id: &str, result: Value) -> bool {
@@ -121,6 +118,7 @@ impl Server {
         id: &str,
         code: &str,
         message: &str,
+        capacity: CapacityPermit,
     ) -> bool {
         self.send_terminal_frame(
             connection,
@@ -131,6 +129,8 @@ impl Server {
                 "ok": false,
                 "error": {"code": code, "message": message}
             }),
+            capacity,
+            TerminalAccounting::Required,
         )
     }
 
@@ -139,10 +139,28 @@ impl Server {
         connection: ConnectionId,
         name: &str,
         payload: Value,
+        capacity: CapacityPermit,
     ) -> bool {
         self.send_terminal_frame(
             connection,
             json!({"v": PROTOCOL_VERSION, "kind": "event", "name": name, "payload": payload}),
+            capacity,
+            TerminalAccounting::Required,
+        )
+    }
+
+    pub(super) fn send_waiter_result(
+        &self,
+        connection: ConnectionId,
+        id: &str,
+        result: Value,
+        capacity: CapacityPermit,
+    ) -> bool {
+        self.send_terminal_frame(
+            connection,
+            json!({"v": PROTOCOL_VERSION, "kind": "res", "id": id, "ok": true, "result": result}),
+            capacity,
+            TerminalAccounting::Egress,
         )
     }
 
@@ -153,16 +171,35 @@ impl Server {
         )
     }
 
-    pub(super) fn send_frame(&self, connection: ConnectionId, frame: Value) -> bool {
-        self.send_queued_frame(connection, frame)
+    fn send_lifecycle_event(&self, connection: ConnectionId, name: &str, payload: Value) -> bool {
+        let protected = self.connection_has_required_delivery(connection);
+        if protected && !self.connection_has_lifecycle_headroom(connection) {
+            return false;
+        }
+        self.send_queued_frame(
+            connection,
+            json!({"v": PROTOCOL_VERSION, "kind": "event", "name": name, "payload": payload}),
+            !protected,
+        )
     }
 
-    fn send_queued_frame(&self, connection: ConnectionId, frame: Value) -> bool {
-        let Some(connection) = self.connections.get(&connection) else {
+    pub(super) fn send_frame(&self, connection: ConnectionId, frame: Value) -> bool {
+        self.send_queued_frame(connection, frame, true)
+    }
+
+    fn send_queued_frame(
+        &self,
+        connection_id: ConnectionId,
+        frame: Value,
+        close_on_failure: bool,
+    ) -> bool {
+        let Some(connection) = self.connections.get(&connection_id) else {
             return false;
         };
         let Some(bytes) = serialize_bounded(&frame, self.limits.frame_bytes) else {
-            let _ = connection.control_stream.shutdown(Shutdown::Both);
+            if close_on_failure {
+                let _ = connection.control_stream.shutdown(Shutdown::Both);
+            }
             return false;
         };
         let Some(frame) = reserve_outbound(
@@ -171,16 +208,71 @@ impl Server {
             self.global_writer_bytes.clone(),
             self.limits,
         ) else {
-            let _ = connection.control_stream.shutdown(Shutdown::Both);
+            if close_on_failure {
+                let _ = connection.control_stream.shutdown(Shutdown::Both);
+            }
             return false;
         };
         let Some(frame) =
             frame.reserve_writer_slot(connection.writer_frames.clone(), self.limits.egress_frames)
         else {
-            let _ = connection.control_stream.shutdown(Shutdown::Both);
+            if close_on_failure {
+                let _ = connection.control_stream.shutdown(Shutdown::Both);
+            }
             return false;
         };
         match connection.writer.try_send(WriterMessage::Frame(frame)) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                if close_on_failure {
+                    let _ = connection.control_stream.shutdown(Shutdown::Both);
+                }
+                false
+            }
+        }
+    }
+
+    fn send_terminal_frame(
+        &self,
+        connection_id: ConnectionId,
+        frame: Value,
+        owner_capacity: CapacityPermit,
+        accounting: TerminalAccounting,
+    ) -> bool {
+        let Some(connection) = self.connections.get(&connection_id) else {
+            return false;
+        };
+        let Some(bytes) = serialize_bounded(&frame, self.limits.frame_bytes) else {
+            let _ = connection.control_stream.shutdown(Shutdown::Both);
+            return false;
+        };
+        let capacity = CapacityPermit::try_acquire(
+            connection.writer_frames.clone(),
+            self.limits.egress_frames,
+        )
+        .unwrap_or(owner_capacity);
+        let frame = match accounting {
+            TerminalAccounting::Required => {
+                TerminalFrame::new(bytes, capacity, connection.required_deliveries.clone())
+            }
+            TerminalAccounting::Egress => {
+                let Some(frame) = reserve_outbound(
+                    bytes,
+                    connection.writer_bytes.clone(),
+                    self.global_writer_bytes.clone(),
+                    self.limits,
+                ) else {
+                    let _ = connection.control_stream.shutdown(Shutdown::Both);
+                    return false;
+                };
+                TerminalFrame::from_outbound(
+                    frame,
+                    capacity,
+                    connection.required_deliveries.clone(),
+                )
+            }
+        };
+        match connection.writer.try_send(WriterMessage::Terminal(frame)) {
             Ok(()) => true,
             Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
                 let _ = connection.control_stream.shutdown(Shutdown::Both);
@@ -189,21 +281,27 @@ impl Server {
         }
     }
 
-    fn send_terminal_frame(&self, connection: ConnectionId, frame: Value) -> bool {
-        let Some(connection) = self.connections.get(&connection) else {
-            return false;
-        };
-        let Some(bytes) = serialize_bounded(&frame, self.limits.frame_bytes) else {
-            let _ = connection.control_stream.shutdown(Shutdown::Both);
-            return false;
-        };
-        match connection.writer.try_send(WriterMessage::Terminal(bytes)) {
-            Ok(()) => true,
-            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
-                let _ = connection.control_stream.shutdown(Shutdown::Both);
-                false
-            }
-        }
+    fn connection_has_required_delivery(&self, connection_id: ConnectionId) -> bool {
+        self.connections
+            .get(&connection_id)
+            .is_some_and(|connection| connection.required_deliveries.load(Ordering::Acquire) > 0)
+            || self
+                .waiters
+                .values()
+                .flatten()
+                .any(|waiter| waiter.connection == connection_id)
+    }
+
+    fn connection_has_lifecycle_headroom(&self, connection_id: ConnectionId) -> bool {
+        self.connections
+            .get(&connection_id)
+            .is_some_and(|connection| {
+                connection
+                    .writer_frames
+                    .load(Ordering::Acquire)
+                    .saturating_add(connection.required_deliveries.load(Ordering::Acquire))
+                    < self.limits.egress_frames
+            })
     }
 
     pub(super) fn close_connection(&mut self, connection: ConnectionId) {
@@ -244,14 +342,10 @@ impl Server {
     }
 
     fn remove_connection_waiters(&mut self, connection: ConnectionId) {
-        let mut removed = 0;
         self.waiters.retain(|_, waiters| {
-            let before = waiters.len();
             waiters.retain(|waiter| waiter.connection != connection);
-            removed += before - waiters.len();
             !waiters.is_empty()
         });
-        self.waiter_count = self.waiter_count.saturating_sub(removed);
     }
 }
 

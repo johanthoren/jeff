@@ -1,4 +1,4 @@
-use super::{ActiveSnapshot, Limits, Server, WaitKind};
+use super::{ActiveSnapshot, Limits, Server, WaitKind, Waiter};
 use crate::config::PROTOCOL_VERSION;
 use crate::protocol::{OwnerMessage, SnapshotRun};
 use crate::snapshot::{injected_thread_failure, run_snapshot_with_cancel, SnapshotFailure};
@@ -241,46 +241,48 @@ impl Server {
             .and_then(ProjectCache::last_error)
             .cloned();
         for waiter in waiters {
-            if !self.connections.contains_key(&waiter.connection) {
+            let Waiter {
+                connection,
+                request_id,
+                kind,
+                permit,
+            } = waiter;
+            if !self.connections.contains_key(&connection) {
                 continue;
             }
             if let Some(projection) = &projection {
-                match waiter.kind {
+                match kind {
                     WaitKind::Get => {
-                        self.send_result(waiter.connection, &waiter.request_id, json!(projection));
+                        self.send_waiter_result(connection, &request_id, json!(projection), permit);
                     }
                     WaitKind::Subscribe(subscription_id) => {
-                        if self.send_result(
-                            waiter.connection,
-                            &waiter.request_id,
+                        if self.send_waiter_result(
+                            connection,
+                            &request_id,
                             json!({
                                 "subscriptionId": subscription_id,
                                 "snapshot": projection
                             }),
+                            permit,
                         ) {
                             self.mark_subscription_returned(&subscription_id);
                         } else {
-                            self.remove_subscription(&subscription_id);
+                            let _ = self.remove_subscription(&subscription_id);
                         }
                     }
                 }
             } else {
-                if let WaitKind::Subscribe(subscription_id) = &waiter.kind {
-                    self.remove_subscription(subscription_id);
+                if let WaitKind::Subscribe(subscription_id) = &kind {
+                    let _ = self.remove_subscription(subscription_id);
                 }
                 if output_too_large {
-                    self.close_connection(waiter.connection);
+                    self.close_connection(connection);
                     continue;
                 }
                 let message = failure
                     .as_ref()
                     .map_or("snapshot unavailable", |failure| failure.message.as_str());
-                self.send_error(
-                    waiter.connection,
-                    &waiter.request_id,
-                    "unavailable",
-                    message,
-                );
+                self.send_shutdown_error(connection, &request_id, "unavailable", message, permit);
             }
         }
     }

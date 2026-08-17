@@ -1,4 +1,4 @@
-use super::{Limits, Server, WaitKind, Waiter};
+use super::{Limits, Server, WaitKind};
 use crate::config::{PROTOCOL_VERSION, SNAPSHOT_SCHEMA_MAX, SNAPSHOT_SCHEMA_MIN};
 use crate::protocol::ConnectionId;
 use crate::state::ProjectCache;
@@ -109,14 +109,7 @@ impl Server {
             self.send_result(connection, &request_id, json!(projection));
             return;
         }
-        if !self.try_add_waiter(
-            project_id.clone(),
-            Waiter {
-                connection,
-                request_id,
-                kind: WaitKind::Get,
-            },
-        ) {
+        if !self.try_add_waiter(project_id.clone(), connection, request_id, WaitKind::Get) {
             self.close_connection(connection);
             return;
         }
@@ -151,19 +144,17 @@ impl Server {
             ) {
                 self.mark_subscription_returned(&subscription_id);
             } else {
-                self.remove_subscription(&subscription_id);
+                let _ = self.remove_subscription(&subscription_id);
             }
             return;
         }
         if !self.try_add_waiter(
             project_id.clone(),
-            Waiter {
-                connection,
-                request_id,
-                kind: WaitKind::Subscribe(subscription_id.clone()),
-            },
+            connection,
+            request_id,
+            WaitKind::Subscribe(subscription_id.clone()),
         ) {
-            self.remove_subscription(&subscription_id);
+            let _ = self.remove_subscription(&subscription_id);
             self.close_connection(connection);
             return;
         }
@@ -199,7 +190,7 @@ impl Server {
             );
             return;
         }
-        self.remove_subscription(subscription_id);
+        let _ = self.remove_subscription(subscription_id);
         self.send_result(connection, request_id, json!({"ok": true}));
     }
 

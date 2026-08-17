@@ -6,7 +6,8 @@ mod snapshots;
 use crate::config::DaemonConfig;
 use crate::lifecycle::OwnedSocket;
 use crate::protocol::{
-    spawn_connection, ConnectionId, ConnectionParts, OwnerMessage, SnapshotRun, WriterMessage,
+    spawn_connection, CapacityPermit, ConnectionId, ConnectionParts, OwnerMessage, SnapshotRun,
+    WriterMessage,
 };
 use crate::registry::load_registry;
 use crate::state::{DirtyTracker, ProjectCache};
@@ -128,8 +129,10 @@ struct Connection {
     reader_handle: thread::JoinHandle<()>,
     writer_handle: thread::JoinHandle<()>,
     subscriptions: HashSet<String>,
+    subscription_count: Arc<AtomicUsize>,
     writer_bytes: Arc<AtomicUsize>,
     writer_frames: Arc<AtomicUsize>,
+    required_deliveries: Arc<AtomicUsize>,
     closed: Arc<AtomicBool>,
     pending: Arc<AtomicUsize>,
     reader_done: Arc<AtomicBool>,
@@ -139,6 +142,7 @@ struct Subscription {
     connection: ConnectionId,
     project_id: String,
     returned: bool,
+    permit: CapacityPermit,
 }
 
 enum WaitKind {
@@ -150,6 +154,7 @@ struct Waiter {
     connection: ConnectionId,
     request_id: String,
     kind: WaitKind,
+    permit: CapacityPermit,
 }
 struct ActiveSnapshot {
     run: SnapshotRun,
@@ -219,9 +224,10 @@ pub fn run(config: DaemonConfig, socket: OwnedSocket) -> Result<(), ServerError>
         notify_rx,
         connections: HashMap::new(),
         subscriptions: HashMap::new(),
+        global_subscription_count: Arc::new(AtomicUsize::new(0)),
         waiters: HashMap::new(),
-        waiter_count: 0,
         active: HashMap::new(),
+        waiter_count: Arc::new(AtomicUsize::new(0)),
         deferred_snapshots: VecDeque::new(),
         retained_cache_bytes: 0,
         pending_watches: HashSet::new(),
@@ -258,9 +264,10 @@ struct Server {
     notify_rx: Receiver<notify::Result<notify::Event>>,
     connections: HashMap<ConnectionId, Connection>,
     subscriptions: HashMap<String, Subscription>,
+    global_subscription_count: Arc<AtomicUsize>,
     waiters: HashMap<String, Vec<Waiter>>,
-    waiter_count: usize,
     active: HashMap<String, ActiveSnapshot>,
+    waiter_count: Arc<AtomicUsize>,
     deferred_snapshots: VecDeque<String>,
     retained_cache_bytes: usize,
     pending_watches: HashSet<String>,
@@ -339,6 +346,7 @@ impl Server {
             writer_handle,
             writer_bytes,
             writer_frames,
+            required_deliveries,
             closed,
             pending,
             reader_done,
@@ -357,8 +365,10 @@ impl Server {
                 reader_handle,
                 writer_handle,
                 subscriptions: HashSet::new(),
+                subscription_count: Arc::new(AtomicUsize::new(0)),
                 writer_bytes,
                 writer_frames,
+                required_deliveries,
                 closed,
                 pending,
                 reader_done,
@@ -422,31 +432,29 @@ impl Server {
             active.cancelled.store(true, Ordering::Release);
         }
         let waiters = std::mem::take(&mut self.waiters);
-        self.waiter_count = 0;
         for waiter in waiters.into_values().flatten() {
+            let permit = waiter.permit;
             self.send_shutdown_error(
                 waiter.connection,
                 &waiter.request_id,
                 "unavailable",
                 "snapshot unavailable because the daemon is shutting down",
+                permit,
             );
         }
 
-        let subscriptions: Vec<_> = self
-            .subscriptions
-            .iter()
-            .filter(|(_, subscription)| subscription.returned)
-            .map(|(id, subscription)| (id.clone(), subscription.connection))
-            .collect();
-        for (subscription_id, connection) in subscriptions {
-            self.send_shutdown_event(
-                connection,
-                "subscription.ended",
-                json!({"subscriptionId": subscription_id, "reason": "shutdown"}),
-            );
+        let subscriptions = std::mem::take(&mut self.subscriptions);
+        for (subscription_id, subscription) in subscriptions {
+            if subscription.returned {
+                self.send_shutdown_event(
+                    subscription.connection,
+                    "subscription.ended",
+                    json!({"subscriptionId": subscription_id, "reason": "shutdown"}),
+                    subscription.permit,
+                );
+            }
         }
         signal_test_fifo("_JEFFD_TEST_SHUTDOWN_TERMINALS_DONE");
-        self.subscriptions.clear();
 
         while !self.active.is_empty() {
             match self.messages_rx.recv_timeout(Duration::from_millis(50)) {
@@ -470,24 +478,36 @@ impl Server {
         }
     }
 
-    pub(super) fn try_add_waiter(&mut self, project_id: String, waiter: Waiter) -> bool {
-        if self.waiter_count >= self.limits.cold_waiters
-            || self
-                .waiters
-                .get(&project_id)
-                .is_some_and(|waiters| waiters.len() >= self.limits.cold_waiters)
+    pub(super) fn try_add_waiter(
+        &mut self,
+        project_id: String,
+        connection: ConnectionId,
+        request_id: String,
+        kind: WaitKind,
+    ) -> bool {
+        if self
+            .waiters
+            .get(&project_id)
+            .is_some_and(|waiters| waiters.len() >= self.limits.cold_waiters)
         {
             return false;
         }
-        self.waiters.entry(project_id).or_default().push(waiter);
-        self.waiter_count += 1;
+        let Some(permit) =
+            CapacityPermit::try_acquire(self.waiter_count.clone(), self.limits.cold_waiters)
+        else {
+            return false;
+        };
+        self.waiters.entry(project_id).or_default().push(Waiter {
+            connection,
+            request_id,
+            kind,
+            permit,
+        });
         true
     }
 
     pub(super) fn take_waiters(&mut self, project_id: &str) -> Vec<Waiter> {
-        let waiters = self.waiters.remove(project_id).unwrap_or_default();
-        self.waiter_count = self.waiter_count.saturating_sub(waiters.len());
-        waiters
+        self.waiters.remove(project_id).unwrap_or_default()
     }
 
     pub(super) fn try_register_subscription(
@@ -496,14 +516,25 @@ impl Server {
         project_id: String,
         subscription_id: String,
     ) -> bool {
-        let Some(client) = self.connections.get_mut(&connection) else {
+        let Some(connection_count) = self
+            .connections
+            .get(&connection)
+            .map(|client| client.subscription_count.clone())
+        else {
             return false;
         };
-        if client.subscriptions.len() >= self.limits.connection_subscriptions
-            || self.subscriptions.len() >= self.limits.global_subscriptions
-        {
+        let Some(permit) = CapacityPermit::try_acquire_pair(
+            connection_count,
+            self.limits.connection_subscriptions,
+            self.global_subscription_count.clone(),
+            self.limits.global_subscriptions,
+        ) else {
             return false;
-        }
+        };
+        let client = self
+            .connections
+            .get_mut(&connection)
+            .expect("connection retained while registering subscription");
         client.subscriptions.insert(subscription_id.clone());
         self.subscriptions.insert(
             subscription_id,
@@ -511,6 +542,7 @@ impl Server {
                 connection,
                 project_id,
                 returned: false,
+                permit,
             },
         );
         true

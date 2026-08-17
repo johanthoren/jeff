@@ -107,7 +107,7 @@ impl Server {
         self.watch_retry_due =
             (!self.pending_watches.is_empty()).then_some(now + WATCH_RETRY_INTERVAL);
         for project in installed {
-            self.broadcast_event(
+            self.broadcast_lifecycle_event(
                 "project.updated",
                 json!({
                     "projectId": project.id,
@@ -130,7 +130,6 @@ impl Server {
             .collect();
 
         let mut watch_retried = HashSet::new();
-        let mut restart_deferred = Vec::new();
         for previous in old.values() {
             let changed = new.get(&previous.id);
             if previous.enabled
@@ -212,33 +211,16 @@ impl Server {
                 _ => false,
             };
             if ends_subscription {
-                let restart_gets = matches!(
-                    (previous, next),
-                    (Some(a), Some(b)) if a.path != b.path && b.enabled
-                );
-                let was_deferred = self
-                    .deferred_snapshots
-                    .iter()
-                    .any(|project_id| project_id == &id);
                 self.deferred_snapshots
                     .retain(|project_id| project_id != &id);
-                self.end_project_subscriptions(&id, "project_removed", restart_gets);
+                self.end_project_subscriptions(&id, "project_removed");
                 if let Some(active) = self.active.get(&id) {
                     active.cancelled.store(true, Ordering::Release);
                 }
                 self.dirty.remove(&id);
-                if restart_gets
-                    && was_deferred
-                    && self
-                        .waiters
-                        .get(&id)
-                        .is_some_and(|waiters| !waiters.is_empty())
-                {
-                    restart_deferred.push(id.clone());
-                }
             }
             let event_record = next.or(previous).expect("changed registry id exists");
-            self.broadcast_event(
+            self.broadcast_lifecycle_event(
                 "project.updated",
                 json!({
                     "projectId": id,
@@ -248,9 +230,6 @@ impl Server {
             );
         }
         self.projects = projects;
-        for project_id in restart_deferred {
-            self.start_snapshot(&project_id);
-        }
         self.watch_retry_due =
             (!self.pending_watches.is_empty()).then_some(self.now() + WATCH_RETRY_INTERVAL);
     }
