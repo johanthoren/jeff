@@ -88,7 +88,9 @@ export function hasCompletedApprovalProvenance(task) {
     || request.requestedBy === execution.executor_agent_id
     || request.requestedBy === grant.grantedBy
     || grant.mutation !== request.mutation
-    || !isSameApproval(grant, retained)) {
+    || !isSameApproval(grant, retained)
+    || (grant.requestId !== undefined
+      && (grant.requestId !== request.id || grant.requestId !== execution.approvalRequestId))) {
     return false;
   }
   const requestedAt = Date.parse(request.requestedAt);

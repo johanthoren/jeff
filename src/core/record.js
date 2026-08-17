@@ -1440,7 +1440,7 @@ export async function recordApproval(root, id, grantedBy) {
     if (Date.parse(grantedAt) < Date.parse(request.requestedAt)) {
       throw new Error('[record-approval] operator grant cannot precede its request');
     }
-    const grant = { mutation: pending, grantedBy, grantedAt };
+    const grant = { mutation: pending, grantedBy, grantedAt, requestId: request.id };
     next.execution.approval = grant;
     next.approvals = [...(next.approvals ?? []), grant];
     next.updatedAt = grantedAt;
