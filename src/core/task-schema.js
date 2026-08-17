@@ -586,12 +586,15 @@ function validateOperationRefutes(task, out) {
 function validateApproval(value, field, out) {
   const keys = ['mutation', 'grantedBy', 'grantedAt'];
   requireField(out, field, isType(value, 'object')
-    && Object.keys(value).length === keys.length
-    && keys.every((key) => Object.hasOwn(value, key)));
+    && keys.every((key) => Object.hasOwn(value, key))
+    && Object.keys(value).every((key) => key === 'requestId' || keys.includes(key)));
   if (!isType(value, 'object')) return;
   requireField(out, `${field}.mutation`, typeof value.mutation === 'string' && value.mutation.length > 0);
   requireField(out, `${field}.grantedBy`, typeof value.grantedBy === 'string' && value.grantedBy.length > 0);
   requireField(out, `${field}.grantedAt`, isIsoDateTime(value.grantedAt));
+  if (value.requestId !== undefined) {
+    requireField(out, `${field}.requestId`, isOperationCycle(value.requestId));
+  }
 }
 
 

@@ -76,6 +76,7 @@
  * @property {string} mutation
  * @property {string} grantedBy
  * @property {string} grantedAt
+ * @property {number} [requestId] Historical grants omit this and stay valid through the old latest-request checks; new recorder grants persist the answered request id.
  */
 
 /**

@@ -4518,3 +4518,133 @@ test('issue 108: a null grant plus one valid request yields a named schema viola
     `expected no stack-trace path, got:\n${result.stderr.join('\n')}`,
   );
 });
+
+/**
+ * Completed approval-gated ledger used by the #110 request-id contract.
+ *
+ * @param {Record<string, any>} [grantOverrides]
+ * @param {Record<string, any>} [overrides]
+ * @returns {Record<string, any>}
+ */
+function issue110ApprovedTask(grantOverrides = {}, overrides = {}) {
+  const mutation = 'Rewrite the shared release registry entry from source to destination.';
+  const request = {
+    id: 0,
+    mutation,
+    requestedBy: 'approval-requester',
+    requestedAt: '2026-07-26T15:20:00Z',
+    cycle: 0,
+  };
+  const approval = {
+    mutation,
+    grantedBy: 'Chef',
+    grantedAt: '2026-07-26T15:30:00Z',
+    ...grantOverrides,
+  };
+  const completed = completedOperationTask();
+  return completedOperationTask({
+    plan: {
+      ...completed.plan,
+      approvalBoundary: mutation,
+      requiresApproval: true,
+    },
+    approvalRequests: [request],
+    approvals: [approval],
+    execution: {
+      ...completed.execution,
+      recordedAt: '2026-07-26T15:40:00Z',
+      approvalRequestId: request.id,
+      approval,
+    },
+    ...overrides,
+  });
+}
+
+/**
+ * Two-request completed approval ledger whose latest request is id 1.
+ * Historical re-stop grants omit `requestId`; a forge names request 0.
+ *
+ * @param {Record<string, any>} [grantOverrides]
+ * @param {Record<string, any>} [overrides]
+ * @returns {Record<string, any>}
+ */
+function issue110TwoRequestApprovedTask(grantOverrides = {}, overrides = {}) {
+  const mutation = 'Rewrite the shared release registry entry from source to destination.';
+  const earlier = {
+    id: 0,
+    mutation,
+    requestedBy: 'approval-requester',
+    requestedAt: '2026-07-26T15:20:00Z',
+    cycle: 0,
+  };
+  const later = {
+    id: 1,
+    mutation,
+    requestedBy: 'later-requester',
+    requestedAt: '2026-07-26T15:35:00Z',
+    cycle: 1,
+  };
+  const approval = {
+    mutation,
+    grantedBy: 'Chef',
+    grantedAt: '2026-07-26T15:36:00Z',
+    ...grantOverrides,
+  };
+  const completed = completedOperationTask();
+  return completedOperationTask({
+    plan: {
+      ...completed.plan,
+      approvalBoundary: mutation,
+      requiresApproval: true,
+    },
+    approvalRequests: [earlier, later],
+    approvals: [approval],
+    execution: {
+      ...completed.execution,
+      cycle: later.cycle,
+      recordedAt: '2026-07-26T15:40:00Z',
+      approvalRequestId: later.id,
+      approval,
+    },
+    ...overrides,
+  });
+}
+
+test('issue 110: hasCompletedApprovalProvenance requires grant.requestId to match the latest request and execution', () => {
+  const mismatched = issue110ApprovedTask({ requestId: 1 });
+  /** @type {boolean} */
+  let completed = true;
+  completed = hasCompletedApprovalProvenance(mismatched);
+  assert.equal(completed, false);
+});
+
+test('issue 110: a forged older-grant-to-later-request ledger fails with a named violation', async () => {
+  const forged = issue110TwoRequestApprovedTask({ requestId: 0 });
+  assert.equal(forged.execution.approval.requestId, 0);
+  assert.equal(forged.execution.approvalRequestId, 1);
+  const result = await verdictFor(forged);
+  assertNamedFailure(result, '[approval-provenance]');
+});
+
+test('issue 110: existing ledgers without requestId keep working', async () => {
+  const historical = issue110ApprovedTask();
+  assert.equal(Object.hasOwn(historical.execution.approval, 'requestId'), false);
+  /** @type {boolean} */
+  let completed = false;
+  completed = hasCompletedApprovalProvenance(historical);
+  assert.equal(completed, true);
+  const result = await verdictFor(historical);
+  assert.equal(result.ok, true, result.stderr.join('\n'));
+});
+
+test('issue 110: existing two-request omitted-requestId ledgers keep working', async () => {
+  const historical = issue110TwoRequestApprovedTask();
+  assert.equal(Object.hasOwn(historical.execution.approval, 'requestId'), false);
+  /** @type {boolean} */
+  let completed = false;
+  completed = hasCompletedApprovalProvenance(historical);
+  assert.equal(completed, true);
+  const result = await verdictFor(historical);
+  assert.equal(result.ok, true, result.stderr.join('\n'));
+});
+

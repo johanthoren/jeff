@@ -7959,3 +7959,28 @@ test('issue 237 operation council honors its scoped-execute synthesis route', as
     });
   }
 });
+
+test('issue 110: recordApproval persists requestId on the grant', async () => {
+  const approvalBoundary = operationPlanReturn().approvalBoundary;
+  const { root, taskDir } = await makeRoot(operationTask({
+    stage: 'execute',
+    plan: operationPlanState({ requiresApproval: true, approvalBoundary }),
+  }));
+  try {
+    await recordSpecialistReturn(root, 'execute', '18', executeReturn('executor', {
+      result: 'approval-required',
+      actions: ['Captured the recoverable pre-mutation state.'],
+      evidence: [{ command: 'inspect source state', output: 'recovery snapshot recorded' }],
+      approvalRequired: approvalBoundary,
+    }));
+    const pending = await readTask(taskDir);
+    const request = pending.approvalRequests.at(-1);
+    await recordCore.recordApproval(root, '18', 'Chef');
+    const approved = await readTask(taskDir);
+    const grant = approved.execution.approval;
+    assert.equal(grant.requestId, request.id);
+    assert.equal(approved.approvals.at(-1).requestId, request.id);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
