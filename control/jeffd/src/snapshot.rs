@@ -205,8 +205,7 @@ pub(crate) fn run_snapshot_with_cancel(
                 return Err(SnapshotFailure::Timeout);
             }
             if status.is_none() {
-                status = child
-                    .try_wait()
+                status = observe_unreaped_exit(&child)
                     .map_err(|error| SnapshotFailure::Output(error.to_string()))?;
             }
             if stdout.is_none() {
@@ -248,6 +247,8 @@ pub(crate) fn run_snapshot_with_cancel(
     if result.is_err() {
         reader_stop.store(true, Ordering::Release);
         terminate_group(process_group, &mut child);
+    } else {
+        let _ = child.wait();
     }
     let _ = stdout_handle.join();
     let _ = stderr_handle.join();
@@ -277,6 +278,34 @@ fn record_injected_failure_pid(project_id: &str, reader: &str, process_group: i3
 
 #[cfg(not(debug_assertions))]
 fn record_injected_failure_pid(_: &str, _: &str, _: i32) {}
+
+fn observe_unreaped_exit(
+    child: &std::process::Child,
+) -> io::Result<Option<std::process::ExitStatus>> {
+    use std::os::unix::process::ExitStatusExt;
+    let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { info.si_pid() } == 0 {
+        return Ok(None);
+    }
+    let status = unsafe { info.si_status() };
+    let wait_status = if info.si_code == libc::CLD_EXITED {
+        status << 8
+    } else {
+        status
+    };
+    Ok(Some(std::process::ExitStatus::from_raw(wait_status)))
+}
 
 fn terminate_group(process_group: i32, child: &mut std::process::Child) {
     unsafe {
