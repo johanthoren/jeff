@@ -825,6 +825,178 @@ int main(int argc, char **argv) {
     executable
 }
 
+struct ProcessGroupOrderProbe {
+    library: PathBuf,
+    events: PathBuf,
+}
+
+impl ProcessGroupOrderProbe {
+    fn new(root: &Path) -> Self {
+        let source = root.join("snapshot-process-group-order.c");
+        let library = root.join(if cfg!(target_os = "macos") {
+            "snapshot-process-group-order.dylib"
+        } else {
+            "snapshot-process-group-order.so"
+        });
+        let events = root.join("snapshot-process-group-order.events");
+        fs::write(&source, PROCESS_GROUP_ORDER_INTERPOSER)
+            .expect("write process-group order interposer");
+        fs::write(&events, "").expect("create process-group order event log");
+        let mut command = Command::new(env::var_os("CC").unwrap_or_else(|| "cc".into()));
+        if cfg!(target_os = "macos") {
+            command.arg("-dynamiclib");
+        } else {
+            command.args(["-shared", "-fPIC"]);
+        }
+        let output = command
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .expect("compile process-group order interposer");
+        assert!(
+            output.status.success(),
+            "process-group order interposer failed to compile: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Self { library, events }
+    }
+
+    fn environment(&self) -> Vec<(&'static str, &Path)> {
+        let mut environment = vec![(
+            "_JEFFD_TEST_SNAPSHOT_PROCESS_ORDER",
+            self.events.as_path(),
+        )];
+        if cfg!(target_os = "macos") {
+            environment.push(("DYLD_INSERT_LIBRARIES", self.library.as_path()));
+            environment.push(("DYLD_FORCE_FLAT_NAMESPACE", Path::new("1")));
+        } else {
+            environment.push(("LD_PRELOAD", self.library.as_path()));
+        }
+        environment
+    }
+
+    fn events(&self) -> Vec<String> {
+        fs::read_to_string(&self.events)
+            .expect("read process-group order events")
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+const PROCESS_GROUP_ORDER_INTERPOSER: &str = r#"
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static volatile pid_t target_pid = -1;
+static volatile int cancellation_sent = 0;
+
+static void record_event(const char *event, size_t length) {
+    const char *path = getenv("_JEFFD_TEST_SNAPSHOT_PROCESS_ORDER");
+    if (path == NULL) {
+        return;
+    }
+    int descriptor = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (descriptor == -1) {
+        return;
+    }
+    (void)write(descriptor, event, length);
+    close(descriptor);
+}
+
+static int next_kill(pid_t pid, int signal) {
+#ifdef __APPLE__
+    return (int)syscall(SYS_kill, pid, signal);
+#else
+    int (*next)(pid_t, int) = dlsym(RTLD_NEXT, "kill");
+    return next(pid, signal);
+#endif
+}
+
+static void observe_child(pid_t pid, int reaped) {
+    if (pid <= 0) {
+        return;
+    }
+    (void)__sync_bool_compare_and_swap(&target_pid, -1, pid);
+    if (target_pid != pid) {
+        return;
+    }
+    if (reaped) {
+        record_event("reap\n", 5);
+    } else {
+        record_event("observe\n", 8);
+    }
+    if (__sync_bool_compare_and_swap(&cancellation_sent, 0, 1)) {
+        (void)next_kill(getpid(), SIGTERM);
+    }
+}
+
+static pid_t hook_waitpid(pid_t pid, int *status, int options) {
+#ifdef __APPLE__
+    pid_t result = (pid_t)syscall(SYS_wait4, pid, status, options, NULL);
+#else
+    pid_t (*next)(pid_t, int *, int) = dlsym(RTLD_NEXT, "waitpid");
+    pid_t result = next(pid, status, options);
+#endif
+    if (result > 0) {
+        observe_child(result, 1);
+    }
+    return result;
+}
+
+static int hook_waitid(idtype_t type, id_t id, siginfo_t *info, int options) {
+#ifdef __APPLE__
+    int result = (int)syscall(SYS_waitid, type, id, info, options);
+#else
+    int (*next)(idtype_t, id_t, siginfo_t *, int) = dlsym(RTLD_NEXT, "waitid");
+    int result = next(type, id, info, options);
+#endif
+    if (result == 0 && info != NULL && info->si_pid > 0) {
+        observe_child(info->si_pid, (options & WNOWAIT) == 0);
+    }
+    return result;
+}
+
+static int hook_kill(pid_t pid, int signal) {
+    int result = next_kill(pid, signal);
+    if (pid < -1 && signal == SIGKILL && -pid == target_pid) {
+        record_event("group-signal\n", 13);
+    }
+    return result;
+}
+
+#ifdef __APPLE__
+#define DYLD_INTERPOSE(replacement, replacee) \
+    __attribute__((used)) static struct { const void *replacement; const void *replacee; } \
+    _interpose_##replacee __attribute__((section("__DATA,__interpose"))) = { \
+        (const void *)(unsigned long)&replacement, (const void *)(unsigned long)&replacee \
+    }
+DYLD_INTERPOSE(hook_waitpid, waitpid);
+DYLD_INTERPOSE(hook_waitid, waitid);
+DYLD_INTERPOSE(hook_kill, kill);
+#else
+pid_t waitpid(pid_t pid, int *status, int options) {
+    return hook_waitpid(pid, status, options);
+}
+
+int waitid(idtype_t type, id_t id, siginfo_t *info, int options) {
+    return hook_waitid(type, id, info, options);
+}
+
+int kill(pid_t pid, int signal) {
+    return hook_kill(pid, signal);
+}
+#endif
+"#;
+
 fn raw_send(stream: &mut UnixStream, frame: &Value) {
     serde_json::to_writer(&mut *stream, frame).expect("serialize raw client frame");
     stream.write_all(b"\n").expect("terminate raw client frame");
@@ -5843,5 +6015,60 @@ fn task_252_recovery_contract_snapshot_cancellation_does_not_wait_for_independen
     assert!(
         exited_before_descriptor_eof,
         "snapshot cancellation waited for inherited stdout or stderr EOF from an independent session"
+    );
+}
+
+#[test]
+fn task_252_recovery_contract_snapshot_group_signal_precedes_leader_reap() {
+    let mut fixture = Fixture::new(true);
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let pipe_holder = independent_pipe_holder(&root);
+    let mut gates = FifoPair::new(&root);
+    let order = ProcessGroupOrderProbe::new(&root);
+    fixture.write_registry(json!([{
+        "id": "project-a",
+        "path": fixture.project,
+        "name": "Project A",
+        "enabled": true,
+        "cook": [
+            pipe_holder,
+            fixture.response,
+            gates.ready_path,
+            gates.release_path
+        ]
+    }]));
+    fixture.start_with_env(&order.environment());
+    let mut client = fixture.client();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "cancel-owned-process-group",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    gates.wait_for_run();
+
+    fixture.wait_for_exit();
+    gates.release();
+    let frames = client.recv_all_until_eof(4);
+    let terminal = frames
+        .iter()
+        .filter(|frame| frame["kind"] == "res" && frame["id"] == "cancel-owned-process-group")
+        .collect::<Vec<_>>();
+    assert_eq!(terminal.len(), 1, "accepted request terminal: {frames:?}");
+    assert_eq!(terminal[0]["error"]["code"], "unavailable");
+
+    let events = order.events();
+    let first_reap = events
+        .iter()
+        .position(|event| event == "reap")
+        .expect("snapshot group leader is reaped exactly once cleanup is complete");
+    let last_group_signal = events
+        .iter()
+        .rposition(|event| event == "group-signal")
+        .expect("snapshot cancellation attempts process-group termination");
+    assert!(
+        last_group_signal < first_reap,
+        "the snapshot group leader must remain unreaped through every negative-PGID signal: {events:?}"
     );
 }
