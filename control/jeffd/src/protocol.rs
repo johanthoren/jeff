@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 pub type ConnectionId = u64;
+const READ_CHUNK_BYTES: usize = 8192;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SnapshotRun {
     pub record: ProjectRecord,
@@ -20,7 +21,7 @@ pub struct SnapshotRun {
 pub enum OwnerMessage {
     Request {
         connection: ConnectionId,
-        frame: Value,
+        frame: Vec<u8>,
         pending: Arc<AtomicUsize>,
         ingress: IngressPermit,
     },
@@ -291,7 +292,7 @@ fn read_frames(
     } = ownership;
     let mut frame = Vec::new();
     let mut ingress = IngressPermit::new(connection_bytes.clone(), global_bytes.clone());
-    let mut chunk = [0_u8; 8192];
+    let mut chunk = [0_u8; READ_CHUNK_BYTES];
     'read: loop {
         let count = match stream.read(&mut chunk) {
             Ok(0) | Err(_) => break,
@@ -316,31 +317,17 @@ fn read_frames(
                     break 'read;
                 }
                 frame.extend_from_slice(&rest[..newline]);
-                let decoded = serde_json::from_slice::<Value>(&frame);
-                if frame.capacity() > chunk.len() {
-                    frame = Vec::new();
-                    crate::server::signal_test_fifo("_JEFFD_TEST_FRAME_BUFFER_RELEASED");
-                } else {
-                    frame.clear();
-                }
+                let request_frame = std::mem::take(&mut frame);
                 let request_ingress = std::mem::replace(
                     &mut ingress,
                     IngressPermit::new(connection_bytes.clone(), global_bytes.clone()),
                 );
-                let Ok(value) = decoded else {
-                    break 'read;
-                };
-                if value
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .is_some_and(|request_id| request_id.len() > Limits::RESPONSE_ID_BYTES)
-                    || !try_reserve(&pending, 1, limits.in_flight)
-                {
+                if !try_reserve(&pending, 1, limits.in_flight) {
                     break 'read;
                 }
                 match owner.try_send(OwnerMessage::Request {
                     connection: id,
-                    frame: value,
+                    frame: request_frame,
                     pending: pending.clone(),
                     ingress: request_ingress,
                 }) {
@@ -373,6 +360,16 @@ fn read_frames(
     }
     let _ = stream.shutdown(Shutdown::Both);
     reader_done.store(true, Ordering::Release);
+}
+
+pub(crate) fn decode_request_frame(frame: Vec<u8>) -> serde_json::Result<Value> {
+    let decoded = serde_json::from_slice(&frame);
+    let released_large_buffer = frame.capacity() > READ_CHUNK_BYTES;
+    drop(frame);
+    if released_large_buffer {
+        crate::server::signal_test_fifo("_JEFFD_TEST_FRAME_BUFFER_RELEASED");
+    }
+    decoded
 }
 
 fn report_oversized(

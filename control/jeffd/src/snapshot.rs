@@ -1,5 +1,6 @@
 use jeff_project::{parse_snapshot, ProjectRecord, Snapshot};
 use std::io::{self, Read};
+use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -149,13 +150,15 @@ pub(crate) fn run_snapshot_with_cancel(
     let stderr = child.stderr.take().expect("captured stderr");
     let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
     let (stderr_tx, stderr_rx) = mpsc::sync_channel(1);
+    let reader_stop = Arc::new(AtomicBool::new(false));
+    let stdout_stop = reader_stop.clone();
     let stdout_handle = if injected_thread_failure(&project.id, "stdout") {
         Err(io::Error::other("injected stdout reader launch failure"))
     } else {
         thread::Builder::new()
             .name("jeffd-snapshot-stdout".to_owned())
             .spawn(move || {
-                let _ = stdout_tx.send(read_bounded_output(stdout, output_limit));
+                let _ = stdout_tx.send(read_bounded_output(stdout, output_limit, stdout_stop));
             })
     };
     let stdout_handle = match stdout_handle {
@@ -167,18 +170,20 @@ pub(crate) fn run_snapshot_with_cancel(
             )));
         }
     };
+    let stderr_stop = reader_stop.clone();
     let stderr_handle = if injected_thread_failure(&project.id, "stderr") {
         Err(io::Error::other("injected stderr reader launch failure"))
     } else {
         thread::Builder::new()
             .name("jeffd-snapshot-stderr".to_owned())
             .spawn(move || {
-                let _ = stderr_tx.send(read_bounded(stderr, STDERR_LIMIT));
+                let _ = stderr_tx.send(read_bounded(stderr, STDERR_LIMIT, stderr_stop));
             })
     };
     let stderr_handle = match stderr_handle {
         Ok(handle) => handle,
         Err(error) => {
+            reader_stop.store(true, Ordering::Release);
             terminate_group(process_group, &mut child);
             let _ = stdout_handle.join();
             return Err(SnapshotFailure::Launch(format!(
@@ -241,6 +246,7 @@ pub(crate) fn run_snapshot_with_cancel(
         }
     })();
     if result.is_err() {
+        reader_stop.store(true, Ordering::Release);
         terminate_group(process_group, &mut child);
     }
     let _ = stdout_handle.join();
@@ -279,12 +285,21 @@ fn terminate_group(process_group: i32, child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-fn read_bounded_output(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
+fn read_bounded_output(
+    mut reader: impl Read + AsRawFd,
+    limit: usize,
+    stop: Arc<AtomicBool>,
+) -> io::Result<Vec<u8>> {
     let mut kept = Vec::new();
     let mut chunk = [0_u8; 8192];
     let mut exceeded = false;
     loop {
-        let read = reader.read(&mut chunk)?;
+        let Some(read) = read_capture_chunk(&mut reader, &mut chunk, &stop)? else {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "snapshot output capture stopped",
+            ));
+        };
         if read == 0 {
             return if exceeded {
                 Err(io::Error::new(
@@ -301,16 +316,54 @@ fn read_bounded_output(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8
     }
 }
 
-fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<Vec<u8>> {
+fn read_bounded(
+    mut reader: impl Read + AsRawFd,
+    limit: usize,
+    stop: Arc<AtomicBool>,
+) -> io::Result<Vec<u8>> {
     let mut kept = Vec::new();
     let mut chunk = [0_u8; 8192];
     loop {
-        let read = reader.read(&mut chunk)?;
+        let Some(read) = read_capture_chunk(&mut reader, &mut chunk, &stop)? else {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "snapshot output capture stopped",
+            ));
+        };
         if read == 0 {
             return Ok(kept);
         }
         let remaining = limit.saturating_sub(kept.len());
         kept.extend_from_slice(&chunk[..read.min(remaining)]);
+    }
+}
+
+fn read_capture_chunk(
+    reader: &mut (impl Read + AsRawFd),
+    chunk: &mut [u8],
+    stop: &AtomicBool,
+) -> io::Result<Option<usize>> {
+    let mut descriptor = libc::pollfd {
+        fd: reader.as_raw_fd(),
+        events: libc::POLLIN | libc::POLLHUP,
+        revents: 0,
+    };
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        descriptor.revents = 0;
+        let ready = unsafe { libc::poll(&mut descriptor, 1, 5) };
+        if ready > 0 {
+            return reader.read(chunk).map(Some);
+        }
+        if ready == 0 {
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
     }
 }
 

@@ -6,8 +6,8 @@ mod snapshots;
 use crate::config::DaemonConfig;
 use crate::lifecycle::OwnedSocket;
 use crate::protocol::{
-    spawn_connection, CapacityPermit, ConnectionId, ConnectionParts, OwnerMessage, SnapshotRun,
-    WriterMessage,
+    decode_request_frame, spawn_connection, CapacityPermit, ConnectionId, ConnectionParts,
+    OwnerMessage, SnapshotRun, WriterMessage,
 };
 use crate::registry::load_registry;
 use crate::state::{DirtyTracker, ProjectCache};
@@ -385,9 +385,14 @@ impl Server {
                 pending,
                 ingress,
             } => {
+                let frame = decode_request_frame(frame);
                 pending.fetch_sub(1, Ordering::AcqRel);
-                if self.connections.contains_key(&connection) {
-                    self.handle_request(connection, frame);
+                match frame {
+                    Ok(frame) if self.connections.contains_key(&connection) => {
+                        self.handle_request(connection, frame);
+                    }
+                    Ok(_) => {}
+                    Err(_) => self.close_connection(connection),
                 }
                 drop(ingress);
             }
