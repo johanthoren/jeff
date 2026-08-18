@@ -17,6 +17,23 @@ enum TerminalAccounting {
     Egress,
 }
 
+#[cfg(debug_assertions)]
+fn pause_shutdown_delivery_if_requested() {
+    use std::io::BufRead as _;
+
+    super::signal_test_fifo("_JEFFD_TEST_SHUTDOWN_DELIVERY_READY");
+    let Ok(release) = std::env::var("_JEFFD_TEST_SHUTDOWN_DELIVERY_RELEASE") else {
+        return;
+    };
+    let Ok(file) = std::fs::OpenOptions::new().read(true).open(release) else {
+        return;
+    };
+    let _ = std::io::BufReader::new(file).read_line(&mut String::new());
+}
+
+#[cfg(not(debug_assertions))]
+fn pause_shutdown_delivery_if_requested() {}
+
 impl Server {
     pub(super) fn send_project_event(&self, project_id: &str, name: &str, payload: Value) {
         let connections: HashSet<_> = self
@@ -316,11 +333,10 @@ impl Server {
             .is_ok()
         {
             super::signal_test_fifo("_JEFFD_TEST_CLOSE_ADMITTED");
-            if client.required_deliveries.load(Ordering::Acquire) == 0 {
-                let _ = closed_rx.recv_timeout(Duration::from_millis(100));
-            } else {
-                let _ = closed_rx.recv();
+            if client.required_deliveries.load(Ordering::Acquire) > 0 {
+                pause_shutdown_delivery_if_requested();
             }
+            let _ = closed_rx.recv_timeout(Duration::from_millis(100));
         }
         let _ = client.control_stream.shutdown(Shutdown::Both);
         let _ = client.writer_handle.join();

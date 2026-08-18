@@ -5396,7 +5396,15 @@ fn task_252_contract_registry_lifecycle_survives_global_egress_saturation() {
     }
 }
 
-fn task_252_reused_terminal_boundary(stale_terminals: usize) {
+enum ShutdownBackpressure {
+    ResumeWithinDeliveryWindow,
+    RemainBlockedThroughDeliveryWindow,
+}
+
+fn task_252_reused_terminal_boundary(
+    stale_terminals: usize,
+    shutdown_backpressure: ShutdownBackpressure,
+) {
     let mut fixture = Fixture::new(true);
     let root = fixture.home.parent().expect("fixture root").to_path_buf();
     let warm_path = root.join("terminal-warm");
@@ -5429,6 +5437,7 @@ fn task_252_reused_terminal_boundary(stale_terminals: usize) {
     let mut snapshot_done = FifoPair::new(&snapshot_done_root);
     let mut write_barrier = EgressWriteBarrier::new(&root);
     let mut shutdown_done = RecoveryGate::new(&root, "task-252-boundary-shutdown-done");
+    let mut delivery_window = RecoveryGate::new(&root, "task-252-delivery-window");
     let mut close_boundary = CloseBoundary::new(&root);
     let limits = PathBuf::from(format!(
         "ingress=32,in_flight=32,cold_waiters=1,egress_frames={stale_terminals},egress_bytes=1048576,global_egress_bytes=1048576,connection_subscriptions=1,global_subscriptions=1,active_snapshots=1"
@@ -5444,6 +5453,14 @@ fn task_252_reused_terminal_boundary(stale_terminals: usize) {
         (
             "_JEFFD_TEST_SHUTDOWN_TERMINALS_DONE",
             shutdown_done.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_SHUTDOWN_DELIVERY_READY",
+            delivery_window.ready_path.as_path(),
+        ),
+        (
+            "_JEFFD_TEST_SHUTDOWN_DELIVERY_RELEASE",
+            delivery_window.release_path.as_path(),
         ),
         ("_JEFFD_TEST_LIMITS", limits.as_path()),
     ]);
@@ -5516,15 +5533,25 @@ fn task_252_reused_terminal_boundary(stale_terminals: usize) {
     fixture.signal(libc::SIGTERM);
     shutdown_done.wait();
     snapshot_gate.release();
-    let frames = match close_boundary.wait(&target) {
-        CloseBoundaryReached::Admitted => {
+    delivery_window.wait();
+    match close_boundary.wait(&target) {
+        CloseBoundaryReached::Admitted => {}
+        CloseBoundaryReached::Eof => {
+            panic!("shutdown must admit Close before opening the delivery window")
+        }
+    }
+    let frames = match shutdown_backpressure {
+        ShutdownBackpressure::ResumeWithinDeliveryWindow => {
             write_barrier.release();
+            delivery_window.release();
             target.recv_all_until_eof(16)
         }
-        CloseBoundaryReached::Eof => {
-            let frames = target.recv_all_until_eof(16);
+        ShutdownBackpressure::RemainBlockedThroughDeliveryWindow => {
+            delivery_window.release();
+            target.read_eof();
             write_barrier.release();
-            frames
+            fixture.wait_for_exit();
+            return;
         }
     };
     fixture.wait_for_exit();
@@ -5563,10 +5590,15 @@ fn task_252_reused_terminal_boundary(stale_terminals: usize) {
 
 #[test]
 fn task_252_contract_one_reused_terminal_preserves_close_capacity() {
-    task_252_reused_terminal_boundary(1);
+    task_252_reused_terminal_boundary(1, ShutdownBackpressure::ResumeWithinDeliveryWindow);
 }
 
 #[test]
 fn task_252_contract_two_reused_terminals_preserve_the_final_terminal() {
-    task_252_reused_terminal_boundary(2);
+    task_252_reused_terminal_boundary(2, ShutdownBackpressure::ResumeWithinDeliveryWindow);
+}
+
+#[test]
+fn task_252_contract_shutdown_force_closes_after_delivery_window() {
+    task_252_reused_terminal_boundary(1, ShutdownBackpressure::RemainBlockedThroughDeliveryWindow);
 }
