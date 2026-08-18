@@ -724,27 +724,6 @@ fn write_executable(path: &Path, contents: &str) {
         .expect("make executable fixture runnable");
 }
 
-fn pipe_holder_script(path: &Path) {
-    write_executable(
-        path,
-        r#"#!/bin/sh
-response=$1
-ready=$2
-release=$3
-parent=$$
-(
-  while kill -0 "$parent" 2>/dev/null; do :; done
-  printf 'run\n' > "$ready"
-  IFS= read -r _release < "$release"
-) &
-while IFS= read -r line || [ -n "$line" ]; do
-  printf '%s\n' "$line"
-done < "$response"
-exit 0
-"#,
-    );
-}
-
 fn independent_pipe_holder(root: &Path) -> PathBuf {
     const SOURCE: &str = r#"
 #include <fcntl.h>
@@ -784,27 +763,37 @@ int main(int argc, char **argv) {
     if (argc < 4) {
         return 2;
     }
-    pid_t holder = fork();
-    if (holder == -1) {
+    int parent_exit[2];
+    if (pipe(parent_exit) == -1) {
         return 3;
     }
+    pid_t holder = fork();
+    if (holder == -1) {
+        return 4;
+    }
     if (holder == 0) {
+        close(parent_exit[1]);
         if (setsid() == -1) {
-            _exit(4);
+            _exit(5);
         }
+        char byte;
+        if (read(parent_exit[0], &byte, 1) != 0) {
+            _exit(6);
+        }
+        close(parent_exit[0]);
         int ready = open(argv[2], O_WRONLY);
         if (ready == -1 || write(ready, "run\n", 4) != 4) {
-            _exit(5);
+            _exit(7);
         }
         close(ready);
         int release = open(argv[3], O_RDONLY);
-        char byte;
         if (release == -1 || read(release, &byte, 1) < 0) {
-            _exit(6);
+            _exit(8);
         }
         close(release);
         _exit(0);
     }
+    close(parent_exit[0]);
     return copy_response(argv[1]);
 }
 "#;
@@ -1656,8 +1645,7 @@ fn review_contract_inherited_capture_pipes_remain_timeout_and_shutdown_bounded()
             support::snapshot("2026-08-10T12:00:00Z", "pipe holder"),
         )
         .expect("write timeout snapshot");
-        let script = root.path().join("pipe-holder");
-        pipe_holder_script(&script);
+        let script = independent_pipe_holder(root.path());
         let mut gates = FifoPair::new(root.path());
         let record = ProjectRecord {
             id: "project-a".to_owned(),
@@ -1692,8 +1680,7 @@ fn review_contract_inherited_capture_pipes_remain_timeout_and_shutdown_bounded()
     let shutdown_enforced = {
         let mut fixture = Fixture::new(true);
         let root = fixture.home.parent().expect("fixture root").to_path_buf();
-        let script = root.join("pipe-holder");
-        pipe_holder_script(&script);
+        let script = independent_pipe_holder(&root);
         let mut gates = FifoPair::new(&root);
         fixture.write_registry(json!([{
             "id": "project-a",
@@ -1805,12 +1792,17 @@ release=$5
 log=$6
 printf '%s\n' "$PWD" >> "$log"
 if [ "$PWD" = "$old_path" ]; then
-  parent=$$
+  exit_pipe="${ready}.parent-exit"
+  mkfifo "$exit_pipe"
+  exec 3<>"$exit_pipe"
+  exec 4<"$exit_pipe"
   (
-    while kill -0 "$parent" 2>/dev/null; do :; done
+    exec 3>&-
+    IFS= read -r _parent_exit <&4
     printf 'run\n' > "$ready"
     IFS= read -r _release < "$release"
   ) &
+  exec 4<&-
   response=$old_response
 else
   response=$new_response
@@ -2309,12 +2301,17 @@ count=$((count + 1))
 printf '%s\n' "$count" > "$count_file"
 printf '%s\n' "$PWD" >> "$log"
 if [ "$count" -eq 1 ]; then
-  parent=$$
+  exit_pipe="${ready}.parent-exit"
+  mkfifo "$exit_pipe"
+  exec 3<>"$exit_pipe"
+  exec 4<"$exit_pipe"
   (
-    while kill -0 "$parent" 2>/dev/null; do :; done
+    exec 3>&-
+    IFS= read -r _parent_exit <&4
     printf 'run\n' > "$ready"
     IFS= read -r _release < "$release"
   ) &
+  exec 4<&-
   response=$obsolete
 else
   response=$fresh
