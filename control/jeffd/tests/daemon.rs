@@ -745,6 +745,86 @@ exit 0
     );
 }
 
+fn independent_pipe_holder(root: &Path) -> PathBuf {
+    const SOURCE: &str = r#"
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+static int copy_response(const char *path) {
+    int input = open(path, O_RDONLY);
+    if (input == -1) {
+        return 7;
+    }
+    char buffer[4096];
+    for (;;) {
+        ssize_t count = read(input, buffer, sizeof(buffer));
+        if (count == 0) {
+            close(input);
+            return 0;
+        }
+        if (count < 0) {
+            close(input);
+            return 8;
+        }
+        ssize_t written = 0;
+        while (written < count) {
+            ssize_t next = write(STDOUT_FILENO, buffer + written, (size_t)(count - written));
+            if (next <= 0) {
+                close(input);
+                return 9;
+            }
+            written += next;
+        }
+    }
+}
+
+int main(int argc, char **argv) {
+    if (argc < 4) {
+        return 2;
+    }
+    pid_t holder = fork();
+    if (holder == -1) {
+        return 3;
+    }
+    if (holder == 0) {
+        if (setsid() == -1) {
+            _exit(4);
+        }
+        int ready = open(argv[2], O_WRONLY);
+        if (ready == -1 || write(ready, "run\n", 4) != 4) {
+            _exit(5);
+        }
+        close(ready);
+        int release = open(argv[3], O_RDONLY);
+        char byte;
+        if (release == -1 || read(release, &byte, 1) < 0) {
+            _exit(6);
+        }
+        close(release);
+        _exit(0);
+    }
+    return copy_response(argv[1]);
+}
+"#;
+    let source = root.join("independent-pipe-holder.c");
+    let executable = root.join("independent-pipe-holder");
+    fs::write(&source, SOURCE).expect("write independent pipe-holder fixture");
+    let output = Command::new(env::var_os("CC").unwrap_or_else(|| "cc".into()))
+        .arg(&source)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("compile independent pipe-holder fixture");
+    assert!(
+        output.status.success(),
+        "independent pipe-holder fixture failed to compile: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    executable
+}
+
 fn raw_send(stream: &mut UnixStream, frame: &Value) {
     serde_json::to_writer(&mut *stream, frame).expect("serialize raw client frame");
     stream.write_all(b"\n").expect("terminate raw client frame");
@@ -988,6 +1068,54 @@ impl CloseBoundary {
             }
             if descriptors[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
                 return CloseBoundaryReached::Eof;
+            }
+        }
+    }
+}
+
+struct FrameReleaseProbe {
+    ready_path: PathBuf,
+    ready: File,
+}
+
+impl FrameReleaseProbe {
+    fn new(root: &Path) -> Self {
+        let ready_path = root.join("frame-release-ready.fifo");
+        make_race_fifo(&ready_path);
+        let ready = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&ready_path)
+            .expect("open frame-release FIFO");
+        Self { ready_path, ready }
+    }
+
+    fn environment(&self) -> [(&'static str, &Path); 1] {
+        [(
+            "_JEFFD_TEST_FRAME_BUFFER_RELEASED",
+            self.ready_path.as_path(),
+        )]
+    }
+
+    fn is_signaled(&self) -> bool {
+        let mut descriptor = libc::pollfd {
+            fd: self.ready.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        loop {
+            let result = unsafe { libc::poll(&mut descriptor, 1, 0) };
+            if result >= 0 {
+                assert_eq!(
+                    descriptor.revents & (libc::POLLERR | libc::POLLNVAL),
+                    0,
+                    "frame-release FIFO failed"
+                );
+                return result == 1 && descriptor.revents & libc::POLLIN != 0;
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                panic!("inspect frame-release FIFO: {error}");
             }
         }
     }
@@ -5601,4 +5729,119 @@ fn task_252_contract_two_reused_terminals_preserve_the_final_terminal() {
 #[test]
 fn task_252_contract_shutdown_force_closes_after_delivery_window() {
     task_252_reused_terminal_boundary(1, ShutdownBackpressure::RemainBlockedThroughDeliveryWindow);
+}
+
+#[test]
+fn task_252_recovery_contract_decode_occurs_only_after_owner_admission() {
+    let mut fixture = Fixture::new(true);
+    fixture.write_registry(json!([]));
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let mut owner_gate = RecoveryGate::new(&root, "decode-owner");
+    let frame_release = FrameReleaseProbe::new(&root);
+    let mut environment = owner_gate.environment().to_vec();
+    environment.extend(frame_release.environment());
+    environment.push(("_JEFFD_TEST_LIMITS", Path::new("ingress=1,in_flight=2")));
+    fixture.start_with_env(&environment);
+    drop(environment);
+
+    let mut queue_holder = fixture.client();
+    let mut instrumented = fixture.client();
+    owner_gate.arm();
+    owner_gate.wait();
+
+    queue_holder.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "owner-queue-holder",
+        "method": "server.hello",
+        "params": {}
+    }));
+    queue_holder.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "owner-queue-overflow",
+        "method": "server.hello",
+        "params": {}
+    }));
+    queue_holder.read_eof();
+
+    let request = serde_json::to_vec(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "instrumented-before-owner-admission",
+        "method": "server.hello",
+        "params": {}
+    }))
+    .expect("serialize instrumented request");
+    let mut frame = vec![b' '; 8193];
+    frame.extend_from_slice(&request);
+    frame.push(b'\n');
+    instrumented.write_raw(&frame);
+    instrumented.read_eof();
+
+    let decoded_before_owner_admission = frame_release.is_signaled();
+    owner_gate.release();
+    let stop = fixture.stop_and_wait();
+    assert!(stop.status.success(), "stop failed: {stop:?}");
+    assert!(
+        !decoded_before_owner_admission,
+        "a request rejected by bounded owner admission must not be generically decoded"
+    );
+}
+
+#[test]
+fn task_252_recovery_contract_snapshot_cancellation_does_not_wait_for_independent_inherited_pipes()
+{
+    let mut fixture = Fixture::new(true);
+    let root = fixture.home.parent().expect("fixture root").to_path_buf();
+    let pipe_holder = independent_pipe_holder(&root);
+    let mut gates = FifoPair::new(&root);
+    fixture.write_registry(json!([{
+        "id": "project-a",
+        "path": fixture.project,
+        "name": "Project A",
+        "enabled": true,
+        "cook": [
+            pipe_holder,
+            fixture.response,
+            gates.ready_path,
+            gates.release_path
+        ]
+    }]));
+    fixture.start();
+    let mut client = fixture.client();
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "cancel-independent-session",
+        "method": "snapshot.get",
+        "params": {"projectId": "project-a"}
+    }));
+    gates.wait_for_run();
+
+    fixture.signal(libc::SIGTERM);
+    let (exit_tx, exit_rx) = mpsc::channel();
+    let waiter = thread::spawn(move || {
+        fixture.wait_for_exit();
+        exit_tx.send(()).expect("send daemon exit");
+    });
+    let exited_before_descriptor_eof = exit_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+    gates.release();
+    if !exited_before_descriptor_eof {
+        exit_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("daemon exits after independent pipe holder releases descriptors");
+    }
+    waiter.join().expect("join daemon exit waiter");
+    let frames = client.recv_all_until_eof(4);
+    let terminal = frames
+        .iter()
+        .filter(|frame| frame["kind"] == "res" && frame["id"] == "cancel-independent-session")
+        .collect::<Vec<_>>();
+    assert_eq!(terminal.len(), 1, "accepted request terminal: {frames:?}");
+    assert_eq!(terminal[0]["error"]["code"], "unavailable");
+    assert!(
+        exited_before_descriptor_eof,
+        "snapshot cancellation waited for inherited stdout or stderr EOF from an independent session"
+    );
 }
