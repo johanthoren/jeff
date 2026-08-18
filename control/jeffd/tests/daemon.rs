@@ -852,10 +852,7 @@ impl ProcessGroupOrderProbe {
     }
 
     fn environment(&self) -> Vec<(&'static str, &Path)> {
-        let mut environment = vec![(
-            "_JEFFD_TEST_SNAPSHOT_PROCESS_ORDER",
-            self.events.as_path(),
-        )];
+        let mut environment = vec![("_JEFFD_TEST_SNAPSHOT_PROCESS_ORDER", self.events.as_path())];
         if cfg!(target_os = "macos") {
             environment.push(("DYLD_INSERT_LIBRARIES", self.library.as_path()));
             environment.push(("DYLD_FORCE_FLAT_NAMESPACE", Path::new("1")));
