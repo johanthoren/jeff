@@ -1,0 +1,414 @@
+use jeff_project::{parse_snapshot, ProjectRecord, Snapshot};
+use std::io::{self, Read};
+use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+use thiserror::Error;
+
+const STDERR_LIMIT: usize = 64 * 1024;
+const DEFAULT_OUTPUT_LIMIT: usize = 16 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct SnapshotInvocation {
+    program: PathBuf,
+    args: Vec<String>,
+    cwd: PathBuf,
+}
+
+impl SnapshotInvocation {
+    pub fn for_project(project: &ProjectRecord) -> Result<Self, SnapshotFailure> {
+        if !project.path.is_absolute() {
+            return Err(SnapshotFailure::InvalidInvocation(
+                "project path must be absolute".to_owned(),
+            ));
+        }
+        let (program, mut args) = match &project.cook {
+            None => (PathBuf::from("cook"), Vec::new()),
+            Some(command) if command.is_empty() => {
+                return Err(SnapshotFailure::InvalidInvocation(
+                    "cook command must not be empty".to_owned(),
+                ));
+            }
+            Some(command) => {
+                let program = PathBuf::from(&command[0]);
+                if !program.is_absolute() {
+                    return Err(SnapshotFailure::InvalidInvocation(
+                        "explicit cook executable must be absolute".to_owned(),
+                    ));
+                }
+                (program, command[1..].to_vec())
+            }
+        };
+        args.extend(["snapshot".to_owned(), "--json".to_owned()]);
+        Ok(Self {
+            program,
+            args,
+            cwd: project.path.clone(),
+        })
+    }
+
+    pub fn program(&self) -> &Path {
+        &self.program
+    }
+
+    pub fn args(&self) -> &[String] {
+        &self.args
+    }
+
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+}
+
+#[derive(Clone, Debug, Error)]
+pub enum SnapshotFailure {
+    #[error("invalid snapshot: {0}")]
+    Invalid(String),
+    #[error("invalid snapshot invocation: {0}")]
+    InvalidInvocation(String),
+    #[error("failed to start snapshot command: {0}")]
+    Spawn(String),
+    #[error("failed to launch snapshot worker: {0}")]
+    Launch(String),
+    #[error("snapshot command timed out")]
+    Timeout,
+    #[error("snapshot command cancelled")]
+    Cancelled,
+    #[error("{message}")]
+    Exit { message: String, code: Option<i32> },
+    #[error("failed to read snapshot output: {0}")]
+    Output(String),
+    #[error("failed to read snapshot output: {0}")]
+    OutputTooLarge(String),
+    #[error("retained snapshot cache is full: {0}")]
+    CacheFull(String),
+}
+
+impl SnapshotFailure {
+    pub fn exit_code(&self) -> Option<i32> {
+        match self {
+            Self::Exit { code, .. } => *code,
+            _ => None,
+        }
+    }
+}
+
+pub fn parse_snapshot_output(output: &[u8]) -> Result<Snapshot, SnapshotFailure> {
+    let text =
+        std::str::from_utf8(output).map_err(|error| SnapshotFailure::Invalid(error.to_string()))?;
+    parse_snapshot(text).map_err(|error| SnapshotFailure::Invalid(error.to_string()))
+}
+
+pub fn run_snapshot(
+    project: &ProjectRecord,
+    timeout: Duration,
+) -> Result<Snapshot, SnapshotFailure> {
+    run_snapshot_with_cancel(
+        project,
+        timeout,
+        Arc::new(AtomicBool::new(false)),
+        DEFAULT_OUTPUT_LIMIT,
+    )
+}
+
+pub(crate) fn run_snapshot_with_cancel(
+    project: &ProjectRecord,
+    timeout: Duration,
+    cancelled: Arc<AtomicBool>,
+    output_limit: usize,
+) -> Result<Snapshot, SnapshotFailure> {
+    let invocation = SnapshotInvocation::for_project(project)?;
+    let mut command = Command::new(invocation.program());
+    command
+        .args(invocation.args())
+        .current_dir(invocation.cwd())
+        .env("PWD", invocation.cwd())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| SnapshotFailure::Spawn(error.to_string()))?;
+    let process_group = child.id() as i32;
+    record_injected_failure_pid(&project.id, "stdout", process_group);
+    record_injected_failure_pid(&project.id, "stderr", process_group);
+    let stdout = child.stdout.take().expect("captured stdout");
+    let stderr = child.stderr.take().expect("captured stderr");
+    let (stdout_tx, stdout_rx) = mpsc::sync_channel(1);
+    let (stderr_tx, stderr_rx) = mpsc::sync_channel(1);
+    let reader_stop = Arc::new(AtomicBool::new(false));
+    let stdout_stop = reader_stop.clone();
+    let stdout_handle = if injected_thread_failure(&project.id, "stdout") {
+        Err(io::Error::other("injected stdout reader launch failure"))
+    } else {
+        thread::Builder::new()
+            .name("jeffd-snapshot-stdout".to_owned())
+            .spawn(move || {
+                let _ = stdout_tx.send(read_bounded_output(stdout, output_limit, stdout_stop));
+            })
+    };
+    let stdout_handle = match stdout_handle {
+        Ok(handle) => handle,
+        Err(error) => {
+            terminate_group(process_group, &mut child);
+            return Err(SnapshotFailure::Launch(format!(
+                "stdout reader thread: {error}"
+            )));
+        }
+    };
+    let stderr_stop = reader_stop.clone();
+    let stderr_handle = if injected_thread_failure(&project.id, "stderr") {
+        Err(io::Error::other("injected stderr reader launch failure"))
+    } else {
+        thread::Builder::new()
+            .name("jeffd-snapshot-stderr".to_owned())
+            .spawn(move || {
+                let _ = stderr_tx.send(read_bounded(stderr, STDERR_LIMIT, stderr_stop));
+            })
+    };
+    let stderr_handle = match stderr_handle {
+        Ok(handle) => handle,
+        Err(error) => {
+            reader_stop.store(true, Ordering::Release);
+            terminate_group(process_group, &mut child);
+            let _ = stdout_handle.join();
+            return Err(SnapshotFailure::Launch(format!(
+                "stderr reader thread: {error}"
+            )));
+        }
+    };
+    let result = (|| {
+        let started = Instant::now();
+        let mut status = None;
+        let mut stdout = None;
+        let mut stderr = None;
+
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(SnapshotFailure::Cancelled);
+            }
+            if started.elapsed() >= timeout {
+                return Err(SnapshotFailure::Timeout);
+            }
+            if status.is_none() {
+                status = observe_unreaped_exit(&child)
+                    .map_err(|error| SnapshotFailure::Output(error.to_string()))?;
+            }
+            if stdout.is_none() {
+                stdout = receive_output(&stdout_rx, "stdout")?;
+            }
+            if stderr.is_none() {
+                stderr = receive_output(&stderr_rx, "stderr")?;
+            }
+            if status.is_some() && stdout.is_some() && stderr.is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        let status =
+            status.ok_or_else(|| SnapshotFailure::Output("missing child status".to_owned()))?;
+        let stdout =
+            stdout.ok_or_else(|| SnapshotFailure::Output("missing stdout output".to_owned()))?;
+        let stderr =
+            stderr.ok_or_else(|| SnapshotFailure::Output("missing stderr output".to_owned()))?;
+        if status.success() {
+            parse_snapshot_output(&stdout)
+        } else {
+            let code = status.code();
+            let diagnostic = String::from_utf8_lossy(&stderr).trim().to_owned();
+            let lower = diagnostic.to_ascii_lowercase();
+            let message = if lower.contains("unknown command") || lower.contains("usage:") {
+                format!("older jeff missing snapshot: {diagnostic}")
+            } else if diagnostic.is_empty() {
+                format!(
+                    "cook exited {}",
+                    code.map_or_else(|| "without a code".to_owned(), |v| v.to_string())
+                )
+            } else {
+                diagnostic
+            };
+            Err(SnapshotFailure::Exit { message, code })
+        }
+    })();
+    if result.is_err() {
+        reader_stop.store(true, Ordering::Release);
+        terminate_group(process_group, &mut child);
+    } else {
+        let _ = child.wait();
+    }
+    let _ = stdout_handle.join();
+    let _ = stderr_handle.join();
+    result
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn injected_thread_failure(project_id: &str, reader: &str) -> bool {
+    std::env::var("_JEFFD_TEST_SNAPSHOT_THREAD_FAILURE")
+        .is_ok_and(|failure| failure == format!("{project_id}:{reader}"))
+}
+
+#[cfg(not(debug_assertions))]
+pub(crate) fn injected_thread_failure(_: &str, _: &str) -> bool {
+    false
+}
+
+#[cfg(debug_assertions)]
+fn record_injected_failure_pid(project_id: &str, reader: &str, process_group: i32) {
+    if !injected_thread_failure(project_id, reader) {
+        return;
+    }
+    if let Ok(path) = std::env::var("_JEFFD_TEST_SNAPSHOT_FAILURE_PID") {
+        let _ = std::fs::write(path, format!("{process_group}\n"));
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn record_injected_failure_pid(_: &str, _: &str, _: i32) {}
+
+fn observe_unreaped_exit(
+    child: &std::process::Child,
+) -> io::Result<Option<std::process::ExitStatus>> {
+    use std::os::unix::process::ExitStatusExt;
+    let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { info.si_pid() } == 0 {
+        return Ok(None);
+    }
+    let status = unsafe { info.si_status() };
+    let wait_status = if info.si_code == libc::CLD_EXITED {
+        status << 8
+    } else {
+        status
+    };
+    Ok(Some(std::process::ExitStatus::from_raw(wait_status)))
+}
+
+fn terminate_group(process_group: i32, child: &mut std::process::Child) {
+    unsafe {
+        libc::kill(-process_group, libc::SIGKILL);
+    }
+    let _ = child.wait();
+}
+
+fn read_bounded_output(
+    mut reader: impl Read + AsRawFd,
+    limit: usize,
+    stop: Arc<AtomicBool>,
+) -> io::Result<Vec<u8>> {
+    let mut kept = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    let mut exceeded = false;
+    loop {
+        let Some(read) = read_capture_chunk(&mut reader, &mut chunk, &stop)? else {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "snapshot output capture stopped",
+            ));
+        };
+        if read == 0 {
+            return if exceeded {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("snapshot output exceeds {limit} bytes"),
+                ))
+            } else {
+                Ok(kept)
+            };
+        }
+        let remaining = limit.saturating_sub(kept.len());
+        kept.extend_from_slice(&chunk[..read.min(remaining)]);
+        exceeded |= read > remaining;
+    }
+}
+
+fn read_bounded(
+    mut reader: impl Read + AsRawFd,
+    limit: usize,
+    stop: Arc<AtomicBool>,
+) -> io::Result<Vec<u8>> {
+    let mut kept = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        let Some(read) = read_capture_chunk(&mut reader, &mut chunk, &stop)? else {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "snapshot output capture stopped",
+            ));
+        };
+        if read == 0 {
+            return Ok(kept);
+        }
+        let remaining = limit.saturating_sub(kept.len());
+        kept.extend_from_slice(&chunk[..read.min(remaining)]);
+    }
+}
+
+fn read_capture_chunk(
+    reader: &mut (impl Read + AsRawFd),
+    chunk: &mut [u8],
+    stop: &AtomicBool,
+) -> io::Result<Option<usize>> {
+    let mut descriptor = libc::pollfd {
+        fd: reader.as_raw_fd(),
+        events: libc::POLLIN | libc::POLLHUP,
+        revents: 0,
+    };
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        descriptor.revents = 0;
+        let ready = unsafe { libc::poll(&mut descriptor, 1, 5) };
+        if ready > 0 {
+            return reader.read(chunk).map(Some);
+        }
+        if ready == 0 {
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+fn receive_output(
+    receiver: &Receiver<io::Result<Vec<u8>>>,
+    name: &str,
+) -> Result<Option<Vec<u8>>, SnapshotFailure> {
+    match receiver.try_recv() {
+        Ok(Ok(bytes)) => Ok(Some(bytes)),
+        Ok(Err(error)) if name == "stdout" && error.kind() == io::ErrorKind::InvalidData => {
+            Err(SnapshotFailure::OutputTooLarge(error.to_string()))
+        }
+        Ok(Err(error)) => Err(SnapshotFailure::Output(error.to_string())),
+        Err(TryRecvError::Empty) => Ok(None),
+        Err(TryRecvError::Disconnected) => Err(SnapshotFailure::Output(format!(
+            "{name} reader stopped before returning output"
+        ))),
+    }
+}
