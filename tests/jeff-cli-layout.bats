@@ -108,7 +108,7 @@ assert_rust_gate() {
   fi
 }
 
-@test "#188 AC2: rust.yml gates control/ on fmt, clippy and locked cargo test" {
+@test "#188 AC2 / #255 AC2: rust.yml gates control/ on fmt, clippy and locked serial cargo test" {
   # Complement of the case above. make test refuses to run cargo, so this
   # workflow is the only thing that ever compiles, lints or tests control/.
   # Delete the file, drop a step, or strip the flag that lets a step fail, and
@@ -127,10 +127,14 @@ assert_rust_gate() {
   # cargo fmt is asserted without --locked on purpose: it resolves no
   # dependencies, and it rejects the flag outright with `error: unexpected
   # argument '--locked' found`.
+  #
+  # --test-threads=1 on the locked test step is load-bearing, not cosmetic.
+  # The ubuntu-latest cargo test consumer observes a non-serial harness as a
+  # failing control/ job; isolating individual daemon tests is a non-goal.
   [ -f "$RUST_WORKFLOW" ] || { echo "missing $RUST_WORKFLOW"; return 1; }
   assert_rust_gate fmt --check
   assert_rust_gate clippy --locked '-D warnings'
-  assert_rust_gate test --locked
+  assert_rust_gate test --locked --test-threads=1
 }
 
 @test "#179 AC12: control/jeff crate version matches package.json" {
