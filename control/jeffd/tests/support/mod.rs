@@ -28,9 +28,9 @@ pub fn classify_protocol_read(result: io::Result<usize>) -> io::Result<ProtocolR
         Ok(0) => Ok(ProtocolRead::Eof),
         Ok(n) => Ok(ProtocolRead::Bytes(n)),
         Err(error) => match error.kind() {
-            io::ErrorKind::WouldBlock
-            | io::ErrorKind::Interrupted
-            | io::ErrorKind::TimedOut => Ok(ProtocolRead::Retry),
+            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted | io::ErrorKind::TimedOut => {
+                Ok(ProtocolRead::Retry)
+            }
             io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe => Ok(ProtocolRead::Eof),
             _ => Err(error),
         },
