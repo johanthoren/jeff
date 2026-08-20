@@ -2,7 +2,7 @@ use crate::server::Limits;
 use crate::snapshot::SnapshotFailure;
 use jeff_project::{ProjectRecord, Snapshot};
 use serde_json::Value;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -295,8 +295,15 @@ fn read_frames(
     let mut chunk = [0_u8; READ_CHUNK_BYTES];
     'read: loop {
         let count = match stream.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(count) => count,
+            Err(error)
+                if error.kind() == ErrorKind::WouldBlock
+                    || error.kind() == ErrorKind::Interrupted =>
+            {
+                continue;
+            }
+            Err(_) => break,
         };
         let mut offset = 0;
         while offset < count {

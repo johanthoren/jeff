@@ -16,13 +16,18 @@ impl Server {
             eprintln!("jeffd: filesystem watcher error");
             return;
         };
+        let ignore_project_dirty = event.kind.is_access() || event.kind.is_other();
         for path in event.paths {
             if path == self.config.registry {
                 self.registry_due = Some(self.now() + Duration::from_millis(25));
                 continue;
             }
+            if ignore_project_dirty {
+                continue;
+            }
             for project in self.projects.iter().filter(|project| project.enabled) {
-                if path.starts_with(project.path.join(".jeff")) {
+                let watched = project.path.join(".jeff");
+                if path.starts_with(&watched) && path != watched {
                     self.dirty.mark_dirty(&project.id, self.now());
                     break;
                 }
