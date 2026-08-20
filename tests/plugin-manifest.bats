@@ -98,6 +98,18 @@ PACKAGE_MANIFEST="$REPO/package.json"
   [ "$(jq -r '.packages[""].version' "$REPO/package-lock.json")" = "$version" ]
 }
 
+@test "published lockstep version is strictly newer than 6.1.3" {
+  local version
+  version="$(jq -r '.version' "$PACKAGE_MANIFEST")"
+  [ -n "$version" ] && [ "$version" != "null" ]
+  [ "$(jq -r '.version' "$MANIFEST")" = "$version" ]
+  [ "$(jq -r '.version' "$CODEX_MANIFEST")" = "$version" ]
+  [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
+  [ "$version" != "6.1.3" ]
+  [ "$(printf '%s\n%s\n' "6.1.3" "$version" | sort -V | tail -n 1)" = "$version" ]
+}
+
+
 @test "marketplace copy presents Jeff as a model-native quality control plane" {
   jq -e -s '
     def require($condition; $message):

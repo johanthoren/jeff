@@ -7,6 +7,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { compareById } from './reporters.js';
 import { assertStoreContained, collectTasks, readConfig, readMode } from './store.js';
 
 /**
@@ -52,24 +53,6 @@ import { assertStoreContained, collectTasks, readConfig, readMode } from './stor
  * @property {string[]} stdout
  * @property {string[]} stderr
  */
-
-/**
- * Same total order as reporters `compareById` / `cook ls` (jq `sort_by(.id)`).
- *
- * @param {any} a
- * @param {any} b
- * @returns {number}
- */
-function compareById(a, b) {
-  const x = a.id;
-  const y = b.id;
-  const xNum = typeof x === 'number';
-  const yNum = typeof y === 'number';
-  if (xNum && !yNum) return -1;
-  if (!xNum && yNum) return 1;
-  if (xNum && yNum) return x - y;
-  return x < y ? -1 : x > y ? 1 : 0;
-}
 
 /**
  * Read item-7 claim side file beside the task dir. Missing or malformed ⇒ null.
