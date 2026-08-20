@@ -260,7 +260,9 @@ pub fn spawn_connection(
         .saturating_add(limits.connection_subscriptions)
         .saturating_add(1);
     let (writer, writer_rx) = mpsc::sync_channel(writer_capacity);
-    let writer_handle = thread::spawn(move || write_frames(writer_stream, writer_rx));
+    let writer_closed = closed.clone();
+    let writer_handle =
+        thread::spawn(move || write_frames(writer_stream, writer_rx, writer_closed));
     let reader_handle =
         thread::spawn(move || read_frames(id, stream, limits, owner, reader_ownership));
     Ok(ConnectionParts {
@@ -300,7 +302,7 @@ fn read_frames(
             Ok(count) => count,
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
             Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                if !wait_for_reader(&stream, &closed) {
+                if !wait_for_socket(&stream, &closed, libc::POLLIN | libc::POLLHUP) {
                     break;
                 }
                 continue;
@@ -371,10 +373,10 @@ fn read_frames(
     reader_done.store(true, Ordering::Release);
 }
 
-fn wait_for_reader(stream: &UnixStream, closed: &AtomicBool) -> bool {
+fn wait_for_socket(stream: &UnixStream, closed: &AtomicBool, events: libc::c_short) -> bool {
     let mut descriptor = libc::pollfd {
         fd: stream.as_raw_fd(),
-        events: libc::POLLIN | libc::POLLHUP,
+        events,
         revents: 0,
     };
     loop {
@@ -534,31 +536,60 @@ fn try_reserve(counter: &AtomicUsize, count: usize, limit: usize) -> bool {
         .is_ok()
 }
 
-fn write_frames(mut stream: UnixStream, messages: Receiver<WriterMessage>) {
+fn write_frames(
+    mut stream: UnixStream,
+    messages: Receiver<WriterMessage>,
+    closed: Arc<AtomicBool>,
+) {
     for message in messages {
         match message {
             WriterMessage::Frame(mut frame) => {
                 frame.begin_write();
-                if stream.write_all(&frame.bytes).is_err()
-                    || stream.write_all(b"\n").is_err()
+                if !write_all_interruptible(&mut stream, &frame.bytes, &closed)
+                    || !write_all_interruptible(&mut stream, b"\n", &closed)
                     || stream.flush().is_err()
                 {
                     break;
                 }
             }
             WriterMessage::Terminal(frame) => {
-                if stream.write_all(frame.bytes()).is_err()
-                    || stream.write_all(b"\n").is_err()
+                if !write_all_interruptible(&mut stream, frame.bytes(), &closed)
+                    || !write_all_interruptible(&mut stream, b"\n", &closed)
                     || stream.flush().is_err()
                 {
                     break;
                 }
             }
-            WriterMessage::Close(closed) => {
-                let _ = closed.send(());
+            WriterMessage::Close(done) => {
+                let _ = done.send(());
                 break;
             }
         }
     }
     let _ = stream.shutdown(Shutdown::Both);
+}
+
+#[cfg(target_os = "linux")]
+fn write_all_interruptible(stream: &mut UnixStream, mut bytes: &[u8], closed: &AtomicBool) -> bool {
+    while !bytes.is_empty() {
+        if !wait_for_socket(stream, closed, libc::POLLOUT | libc::POLLHUP) {
+            return false;
+        }
+        let chunk = bytes.len().min(READ_CHUNK_BYTES);
+        match stream.write(&bytes[..chunk]) {
+            Ok(0) => return false,
+            Ok(written) => bytes = &bytes[written..],
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error)
+                if error.kind() == ErrorKind::WouldBlock || error.kind() == ErrorKind::TimedOut => {
+            }
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn write_all_interruptible(stream: &mut UnixStream, bytes: &[u8], _closed: &AtomicBool) -> bool {
+    stream.write_all(bytes).is_ok()
 }
