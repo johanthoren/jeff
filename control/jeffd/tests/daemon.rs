@@ -4,7 +4,6 @@ mod support;
 
 use jeff_project::ProjectRecord;
 use jeffd::{load_registry, run_snapshot, SnapshotFailure};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::env;
@@ -1633,18 +1632,6 @@ fn review_contract_socket_replacement_survives_stale_start_and_shutdown_cleanup(
         let mut barrier = UnlinkBarrier::new(root);
         let backup = root.join("validated-stale.sock");
 
-        let (events_tx, events_rx) = mpsc::channel();
-        let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |event| {
-            events_tx.send(event).expect("forward socket event");
-        })
-        .expect("create stale-start socket watcher");
-        watcher
-            .watch(
-                fixture.socket.parent().expect("socket parent"),
-                RecursiveMode::NonRecursive,
-            )
-            .expect("watch stale-start socket parent");
-
         let mut command = fixture.command();
         command.arg("start");
         barrier.install(&mut command, &fixture.socket);
@@ -1661,6 +1648,7 @@ fn review_contract_socket_replacement_survives_stale_start_and_shutdown_cleanup(
         barrier.gates.wait_for_run();
         barrier.gates.release();
 
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if child
                 .try_wait()
@@ -1674,10 +1662,11 @@ fn review_contract_socket_replacement_survives_stale_start_and_shutdown_cleanup(
                 child.wait().expect("reap unsafe stale-start daemon");
                 break;
             }
-            events_rx
-                .recv_timeout(Duration::from_secs(10))
-                .expect("stale-start path changes or process exits")
-                .expect("stale-start socket event succeeds");
+            assert!(
+                Instant::now() < deadline,
+                "stale-start process exits or binds"
+            );
+            thread::sleep(Duration::from_millis(1));
         }
         fs::read_to_string(&fixture.socket).ok().as_deref() == Some("operator replacement")
     };
