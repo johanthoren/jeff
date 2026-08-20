@@ -60,6 +60,8 @@ A request to *set up / turn on / initialize* jeff is an **activation** request, 
 
 Confirm once, then run the command. These same verbs are the activation and CLI control verbs in the routing table below.
 
+Before `cook lite` or `cook profile init`, ask in chat whether this repo should auto-merge after CI or the team owns merge, then write that answer into `Integration:`. The CLI stays non-interactive; no new flag. `cook profile init` writes the shipped template immediately (auto-merge after CI). When the chat answer is no, overwrite `Integration:` to team-owns-merge.
+
 **Migrating an existing bakehouse project** (it has a `.bakehouse/` store) to jeff is a directory rename plus a config normalization, with one reconciliation when the source kept resting `done`/`abandoned` tasks. Read `skills/cook/reference/migration.md` and follow it; do not improvise the steps.
 
 ### Request routing
@@ -118,7 +120,7 @@ Before opening lanes, resolve the absolute main-checkout root once and `export C
 
 Named start (`cook <id>` / `cook on <ref>`) claims a ready task even when active claims already equal `maxParallelTasks`. If main is occupied or another claim exists, that start uses a linked worktree and task branch. `cook all` refuses to open a new autonomous claim once the cap is full.
 
-Lite landing is a feature branch, push, and open PR. Lite landing does not use trunk compare-and-swap. Multiple PRs may be open at once. Merge or protected-base push still requires explicit per-change operator approval.
+Lite landing is a feature branch, push, and open PR. Lite landing does not use trunk compare-and-swap. Multiple PRs may be open at once. After the done-gate Jeff opens the PR and enables auto-merge after CI unless Integration: or a live request forbids landing, then waits until the head is on the base branch before recording done.
 
 1. Read `cook ready` and `cook claims` fresh from disk. Never trust context. While unclaimed ready tasks exist and active claims are fewer than `maxParallelTasks`, claim the next task, journal a drain intent, and open its lane.
 2. Whenever two or more tasks are claimed simultaneously, every claimed task gets its own linked git worktree on its own task branch. A single claimed task may use the main checkout.
@@ -152,7 +154,7 @@ In full mode the registry is hand-authored and pruned by hand: when a captured t
 3. **Record** the specialist's strict JSON return through `cook record <stage> <id> <observed-agent-id> <file>` (verdicts, findings, and evidence). The specialist return omits `agent_id`. `<observed-agent-id>` is the host-observed, authoritative native child id returned by the host; the recorder validates the external return, then binds that id before transition checks. Pi dispatch with a task id calls the same recording core directly. Append narrative notes to `notes.md`; keep returned child-session provider/model/effort as execution evidence. When execute returns `approval-required`, show the exact pending mutation to the Chef. Only after the Chef explicitly approves those exact bytes, Jeff records the parent-observed grant with `cook approve <id> <operator>` and re-fires execute. Never ask the executor to carry or attest the grant, and never infer approval from its return.
 4. **Integrate** the stage's changes according to Git without putting unverified work on trunk. Repository and host context choose the mechanics; in lite, follow the operating profile. Then **advance** `stage`; on a kickback, set `stage` to the earlier stage with a recorded reason.
 5. Repeat until the task reaches `done` (or blocks/abandons).
-6. **Handle the terminal by mode.** In full mode, run terminal-with-removal and satisfy the Git and Validation outcomes. In lite, retain the done ledger, reflect terminal progress through the plan-store seam, and perform only the reversible integration or handoff allowed by the operating profile.
+6. **Handle the terminal by mode.** In full mode, run terminal-with-removal and satisfy the Git and Validation outcomes. In lite, retain the done ledger, reflect terminal progress through the plan-store seam, then open the PR and enable auto-merge after CI unless the operating profile or a live request forbids landing; wait until the head is on the base branch before recording done.
 
 Jeff may not override a `needs-work` verdict. Code `review`/`audit` and operation `verify`/`audit` reuse the same convergence mechanism: classification, source-bound refute, independent per-source cap of 2, one task-wide council, and at most one scoped recovery cycle.
 
@@ -258,7 +260,7 @@ The scoped implement or refactor brief quotes the typed findings contract verbat
 - Repository and host context choose branch, checkpoint materialization, and integration mechanics. Linked worktrees are optional for dirty, occupied, or concurrent checkouts, never mandatory. Routine reversible Git work is autonomous; interrupt only for unattributable changes, unresolvable conflicts, or force-push or history rewrite.
 - Before every external side effect, including pull request creation, issue comments, and release actions, append `cook journal <id> intent --stage external --note <planned effect>`. After the effect completes, append `cook journal <id> external --note <what completed>`. On resume, a dangling external intent requires querying the external system first; repeat the effect only when it is genuinely absent.
 - `complexity` (`"simple" | "complex"`; absent ⇒ `"complex"`) classifies complecting and risk, not Git topology. Classify by complecting, not difficulty; deployment or other non-local side effects ⇒ complex; default complex when unsure; make or refine the call at plan.
-- In full mode, prune terminal task state. In lite mode, retain the terminal ledger, reflect progress through the plan-store seam, and follow the operating profile's reversible integration or handoff.
+- In full mode, prune terminal task state. In lite mode, retain the terminal ledger, reflect progress through the plan-store seam, and follow the operating profile's integration or handoff, including profile-permitted auto-merge and wait-for-land.
 
 ## Verification (the test protocol)
 

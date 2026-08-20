@@ -10,6 +10,7 @@ load test_helper
 setup_file() { cook_hermetic_git; }
 COOK="$REPO/src/cli/cook.js"
 SKILL="$REPO/skills/cook/SKILL.md"
+LITE_MODE="$REPO/skills/cook/reference/lite-mode.md"
 
 setup() {
   TMP="$(mktemp -d)"
@@ -204,6 +205,24 @@ cook_all_completion_step() {
     found { print }
     END { if (!found) exit 1 }
   '
+}
+
+lite_integration_section() {
+  awk '
+    /^## Running the pipeline/ { in_section = 1 }
+    in_section && /^## / && !/^## Running the pipeline/ { exit }
+    in_section { print }
+    END { if (!in_section) exit 1 }
+  ' "$LITE_MODE"
+}
+
+activation_section() {
+  awk '
+    /^## Activation/ { in_section = 1 }
+    in_section && /^## Entry$/ { exit }
+    in_section { print }
+    END { if (!in_section) exit 1 }
+  ' "$SKILL"
 }
 
 contract_paragraph() {
@@ -497,14 +516,71 @@ require_success() {
   require_before "$routing" 'cook all' 'unrecognized explicit `cook <arg>`' 'explicit cook all row must precede task-id fallback'
 }
 
-@test "lite landing is reversible PR handoff without trunk CAS" {
+@test "lite landing auto-merges after CI without trunk CAS" {
   local section
   section="$(cook_all_section)" || return 1
 
+  require_regex "$section" 'auto-merge after CI' 'lite auto-merge after CI'
+  require_regex "$section" 'Integration:|live request' 'Integration or live request can forbid landing'
+  require_regex "$section" 'wait[^.]{0,120}(base branch|land)[^.]{0,80}done|(base branch|land)[^.]{0,80}before[^.]{0,40}done' 'wait until landed before done'
   require_regex "$section" 'lite.*(feature branch|open PR)|feature branch.*lite|open PR.*lite' 'lite feature-branch PR landing'
   require_regex "$section" 'multiple PRs' 'multiple lite PRs may be open'
-  require_regex "$section" 'lite.*(does not|never|not).*(compare-and-swap|update-ref|trunk CAS)|lite landing.*PR' 'lite landing is not trunk CAS'
-  require_regex "$section" 'merge or protected-base|protected-base.*approval|explicit.*operator.*approval' 'merge still needs operator approval'
+  require_regex "$section" 'lite landing does not use trunk compare-and-swap|lite[^.]{0,80}(does not|never|not)[^.]{0,80}(compare-and-swap|update-ref)' 'lite landing is not trunk CAS'
+  if grep -qiE 'Merge or protected-base push still requires explicit per-change operator approval' <<<"$section"; then
+    printf 'lite landing still requires per-change operator approval\n'
+    return 1
+  fi
+}
+
+@test "lite integration terminal enables gh pr merge --auto unless Integration forbids it" {
+  local section compact
+  section="$(lite_integration_section)" || {
+    echo "skills/cook/reference/lite-mode.md has no pipeline / integration terminal section"
+    return 1
+  }
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  require_fixed "$section" 'gh pr merge --auto --match-head-commit'
+  require_regex "$compact" 'absent[^.]{0,80}Integration|silent[^.]{0,80}Integration|Integration[^.]{0,80}(absent|silent|missing)' 'absent or silent Integration is named'
+  require_regex "$compact" '(does not|do not|not)[^.]{0,60}forbid' 'absent Integration does not forbid landing'
+  require_regex "$compact" 'team merge|team owns merge|team-owns-merge' 'team-merge profile still forbids landing'
+  require_regex "$compact" 'confirm-first' 'confirm-first merge still forbids landing'
+  require_regex "$compact" 'never push[^.]{0,40}protected base' 'never-push-protected-base still forbids landing'
+  require_regex "$compact" '(stop|print)[^.]{0,80}(command|merge)|(print)[^.]{0,40}command' 'forbidden profiles stop and print the command'
+  if grep -qF -- '--admin' <<<"$section"; then
+    printf 'lite merge path must not use --admin\n'
+    return 1
+  fi
+}
+
+@test "lite integration terminal waits for land before done and stops when --auto fails" {
+  local section compact
+  section="$(lite_integration_section)" || return 1
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  require_fixed "$section" 'gh pr merge --auto --match-head-commit'
+  require_regex "$compact" 'wait[^.]{0,160}(base branch|land)[^.]{0,120}(done|release)|(base branch|land)[^.]{0,80}before[^.]{0,80}(done|release)' 'wait until on the base branch before done or release'
+  require_regex "$compact" '(--auto[^.]{0,80}fail|fail[^.]{0,80}--auto)' '--auto failure is named'
+  require_regex "$compact" '(stop|print)[^.]{0,100}command' '--auto failure stops and prints the command'
+  require_regex "$compact" '(do not|does not|never|not)[^.]{0,80}(fall back|fallback|immediate)' 'no immediate-merge fallback when --auto fails'
+}
+
+@test "activation asks auto-merge vs team-owns-merge before cook lite and profile init" {
+  local section compact
+  section="$(activation_section)" || {
+    echo "skills/cook/SKILL.md has no Activation section"
+    return 1
+  }
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  require_fixed "$section" 'cook lite'
+  require_fixed "$section" 'cook profile init'
+  require_regex "$compact" 'auto-merge after CI' 'ask names auto-merge after CI'
+  require_regex "$compact" 'team owns merge|team-owns-merge' 'ask names team-owns-merge'
+  require_regex "$compact" 'Integration' 'the answer is written into Integration'
+  require_regex "$compact" 'non-interactive' 'CLI stays non-interactive'
+  require_regex "$compact" 'no new flag' 'no new CLI flag'
+  require_regex "$compact" 'overwrite|writes that answer|write[^.]{0,80}Integration' 'Jeff writes the chat answer into Integration'
 }
 
 @test "one-off start claims at cap while cook all refuses a new autonomous claim" {
