@@ -332,7 +332,6 @@ impl Server {
     }
 
     fn add_connection(&mut self, stream: UnixStream) -> Result<(), ServerError> {
-        stream.set_nonblocking(false)?;
         if self.connections.len() >= self.limits.connections {
             let _ = stream.shutdown(std::net::Shutdown::Both);
             return Ok(());
