@@ -123,7 +123,7 @@ Lite landing is a feature branch, push, and open PR. Lite landing does not use t
 1. Read `cook ready` and `cook claims` fresh from disk. Never trust context. While unclaimed ready tasks exist and active claims are fewer than `maxParallelTasks`, claim the next task, journal a drain intent, and open its lane.
 2. Whenever two or more tasks are claimed simultaneously, every claimed task gets its own linked git worktree on its own task branch. A single claimed task may use the main checkout.
 3. Run each lane through The Loop independently. Dispatch stages of different lanes concurrently when the host supports it; otherwise interleave them. The `.record-lock` serializes store writes, and lanes share no checkout.
-4. **Integration is serialized at the main checkout, in completion order.**
+4. **In full mode: Integration is serialized at the main checkout, in completion order.**
    - Reserve one landing slot and capture the old trunk OID as O.
    - Create a private integration checkpoint from O, then merge or rebase the task branch onto that trunk-based checkpoint without moving trunk.
    - At the clean private checkpoint in the main root, run the one full-suite gate, `cook verify --task <id>`, exactly once. It records the checkpoint's root HEAD and clean tree.
