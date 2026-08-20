@@ -26,7 +26,7 @@ const PROFILE_TEMPLATE = `\`\`\`json
 
 Task location: \`.jeff/tasks/\`; breakdown: one task per logical change.
 
-Integration: feature branch → PR → team merges; jeff never pushes the protected base.
+Integration: feature branch → PR → auto-merge after CI; wait for land.
 
 Handoff: specialist leaves tests green, \`cook validate\` passing, stage committed.
 

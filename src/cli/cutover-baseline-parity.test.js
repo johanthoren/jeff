@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ORACLE = join(ROOT, 'tests', 'fixtures', 'cook-baseline.sh');
-const ORACLE_SHA256 = 'c1744abf1543cf3131add20182ecd669447d3dc3df13015b6e498ae1d59ec2f0';
+const ORACLE_SHA256 = '165c3e6b5dafd265a038fac7bd1ebc6e0c641a25c00677a853ed422736ca1ace';
 const COOK = join(ROOT, 'src', 'cli', 'cook.js');
 
 /** @param {string} root @param {string[]} args @param {boolean} oracle */

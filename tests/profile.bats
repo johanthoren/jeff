@@ -350,6 +350,28 @@ write_baseline_task_numeric() {
   [ "$byte_count" -le 2000 ]
 }
 
+@test "profile init: shipped template Integration auto-merges after CI" {
+  run cook profile init </dev/null
+  [ "$status" -eq 0 ]
+  [ -f "$BK/profile.md" ]
+  local integration
+  integration="$(grep '^Integration:' "$BK/profile.md")"
+  [ -n "$integration" ]
+  grep -qF 'auto-merge after CI' <<<"$integration"
+  if grep -qiE 'team merge' <<<"$integration"; then
+    printf 'shipped template Integration still names team merge: %s\n' "$integration"
+    return 1
+  fi
+  if grep -qiE 'confirm-first' <<<"$integration"; then
+    printf 'shipped template Integration still names confirm-first merge: %s\n' "$integration"
+    return 1
+  fi
+  if grep -qiE 'never push(es)? the protected base' <<<"$integration"; then
+    printf 'shipped template Integration still names never-push-protected-base: %s\n' "$integration"
+    return 1
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # PROFILE PRINT: `cook profile` stdout
 # ---------------------------------------------------------------------------
