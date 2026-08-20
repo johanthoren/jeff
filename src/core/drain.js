@@ -2,7 +2,8 @@
 
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { assertStoreContained, collectTasks, readConfig, readMode } from './store.js';
+import { compareById } from './reporters.js';
+import { assertStoreContained, collectTasks, readConfig } from './store.js';
 import { locateTask, withStoreLock } from './store-lock.js';
 
 /**
@@ -17,13 +18,6 @@ const TERMINAL_STATUSES = new Set(['done', 'abandoned']);
 /** @param {string} message @returns {Report} */
 function failure(message) {
   return { code: 1, stdout: [], stderr: [`cook: ${message}`] };
-}
-
-/** @param {string} root @param {string} verb @returns {Promise<Report | null>} */
-async function fullModeError(root, verb) {
-  return await readMode(root) === 'lite'
-    ? failure(`${verb} is full-mode-only`)
-    : null;
 }
 
 /** @param {string} root @param {any} task */
@@ -77,8 +71,6 @@ export function maxParallelTasks(config) {
 
 /** @param {string} root @returns {Promise<Report>} */
 export async function readyReport(root) {
-  const modeError = await fullModeError(root, 'ready');
-  if (modeError) return modeError;
   try {
     const [tasks, config] = await Promise.all([collectTasks(root), readConfig(root, { strict: true })]);
     const byId = new Map(tasks.map((task) => [task.id, task]));
@@ -96,7 +88,7 @@ export async function readyReport(root) {
     ready.sort((left, right) => (
       left.priority < right.priority ? -1
         : left.priority > right.priority ? 1
-          : left.id - right.id
+          : compareById(left, right)
     ));
     return {
       code: 0,
@@ -115,15 +107,13 @@ export async function readyReport(root) {
  * @returns {Promise<Report>}
  */
 export async function claimReport(root, id, options = {}) {
-  const modeError = await fullModeError(root, 'claim');
-  if (modeError) return modeError;
   const by = options.by ?? 'cook';
   if (typeof by !== 'string' || by.trim() === '') return failure('claim: holder must be nonempty');
   try {
     return await withStoreLock(root, async () => {
       const tasks = await collectTasks(root);
-      const { taskDir } = await locateTask(root, id, tasks);
-      const task = tasks.find((candidate) => String(candidate.id) === id);
+      const { taskDir, taskPath } = await locateTask(root, id, tasks);
+      const task = tasks.find((candidate) => candidate._dir === taskPath);
       if (task.status === 'blocked' || TERMINAL_STATUSES.has(task.status)) {
         return failure(`claim: task ${id} is ${task.status}`);
       }
@@ -153,13 +143,11 @@ export async function claimReport(root, id, options = {}) {
 
 /** @param {string} root @param {string} id @returns {Promise<Report>} */
 export async function releaseReport(root, id) {
-  const modeError = await fullModeError(root, 'release');
-  if (modeError) return modeError;
   try {
     return await withStoreLock(root, async () => {
       const tasks = await collectTasks(root);
-      const { taskDir } = await locateTask(root, id, tasks);
-      const task = tasks.find((candidate) => String(candidate.id) === id);
+      const { taskDir, taskPath } = await locateTask(root, id, tasks);
+      const task = tasks.find((candidate) => candidate._dir === taskPath);
       if (!await hasClaim(root, task)) return failure(`release: task ${id} is unclaimed`);
       const claimDir = join(taskDir, '.claim');
       await assertStoreContained(root, [claimDir]);
@@ -177,11 +165,9 @@ export async function releaseReport(root, id) {
  * @returns {Promise<Report>}
  */
 export async function claimsReport(root, options = {}) {
-  const modeError = await fullModeError(root, 'claims');
-  if (modeError) return modeError;
   try {
     return await withStoreLock(root, async () => {
-      const tasks = [...await collectTasks(root)].sort((left, right) => left.id - right.id);
+      const tasks = [...await collectTasks(root)].sort(compareById);
       const now = (options.now ?? (() => new Date()))().getTime();
       const stdout = [];
       for (const task of tasks) {

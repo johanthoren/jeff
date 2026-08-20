@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 
-# Item 7: full-mode cook all CLI primitives and model-owned drain contract.
+# Item 7 drain primitives plus the model-owned cook-all contract for full and lite.
 # The SKILL section is an observable instruction payload. Marker checks follow
 # the established Bats prose-contract convention: commands, state names, and
 # invariant phrases are checked inside one scoped section, not by line number.
@@ -39,6 +39,49 @@ write_task() {
     '{
       schemaVersion: 1,
       id: $id,
+      slug: $slug,
+      title: $title,
+      status: $status,
+      stage: (if $status == "done" or $status == "abandoned" then "done" else "capture" end),
+      priority: $priority,
+      deps: $deps,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+      complexity: "simple",
+      agents: {
+        implementer_agent_id: null,
+        reviewer_agent_id: null,
+        reviewer2_agent_id: null,
+        audit_agent_id: null
+      },
+      tests: {authored_by_agent_id:null, green:false, evidence:[]},
+      review: {verdict:null, reviewer_agent_id:null, evidence:[]},
+      review2: null,
+      audit: {required:false, verdict:"na", audit_agent_id:null, evidence:[]},
+      commits: [],
+      kickbacks: [],
+      blockedReason: null,
+      abandonReason: null
+    }' > "$dir/task.json"
+  printf '%s\n' "$dir"
+}
+
+write_lite_task() {
+  local id="$1" slug="$2" title="$3" priority="${4:-p2}" status="${5:-pending}" deps="${6:-[]}" extref="${7:-$1}"
+  local dir="$TMP/.jeff/tasks/lite-$slug"
+  mkdir -p "$dir"
+  jq -n \
+    --arg id "$id" \
+    --arg slug "$slug" \
+    --arg title "$title" \
+    --arg priority "$priority" \
+    --arg status "$status" \
+    --argjson deps "$deps" \
+    --arg extref "$extref" \
+    '{
+      schemaVersion: 1,
+      id: $id,
+      externalRef: $extref,
       slug: $slug,
       title: $title,
       status: $status,
@@ -378,18 +421,45 @@ require_success() {
   require_success
 }
 
-@test "drain primitives refuse lite mode before touching task state" {
-  local task_dir invocation
-  task_dir="$(write_task 1 lite-task "Lite task")"
+@test "drain primitives work in lite against string ids and issue refs" {
+  local first_dir second_dir
   jq -n '{schemaVersion:1, system:"jeff", mode:"lite", active:true}' > "$TMP/.jeff/config.json"
+  first_dir="$(write_lite_task '#11' first "First" p0 pending '[]' '#11')"
+  second_dir="$(write_lite_task '#2' second "Second" p0 pending '[]' 'https://github.com/johanthoren/jeff/issues/2')"
 
-  for invocation in "ready" "claims" "claim 1" "release 1"; do
-    run cook $invocation
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"full-mode-only"* || "$output" == *"full mode only"* ]]
-    [ ! -e "$task_dir/.claim" ]
-  done
+  run cook ready
+  require_success
+  jq -ecs '
+    . == [
+      {id:"#11", slug:"first", title:"First", priority:"p0", deps:[]},
+      {id:"#2", slug:"second", title:"Second", priority:"p0", deps:[]}
+    ]
+  ' <<<"$output" >/dev/null
+
+  run cook claim '#11' --by lane-a
+  require_success
+  [ -f "$first_dir/.claim/claim.json" ]
+
+  run cook claim 'https://github.com/johanthoren/jeff/issues/2' --by lane-b
+  require_success
+  [ -f "$second_dir/.claim/claim.json" ]
+  [[ "$first_dir" == *".jeff/tasks/"* ]]
+  [[ "$second_dir" == *".jeff/tasks/"* ]]
+
+  run cook claims
+  require_success
+  jq -ecs '
+    length == 2
+    and (.[0].id == "#11" or .[0].id == "#2")
+    and (.[1].id == "#11" or .[1].id == "#2")
+    and (.[0].id != .[1].id)
+  ' <<<"$output" >/dev/null
+
+  run cook release '#11'
+  require_success
+  [ ! -e "$first_dir/.claim" ]
 }
+
 
 @test "cook all contract replaces the reserved line and keeps orchestration model-owned" {
   local section
@@ -399,8 +469,9 @@ require_success() {
   }
 
   ! grep -qF -- 'v1.1: reserved; not yet a control verb' "$SKILL"
-  require_regex "$section" 'full[- ]mode[- ]only' 'full-mode-only scope'
-  require_regex "$section" 'lite.*cook all.*full[- ]mode[- ]only|cook all.*lite.*full[- ]mode[- ]only' 'lite refusal'
+  ! grep -qE -- 'full-mode-only|full mode only' "$SKILL"
+  require_regex "$section" 'lite.*cook all|cook all.*lite' 'lite cook all'
+  require_regex "$section" 'lite.*(claim|drain)|drain.*lite' 'lite drain'
   require_fixed "$section" 'cook ready'
   require_fixed "$section" 'cook claim'
   require_fixed "$section" 'cook release'
@@ -410,16 +481,61 @@ require_success() {
   require_regex "$section" 'no scheduler' 'no scheduler process'
 }
 
+
 @test "explicit cook all routes to the drain before task-id fallback" {
-  local routing
+  local routing cook_all_row
   routing="$(request_routing_table)" || {
     echo "skills/cook/SKILL.md has no request-routing table"
     return 1
   }
 
-  require_regex "$routing" '^\|.*explicit.*cook all.*\|.*pipeline.*\|.*full[- ]mode.*drain.*lite.*full[- ]mode[- ]only.*\|$' 'explicit cook all routing row with full and lite outcomes'
+  cook_all_row="$(printf '%s\n' "$routing" | grep -i 'cook all' | head -n 1)"
+  [ -n "$cook_all_row" ]
+  [[ "$cook_all_row" != *full-mode-only* && "$cook_all_row" != *"full mode only"* ]]
+  require_regex "$cook_all_row" 'lite' 'lite mentioned in cook all routing'
+  require_regex "$cook_all_row" 'drain' 'drain mentioned in cook all routing'
   require_before "$routing" 'cook all' 'unrecognized explicit `cook <arg>`' 'explicit cook all row must precede task-id fallback'
 }
+
+@test "lite landing is reversible PR handoff without trunk CAS" {
+  local section
+  section="$(cook_all_section)" || return 1
+
+  require_regex "$section" 'lite.*(feature branch|open PR)|feature branch.*lite|open PR.*lite' 'lite feature-branch PR landing'
+  require_regex "$section" 'multiple PRs' 'multiple lite PRs may be open'
+  require_regex "$section" 'lite.*(does not|never|not).*(compare-and-swap|update-ref|trunk CAS)|lite landing.*PR' 'lite landing is not trunk CAS'
+  require_regex "$section" 'merge or protected-base|protected-base.*approval|explicit.*operator.*approval' 'merge still needs operator approval'
+}
+
+@test "one-off start claims at cap while cook all refuses a new autonomous claim" {
+  local section
+  section="$(cook_all_section)" || return 1
+
+  require_regex "$section" 'cook <id>|named start|cook on' 'named start forms'
+  require_regex "$section" 'even when.*maxParallelTasks|already equal.*maxParallelTasks|named start.*cap|claims it even when' 'named start ignores the drain cap'
+  require_regex "$section" 'main is occupied|another claim|occupied.*worktree|worktree.*occupied' 'occupied main uses a worktree'
+  require_regex "$section" 'cook all.*refuses|refuses.*autonomous|autonomous claim.*cap|cap is full' 'cook all refuses a new claim at cap'
+}
+
+@test "help describes drain verbs without calling them full-mode-only" {
+  local ready_line claim_line release_line claims_line
+  run cook help
+  require_success
+  ready_line="$(printf '%s\n' "$output" | grep -E '^  ready ')"
+  claim_line="$(printf '%s\n' "$output" | grep -E '^  claim ')"
+  release_line="$(printf '%s\n' "$output" | grep -E '^  release ')"
+  claims_line="$(printf '%s\n' "$output" | grep -E '^  claims ')"
+  [ -n "$ready_line" ]
+  [ -n "$claim_line" ]
+  [ -n "$release_line" ]
+  [ -n "$claims_line" ]
+  [[ "$ready_line" != *full-mode* ]]
+  [[ "$claim_line" != *full-mode* ]]
+  [[ "$release_line" != *full-mode* ]]
+  [[ "$claims_line" != *full-mode* ]]
+}
+
+
 
 @test "cook all contract refreshes capacity and isolates simultaneous lanes" {
   local section
@@ -513,6 +629,8 @@ require_success() {
   section="$(cook_all_section)" || return 1
 
   require_regex "$section" 'merge conflict.*hidden edge|hidden edge.*merge conflict' 'merge conflict is a discovered hidden edge'
+  require_regex "$section" 'landing or rebase conflict|rebase conflict.*hidden edge|hidden edge.*rebase' 'landing or rebase conflict is a hidden edge'
+
   require_regex "$section" 'kickback.*implement|implement.*kickback' 'conflict kickback to implement'
   require_regex "$section" 'same area.*sequence|sequence.*same area' 'obvious overlap runs in sequence'
   require_regex "$section" 'capture lock.*approval.*escalation.*blocked' 'lane-local stop classes'

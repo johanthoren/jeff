@@ -48,7 +48,7 @@ export async function withStoreLock(root, operation) {
  * @param {any[]} tasks
  */
 export async function locateTask(root, id, tasks) {
-  const matches = tasks.filter((task) => String(task.id) === id);
+  const matches = tasks.filter((task) => String(task.id) === id || task.externalRef === id);
   if (matches.length !== 1) {
     throw new Error(`[record-task] task ${id} ${matches.length ? 'is ambiguous' : 'was not found'}`);
   }

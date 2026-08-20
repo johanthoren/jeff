@@ -54,7 +54,7 @@ async function collectOrFail(root) {
  * @param {any} b
  * @returns {number}
  */
-function compareById(a, b) {
+export function compareById(a, b) {
   const x = a.id;
   const y = b.id;
   const xNum = typeof x === 'number';

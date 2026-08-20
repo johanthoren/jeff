@@ -94,8 +94,8 @@ function requireField(out, field, valid) {
 }
 
 /**
- * Validate full-mode dependency provenance at the config trust boundary.
- * Lite mode does not interpret this full-mode field.
+ * Validate config fields at the trust boundary.
+ * `prunedTaskIds` is full-mode only. `maxParallelTasks` is valid in both modes.
  *
  * @param {Record<string, unknown> | null} config
  * @param {{ lite: boolean }} options
@@ -110,7 +110,7 @@ export function configSchemaViolations(config, { lite }) {
         typeof id === 'number' && Number.isInteger(id) && id > 0
       )));
   }
-  if (!lite && config !== null && Object.hasOwn(config, 'maxParallelTasks')) {
+  if (config !== null && Object.hasOwn(config, 'maxParallelTasks')) {
     requireField(out, 'maxParallelTasks', typeof config.maxParallelTasks === 'number'
       && Number.isInteger(config.maxParallelTasks)
       && config.maxParallelTasks >= 1);
