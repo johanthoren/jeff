@@ -388,7 +388,12 @@ impl Server {
                 let frame = decode_request_frame(frame);
                 pending.fetch_sub(1, Ordering::AcqRel);
                 match frame {
-                    Ok(frame) if self.connections.contains_key(&connection) => {
+                    Ok(frame)
+                        if self
+                            .connections
+                            .get(&connection)
+                            .is_some_and(|client| !client.reader_done.load(Ordering::Acquire)) =>
+                    {
                         self.handle_request(connection, frame);
                     }
                     Ok(_) => {}

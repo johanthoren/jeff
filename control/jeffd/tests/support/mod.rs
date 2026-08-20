@@ -3,18 +3,56 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::{json, Value};
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Output, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const TEST_DEADLINE: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolRead {
+    Bytes(usize),
+    Eof,
+    Retry,
+}
+
+pub fn classify_protocol_read(result: io::Result<usize>) -> io::Result<ProtocolRead> {
+    match result {
+        Ok(0) => Ok(ProtocolRead::Eof),
+        Ok(n) => Ok(ProtocolRead::Bytes(n)),
+        Err(error) => match error.kind() {
+            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted | io::ErrorKind::TimedOut => {
+                Ok(ProtocolRead::Retry)
+            }
+            io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe => Ok(ProtocolRead::Eof),
+            _ => Err(error),
+        },
+    }
+}
+
+pub fn classified_read(
+    deadline: Instant,
+    mut read: impl FnMut() -> io::Result<usize>,
+    context: &str,
+) -> usize {
+    loop {
+        match classify_protocol_read(read()).expect(context) {
+            ProtocolRead::Bytes(n) => return n,
+            ProtocolRead::Eof => return 0,
+            ProtocolRead::Retry => {
+                assert!(Instant::now() < deadline, "{context}");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+}
 
 pub struct Fixture {
     _root: TempDir,
@@ -345,10 +383,11 @@ impl Client {
 
     pub fn recv(&mut self) -> Value {
         let mut line = String::new();
-        let bytes = self
-            .reader
-            .read_line(&mut line)
-            .expect("read response or event frame");
+        let bytes = classified_read(
+            Instant::now() + TEST_DEADLINE,
+            || self.reader.read_line(&mut line),
+            "read response or event frame",
+        );
         assert_ne!(bytes, 0, "connection closed before expected frame");
         serde_json::from_str(&line).expect("server emitted one JSON document")
     }
@@ -370,24 +409,33 @@ impl Client {
 
     pub fn read_eof(&mut self) {
         let mut byte = [0_u8; 1];
-        let count = self.reader.read(&mut byte).expect("read connection EOF");
+        let count = classified_read(
+            Instant::now() + TEST_DEADLINE,
+            || self.reader.read(&mut byte),
+            "read connection EOF",
+        );
         assert_eq!(count, 0, "server must close the protocol connection");
     }
 
     pub fn read_one_byte(&mut self) -> usize {
         let mut byte = [0_u8; 1];
-        self.reader
-            .read(&mut byte)
-            .expect("read one response byte or EOF")
+        classified_read(
+            Instant::now() + TEST_DEADLINE,
+            || self.reader.read(&mut byte),
+            "read one response byte or EOF",
+        )
     }
+
     pub fn recv_all_until_eof(&mut self, maximum_frames: usize) -> Vec<Value> {
         let mut frames = Vec::new();
+        let deadline = Instant::now() + TEST_DEADLINE;
         for _ in 0..maximum_frames {
             let mut line = String::new();
-            let bytes = self
-                .reader
-                .read_line(&mut line)
-                .expect("read response, event, or EOF");
+            let bytes = classified_read(
+                deadline,
+                || self.reader.read_line(&mut line),
+                "read response, event, or EOF",
+            );
             if bytes == 0 {
                 return frames;
             }
@@ -466,7 +514,7 @@ pub fn wait_for_log_lines(path: &Path, minimum: usize) -> Vec<String> {
     let parent = path.parent().expect("log has parent");
     let (events_tx, events_rx) = mpsc::channel();
     let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |event| {
-        events_tx.send(event).expect("forward log filesystem event");
+        let _ = events_tx.send(event);
     })
     .expect("create log watcher");
     watcher
@@ -532,7 +580,5 @@ fi
 if [ "$code" -ne 0 ]; then
   exit "$code"
 fi
-while IFS= read -r line || [ -n "$line" ]; do
-  printf '%s\n' "$line"
-done < "$FAKE_RESPONSE"
+command -p cat "$FAKE_RESPONSE"
 "#;

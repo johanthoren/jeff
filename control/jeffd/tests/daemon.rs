@@ -4,13 +4,12 @@ mod support;
 
 use jeff_project::ProjectRecord;
 use jeffd::{load_registry, run_snapshot, SnapshotFailure};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::env;
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{symlink, PermissionsExt};
@@ -19,9 +18,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use support::{assert_ok, wait_for_log_lines, FifoPair, Fixture, MAX_FRAME_BYTES};
+use support::{
+    assert_ok, classified_read, classify_protocol_read, wait_for_log_lines, FifoPair, Fixture,
+    ProtocolRead, MAX_FRAME_BYTES,
+};
 
 #[test]
 fn foreground_lifecycle_owns_the_default_private_socket_and_cleans_up() {
@@ -370,15 +372,110 @@ fn notify_coalesces_dirty_again_for_only_the_changed_project() {
 
     gates.wait_for_run();
     let invocations = wait_for_log_lines(&fixture.log, 2);
-    assert_eq!(invocations.len(), 2);
-    assert!(invocations.iter().all(|line| {
-        line == &format!("{}|--fixture snapshot --json", fixture.project.display())
-    }));
+    let expected = format!("{}|--fixture snapshot --json", fixture.project.display());
+    assert_eq!(
+        invocations,
+        vec![expected.clone(), expected],
+        "dirty-again must rerun only {}; log was {invocations:?}",
+        fixture.project.display()
+    );
+    assert!(
+        !invocations
+            .iter()
+            .any(|line| line.contains(&fixture.other_project.display().to_string())),
+        "project-b must not appear in coalesced invocations: {invocations:?}"
+    );
     gates.release();
 
     let replaced = client.recv_until(|frame| frame["name"] == "snapshot.replaced");
     assert_eq!(replaced["payload"]["projectId"], "project-a");
     assert!(fixture.stop_and_wait().status.success());
+}
+
+#[test]
+fn classify_protocol_read_retries_would_block() {
+    let error = io::Error::new(
+        io::ErrorKind::WouldBlock,
+        "Resource temporarily unavailable",
+    );
+    assert_eq!(
+        classify_protocol_read(Err(error)).expect("WouldBlock is retryable"),
+        ProtocolRead::Retry
+    );
+}
+
+#[test]
+fn classify_protocol_read_retries_interrupted() {
+    let error = io::Error::new(io::ErrorKind::Interrupted, "Interrupted system call");
+    assert_eq!(
+        classify_protocol_read(Err(error)).expect("Interrupted is retryable"),
+        ProtocolRead::Retry
+    );
+}
+
+#[test]
+fn classify_protocol_read_retries_timed_out() {
+    let error = io::Error::new(io::ErrorKind::TimedOut, "timed out");
+    assert_eq!(
+        classify_protocol_read(Err(error)).expect("TimedOut is retryable"),
+        ProtocolRead::Retry
+    );
+}
+
+#[test]
+fn classify_protocol_read_treats_connection_reset_as_eof() {
+    let error = io::Error::new(io::ErrorKind::ConnectionReset, "Connection reset by peer");
+    assert_eq!(
+        classify_protocol_read(Err(error)).expect("ConnectionReset is EOF"),
+        ProtocolRead::Eof
+    );
+}
+
+#[test]
+fn classify_protocol_read_treats_broken_pipe_as_eof() {
+    let error = io::Error::new(io::ErrorKind::BrokenPipe, "Broken pipe");
+    assert_eq!(
+        classify_protocol_read(Err(error)).expect("BrokenPipe is EOF"),
+        ProtocolRead::Eof
+    );
+}
+
+#[test]
+fn client_read_one_byte_treats_peer_reset_as_eof() {
+    let root = tempfile::tempdir().expect("create isolated socket root");
+    let path = root.path().join("jeffd.sock");
+    let listener = UnixListener::bind(&path).expect("bind protocol socket");
+    let mut client = support::Client::connect(&path);
+    let server = listener.accept().expect("accept protocol client").0;
+    client.send(&json!({
+        "v": 1,
+        "kind": "req",
+        "id": "reset",
+        "method": "server.hello",
+        "params": {}
+    }));
+    drop(server);
+    assert_eq!(
+        client.read_one_byte(),
+        0,
+        "a peer reset after unread request bytes must count as protocol EOF"
+    );
+}
+#[test]
+fn raw_read_to_eof_treats_peer_reset_as_close() {
+    let (mut reader, writer) = UnixStream::pair().expect("create connected pair");
+    reader
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("bound pair reads");
+    reader
+        .write_all(b"unread-request")
+        .expect("leave unread bytes on the closing peer");
+    drop(writer);
+    assert_eq!(
+        raw_read_to_eof(&mut reader, 16),
+        0,
+        "a reset after unread bytes must count as a clean protocol close"
+    );
 }
 
 #[test]
@@ -1041,10 +1138,13 @@ fn shrink_receive_buffer(stream: &UnixStream) {
 fn raw_read_to_eof(stream: &mut UnixStream, maximum_bytes: usize) -> usize {
     let mut total = 0_usize;
     let mut chunk = [0_u8; 8192];
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let count = stream
-            .read(&mut chunk)
-            .expect("read bounded raw output or EOF");
+        let count = classified_read(
+            deadline,
+            || stream.read(&mut chunk),
+            "read bounded raw output or EOF",
+        );
         if count == 0 {
             return total;
         }
@@ -1532,18 +1632,6 @@ fn review_contract_socket_replacement_survives_stale_start_and_shutdown_cleanup(
         let mut barrier = UnlinkBarrier::new(root);
         let backup = root.join("validated-stale.sock");
 
-        let (events_tx, events_rx) = mpsc::channel();
-        let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |event| {
-            events_tx.send(event).expect("forward socket event");
-        })
-        .expect("create stale-start socket watcher");
-        watcher
-            .watch(
-                fixture.socket.parent().expect("socket parent"),
-                RecursiveMode::NonRecursive,
-            )
-            .expect("watch stale-start socket parent");
-
         let mut command = fixture.command();
         command.arg("start");
         barrier.install(&mut command, &fixture.socket);
@@ -1560,6 +1648,7 @@ fn review_contract_socket_replacement_survives_stale_start_and_shutdown_cleanup(
         barrier.gates.wait_for_run();
         barrier.gates.release();
 
+        let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if child
                 .try_wait()
@@ -1573,10 +1662,11 @@ fn review_contract_socket_replacement_survives_stale_start_and_shutdown_cleanup(
                 child.wait().expect("reap unsafe stale-start daemon");
                 break;
             }
-            events_rx
-                .recv_timeout(Duration::from_secs(10))
-                .expect("stale-start path changes or process exits")
-                .expect("stale-start socket event succeeds");
+            assert!(
+                Instant::now() < deadline,
+                "stale-start process exits or binds"
+            );
+            thread::sleep(Duration::from_millis(1));
         }
         fs::read_to_string(&fixture.socket).ok().as_deref() == Some("operator replacement")
     };

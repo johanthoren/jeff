@@ -2,8 +2,9 @@ use crate::server::Limits;
 use crate::snapshot::SnapshotFailure;
 use jeff_project::{ProjectRecord, Snapshot};
 use serde_json::Value;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::Shutdown;
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
@@ -295,8 +296,16 @@ fn read_frames(
     let mut chunk = [0_u8; READ_CHUNK_BYTES];
     'read: loop {
         let count = match stream.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
             Ok(count) => count,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                if !wait_for_reader(&stream, &closed) {
+                    break;
+                }
+                continue;
+            }
+            Err(_) => break,
         };
         let mut offset = 0;
         while offset < count {
@@ -360,6 +369,31 @@ fn read_frames(
     }
     let _ = stream.shutdown(Shutdown::Both);
     reader_done.store(true, Ordering::Release);
+}
+
+fn wait_for_reader(stream: &UnixStream, closed: &AtomicBool) -> bool {
+    let mut descriptor = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLIN | libc::POLLHUP,
+        revents: 0,
+    };
+    loop {
+        if closed.load(Ordering::Acquire) {
+            return false;
+        }
+        descriptor.revents = 0;
+        let ready = unsafe { libc::poll(&mut descriptor, 1, 5) };
+        if ready > 0 {
+            return true;
+        }
+        if ready == 0 {
+            continue;
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != ErrorKind::Interrupted {
+            return false;
+        }
+    }
 }
 
 pub(crate) fn decode_request_frame(frame: Vec<u8>) -> serde_json::Result<Value> {
