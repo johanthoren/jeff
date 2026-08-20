@@ -358,6 +358,16 @@ write_baseline_task_numeric() {
   integration="$(grep '^Integration:' "$BK/profile.md")"
   [ -n "$integration" ]
   grep -qF 'auto-merge after CI' <<<"$integration"
+  grep -qF -- '--merge' <<<"$integration"
+  grep -qiE 'PR merged' <<<"$integration"
+  if grep -qF -- '--squash' <<<"$integration"; then
+    printf 'shipped template must default to --merge, not --squash: %s\n' "$integration"
+    return 1
+  fi
+  if grep -qF -- '--rebase' <<<"$integration"; then
+    printf 'shipped template must default to --merge, not --rebase: %s\n' "$integration"
+    return 1
+  fi
   if grep -qiE 'team merge' <<<"$integration"; then
     printf 'shipped template Integration still names team merge: %s\n' "$integration"
     return 1

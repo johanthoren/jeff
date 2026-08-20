@@ -207,6 +207,41 @@ cook_all_completion_step() {
   '
 }
 
+lite_drain_landing() {
+  cook_all_section | awk '
+    /^[[:space:]]*[0-9]+\./ { exit }
+    { print }
+  '
+}
+
+loop_terminal_step() {
+  awk '
+    /^## The loop/ { in_loop = 1 }
+    in_loop && /^[[:space:]]*6\. \*\*Handle the terminal/ {
+      print
+      found = 1
+      exit
+    }
+    END { if (!found) exit 1 }
+  ' "$SKILL"
+}
+
+refuses_sha_ancestor_land_proof() {
+  local content="$1" label="$2"
+  if grep -qF 'merge-base --is-ancestor' <<<"$content"; then
+    printf '%s treats SHA-ancestor as land proof\n' "$label"
+    return 1
+  fi
+  if grep -qF 'gated head is on the base branch' <<<"$content"; then
+    printf '%s waits for gated head on the base branch\n' "$label"
+    return 1
+  fi
+  if grep -qF 'tests.gate.hash is on the base branch' <<<"$content"; then
+    printf '%s waits for tests.gate.hash on the base branch\n' "$label"
+    return 1
+  fi
+}
+
 lite_integration_section() {
   awk '
     /^## Running the pipeline/ { in_section = 1 }
@@ -517,12 +552,17 @@ require_success() {
 }
 
 @test "lite landing auto-merges after CI without trunk CAS" {
-  local section
+  local section landing loop_step
   section="$(cook_all_section)" || return 1
+  landing="$(lite_drain_landing)" || return 1
+  loop_step="$(loop_terminal_step)" || {
+    echo "skills/cook/SKILL.md has no loop step 6 terminal hold"
+    return 1
+  }
 
   require_regex "$section" 'auto-merge after CI' 'lite auto-merge after CI'
   require_regex "$section" 'Integration:|live request' 'Integration or live request can forbid landing'
-  require_regex "$section" 'wait[^.]{0,120}(base branch|land)[^.]{0,80}done|(base branch|land)[^.]{0,80}before[^.]{0,40}done' 'wait until landed before done'
+  require_regex "$section" 'wait-for-land' 'wait-for-land before done'
   require_regex "$section" 'lite.*(feature branch|open PR)|feature branch.*lite|open PR.*lite' 'lite feature-branch PR landing'
   require_regex "$section" 'multiple PRs' 'multiple lite PRs may be open'
   require_regex "$section" 'lite landing does not use trunk compare-and-swap|lite[^.]{0,80}(does not|never|not)[^.]{0,80}(compare-and-swap|update-ref)' 'lite landing is not trunk CAS'
@@ -530,6 +570,9 @@ require_success() {
     printf 'lite landing still requires per-change operator approval\n'
     return 1
   fi
+  refuses_sha_ancestor_land_proof "$landing" 'cook-all lite landing summary'
+  require_regex "$loop_step" 'wait-for-land' 'loop step 6 names wait-for-land'
+  refuses_sha_ancestor_land_proof "$loop_step" 'loop step 6'
 }
 
 @test "lite integration terminal enables gh pr merge --auto unless Integration forbids it" {
@@ -540,7 +583,8 @@ require_success() {
   }
   compact="$(tr '\n' ' ' <<<"$section")"
 
-  require_fixed "$section" 'gh pr merge --auto --match-head-commit'
+  require_fixed "$section" 'gh pr merge --auto'
+  require_fixed "$section" '--match-head-commit'
   require_regex "$compact" 'absent[^.]{0,80}Integration|silent[^.]{0,80}Integration|Integration[^.]{0,80}(absent|silent|missing)' 'absent or silent Integration is named'
   require_regex "$compact" '(does not|do not|not)[^.]{0,60}forbid' 'absent Integration does not forbid landing'
   require_regex "$compact" 'team merge|team owns merge|team-owns-merge' 'team-merge profile still forbids landing'
@@ -553,16 +597,45 @@ require_success() {
   fi
 }
 
-@test "lite integration terminal waits for land before done and stops when --auto fails" {
+@test "lite integration terminal names merge methods --merge --squash --rebase" {
   local section compact
   section="$(lite_integration_section)" || return 1
   compact="$(tr '\n' ' ' <<<"$section")"
 
-  require_fixed "$section" 'gh pr merge --auto --match-head-commit'
-  require_regex "$compact" 'wait[^.]{0,160}(base branch|land)[^.]{0,120}(done|release)|(base branch|land)[^.]{0,80}before[^.]{0,80}(done|release)' 'wait until on the base branch before done or release'
+  require_fixed "$section" '--merge'
+  require_fixed "$section" '--squash'
+  require_fixed "$section" '--rebase'
+  require_regex "$compact" '(silent|absent)[^.]{0,120}--merge|--merge[^.]{0,80}(default|silent|absent)' 'silent Integration uses --merge'
+  require_fixed "$section" 'gh pr merge --auto'
+  require_fixed "$section" '--match-head-commit'
+  require_fixed "$section" 'tests.gate.hash'
+  require_regex "$compact" '(--merge|--squash|--rebase)[^.]{0,80}--auto|--auto[^.]{0,80}(--merge|--squash|--rebase)' 'method flag is passed with --auto'
+}
+
+@test "lite integration terminal waits for land as PR MERGED and stops when --auto fails" {
+  local section compact
+  section="$(lite_integration_section)" || return 1
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  require_fixed "$section" 'gh pr merge --auto'
+  require_fixed "$section" '--match-head-commit'
+  require_fixed "$section" 'tests.gate.hash'
+  require_fixed "$section" 'gh pr view --json state'
+  require_regex "$compact" 'MERGED' 'wait-for-land succeeds when the PR is MERGED'
+  refuses_sha_ancestor_land_proof "$section" 'lite integration terminal'
   require_regex "$compact" '(--auto[^.]{0,80}fail|fail[^.]{0,80}--auto)' '--auto failure is named'
   require_regex "$compact" '(stop|print)[^.]{0,100}command' '--auto failure stops and prints the command'
   require_regex "$compact" '(do not|does not|never|not)[^.]{0,80}(fall back|fallback|immediate)' 'no immediate-merge fallback when --auto fails'
+}
+
+@test "lite integration terminal names GitHub allow_auto_merge and required checks" {
+  local section compact
+  section="$(lite_integration_section)" || return 1
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  require_fixed "$section" 'allow_auto_merge'
+  require_regex "$compact" 'required (status )?checks' 'required status checks are named'
+  require_regex "$compact" 'without[^.]{0,80}required|--auto[^.]{0,80}immediate|merge immediately' 'without required checks --auto may merge immediately'
 }
 
 @test "activation asks auto-merge vs team-owns-merge before cook lite and profile init" {
@@ -581,6 +654,7 @@ require_success() {
   require_regex "$compact" 'non-interactive' 'CLI stays non-interactive'
   require_regex "$compact" 'no new flag' 'no new CLI flag'
   require_regex "$compact" 'overwrite|writes that answer|write[^.]{0,80}Integration' 'Jeff writes the chat answer into Integration'
+  require_regex "$compact" 'asks only land policy|only land policy|merge method is not a second' 'init asks only land policy'
 }
 
 @test "one-off start claims at cap while cook all refuses a new autonomous claim" {

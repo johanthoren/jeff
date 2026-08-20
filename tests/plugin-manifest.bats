@@ -90,23 +90,27 @@ PACKAGE_MANIFEST="$REPO/package.json"
 }
 
 @test "all package manifests publish one lockstep version" {
-  local version
+  local version crate_version
   version="$(jq -r '.version' "$MANIFEST")"
+  crate_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO/control/jeff/Cargo.toml")"
   [ "$(jq -r '.version' "$CODEX_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package.json")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
   [ "$(jq -r '.packages[""].version' "$REPO/package-lock.json")" = "$version" ]
+  [ "$crate_version" = "$version" ]
 }
 
-@test "published lockstep version is strictly newer than 6.2.0" {
-  local version
+@test "published lockstep version is strictly newer than 6.3.0" {
+  local version crate_version
   version="$(jq -r '.version' "$PACKAGE_MANIFEST")"
+  crate_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO/control/jeff/Cargo.toml")"
   [ -n "$version" ] && [ "$version" != "null" ]
   [ "$(jq -r '.version' "$MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$CODEX_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
-  [ "$version" != "6.2.0" ]
-  [ "$(printf '%s\n%s\n' "6.2.0" "$version" | sort -V | tail -n 1)" = "$version" ]
+  [ "$crate_version" = "$version" ]
+  [ "$version" != "6.3.0" ]
+  [ "$(printf '%s\n%s\n' "6.3.0" "$version" | sort -V | tail -n 1)" = "$version" ]
 }
 
 
