@@ -48,6 +48,7 @@ pub fn classified_read(
             ProtocolRead::Eof => return 0,
             ProtocolRead::Retry => {
                 assert!(Instant::now() < deadline, "{context}");
+                std::thread::sleep(Duration::from_millis(1));
             }
         }
     }
@@ -579,7 +580,5 @@ fi
 if [ "$code" -ne 0 ]; then
   exit "$code"
 fi
-while IFS= read -r line || [ -n "$line" ]; do
-  printf '%s\n' "$line"
-done < "$FAKE_RESPONSE"
+command -p cat "$FAKE_RESPONSE"
 "#;
