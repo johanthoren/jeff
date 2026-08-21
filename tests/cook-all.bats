@@ -575,7 +575,7 @@ require_success() {
   refuses_sha_ancestor_land_proof "$loop_step" 'loop step 6'
   require_regex "$landing" 'post-land checkout' 'cook-all lite landing names post-land checkout'
   require_regex "$loop_step" 'post-land checkout' 'loop step 6 names post-land checkout'
-  for restated in 'git fetch' 'git pull --ff-only' 'git branch -d' 'git branch -D' '--delete-branch'; do
+  for restated in 'git fetch' 'git pull --ff-only' 'git branch -d' 'git branch -D' '--delete-branch' 'git checkout'; do
     if grep -qF -- "$restated" <<<"$landing"; then
       printf 'cook-all lite landing restates post-land command: %s\n' "$restated"
       return 1
@@ -586,16 +586,16 @@ require_success() {
     fi
   done
   case "$(tr '\n' ' ' <<<"$landing")" in
-    *wait-for-land*record*held\ return*post-land\ checkout*) ;;
+    *wait-for-land*restore-if-needed*record*held\ return*post-land\ checkout*) ;;
     *)
-      printf 'cook-all lite landing must record done before post-land checkout\n'
+      printf 'cook-all lite landing must restore-if-needed, then record done, then post-land checkout\n'
       return 1
       ;;
   esac
   case "$(tr '\n' ' ' <<<"$loop_step")" in
-    *wait-for-land*record*held\ return*post-land\ checkout*) ;;
+    *wait-for-land*restore-if-needed*record*held\ return*post-land\ checkout*) ;;
     *)
-      printf 'loop step 6 must record done before post-land checkout\n'
+      printf 'loop step 6 must restore-if-needed, then record done, then post-land checkout\n'
       return 1
       ;;
   esac
@@ -684,11 +684,12 @@ require_success() {
   fi
   require_regex "$compact" '-d[^.]{0,100}(refus|refuse)|(refus|refuse)[^.]{0,100}-d' 'if -d refuses'
   require_regex "$compact" '(refus|refuse)[^.]{0,160}(stop|print)[^.]{0,40}command|(stop|print)[^.]{0,80}command[^.]{0,80}(refus|refuse|-d)' '-d refuse stops and prints the command'
-  require_regex "$compact" 'HEAD.{0,80}still.{0,40}tests\.gate\.hash|tests\.gate\.hash.{0,40}still.{0,80}HEAD' 'record done while HEAD is still tests.gate.hash'
+  require_regex "$compact" 'HEAD.{0,80}is not.{0,40}tests\.gate\.hash' 'restore when HEAD is not tests.gate.hash'
+  require_regex "$compact" 'checkout.{0,20}tests\.gate\.hash' 'checkout tests.gate.hash if HEAD moved'
   case "$compact" in
-    *MERGED*record\ that\ held\ return*checkout*PR\ base*git\ fetch*git\ pull\ --ff-only*git\ branch\ -d*) ;;
+    *MERGED*HEAD*tests.gate.hash*checkout*tests.gate.hash*record\ that\ held\ return*checkout*PR\ base*git\ fetch*git\ pull\ --ff-only*git\ branch\ -d*) ;;
     *)
-      printf 'post-land checkout must follow MERGED, record done, then PR base, git fetch, git pull --ff-only, git branch -d\n'
+      printf 'post-land checkout must follow MERGED, restore tests.gate.hash, record done, then PR base, git fetch, git pull --ff-only, git branch -d\n'
       return 1
       ;;
   esac
