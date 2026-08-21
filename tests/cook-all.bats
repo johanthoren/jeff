@@ -552,7 +552,7 @@ require_success() {
 }
 
 @test "lite landing auto-merges after CI without trunk CAS" {
-  local section landing loop_step
+  local section landing loop_step restated
   section="$(cook_all_section)" || return 1
   landing="$(lite_drain_landing)" || return 1
   loop_step="$(loop_terminal_step)" || {
@@ -573,6 +573,18 @@ require_success() {
   refuses_sha_ancestor_land_proof "$landing" 'cook-all lite landing summary'
   require_regex "$loop_step" 'wait-for-land' 'loop step 6 names wait-for-land'
   refuses_sha_ancestor_land_proof "$loop_step" 'loop step 6'
+  require_regex "$landing" 'post-land checkout' 'cook-all lite landing names post-land checkout'
+  require_regex "$loop_step" 'post-land checkout' 'loop step 6 names post-land checkout'
+  for restated in 'git fetch' 'git pull --ff-only' 'git branch -d' 'git branch -D' '--delete-branch'; do
+    if grep -qF -- "$restated" <<<"$landing"; then
+      printf 'cook-all lite landing restates post-land command: %s\n' "$restated"
+      return 1
+    fi
+    if grep -qF -- "$restated" <<<"$loop_step"; then
+      printf 'loop step 6 restates post-land command: %s\n' "$restated"
+      return 1
+    fi
+  done
 }
 
 @test "lite integration terminal enables gh pr merge --auto unless Integration forbids it" {
@@ -626,6 +638,61 @@ require_success() {
   require_regex "$compact" '(--auto[^.]{0,80}fail|fail[^.]{0,80}--auto)' '--auto failure is named'
   require_regex "$compact" '(stop|print)[^.]{0,100}command' '--auto failure stops and prints the command'
   require_regex "$compact" '(do not|does not|never|not)[^.]{0,80}(fall back|fallback|immediate)' 'no immediate-merge fallback when --auto fails'
+}
+
+@test "lite integration terminal checks out the PR base and git branch -d after MERGED" {
+  local section compact
+  section="$(lite_integration_section)" || {
+    echo "skills/cook/reference/lite-mode.md has no pipeline / integration terminal section"
+    return 1
+  }
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  require_regex "$section" 'post-land checkout' 'lite-mode.md names post-land checkout'
+  require_regex "$compact" 'wait-for-land' 'post-land checkout lives next to wait-for-land'
+  require_fixed "$section" 'MERGED'
+  require_regex "$compact" 'checkout[^.]{0,80}PR base|PR base[^.]{0,80}checkout' 'checkout the PR base branch'
+  require_fixed "$section" 'git fetch'
+  require_fixed "$section" 'git pull --ff-only'
+  require_fixed "$section" 'git branch -d'
+  require_regex "$compact" 'never[^.]{0,20}-D|-D[^.]{0,20}never' 'never git branch -D'
+  if grep -qE -- 'git branch[[:space:]]+-D' <<<"$section"; then
+    printf 'post-land cleanup must not use git branch -D\n'
+    return 1
+  fi
+  require_regex "$compact" '-d[^.]{0,100}(refus|refuse)|(refus|refuse)[^.]{0,100}-d' 'if -d refuses'
+  require_regex "$compact" '(refus|refuse)[^.]{0,160}(stop|print)[^.]{0,40}command|(stop|print)[^.]{0,80}command[^.]{0,80}(refus|refuse|-d)' '-d refuse stops and prints the command'
+  case "$compact" in
+    *MERGED*PR\ base*git\ fetch*git\ pull\ --ff-only*git\ branch\ -d*) ;;
+    *)
+      printf 'post-land checkout must follow MERGED then PR base, git fetch, git pull --ff-only, git branch -d\n'
+      return 1
+      ;;
+  esac
+}
+
+@test "lite gh pr merge includes --delete-branch unless keep-branch or repo already deletes" {
+  local section compact
+  section="$(lite_integration_section)" || return 1
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  require_fixed "$section" '--delete-branch'
+  require_regex "$compact" 'gh pr merge[^.]{0,80}--delete-branch|--delete-branch[^.]{0,80}gh pr merge' 'default gh pr merge includes --delete-branch'
+  require_regex "$compact" 'keep the remote[^.]{0,40}(task )?branch|keep[^.]{0,40}remote task branch' 'Integration may keep the remote task branch'
+  require_regex "$compact" 'already deletes on merge|repository already deletes' 'skip --delete-branch when the repo already deletes on merge'
+  require_regex "$compact" '(silent|absent)[^.]{0,100}delete[^.]{0,40}(remote|branch)|delete[^.]{0,40}(remote|branch)[^.]{0,100}(silent|absent)' 'silent Integration deletes the remote branch'
+}
+
+@test "team-owns-merge confirm-first and never-push-protected-base do not delete the feature branch" {
+  local section compact
+  section="$(lite_integration_section)" || return 1
+  compact="$(tr '\n' ' ' <<<"$section")"
+
+  require_regex "$compact" 'team merge|team owns merge|team-owns-merge' 'team-merge profile still forbids landing'
+  require_regex "$compact" 'confirm-first' 'confirm-first merge still forbids landing'
+  require_regex "$compact" 'never push[^.]{0,40}protected base' 'never-push-protected-base still forbids landing'
+  require_regex "$compact" '(do not|does not|never)[^.]{0,40}merge' 'forbidden profiles still do not merge'
+  require_regex "$compact" '(do not|does not)[^.]{0,60}delete the feature branch' 'forbidden profiles do not delete the feature branch'
 }
 
 @test "lite integration terminal names GitHub allow_auto_merge and required checks" {
