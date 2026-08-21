@@ -585,6 +585,28 @@ require_success() {
       return 1
     fi
   done
+  case "$(tr '\n' ' ' <<<"$landing")" in
+    *wait-for-land*record*held\ return*post-land\ checkout*) ;;
+    *)
+      printf 'cook-all lite landing must record done before post-land checkout\n'
+      return 1
+      ;;
+  esac
+  case "$(tr '\n' ' ' <<<"$loop_step")" in
+    *wait-for-land*record*held\ return*post-land\ checkout*) ;;
+    *)
+      printf 'loop step 6 must record done before post-land checkout\n'
+      return 1
+      ;;
+  esac
+  if grep -qiE 'post-land checkout.{0,80}before recording' <<<"$landing"; then
+    printf 'cook-all lite landing still records done after post-land checkout\n'
+    return 1
+  fi
+  if grep -qiE 'post-land checkout.{0,80}before recording' <<<"$loop_step"; then
+    printf 'loop step 6 still records done after post-land checkout\n'
+    return 1
+  fi
 }
 
 @test "lite integration terminal enables gh pr merge --auto unless Integration forbids it" {
@@ -662,10 +684,11 @@ require_success() {
   fi
   require_regex "$compact" '-d[^.]{0,100}(refus|refuse)|(refus|refuse)[^.]{0,100}-d' 'if -d refuses'
   require_regex "$compact" '(refus|refuse)[^.]{0,160}(stop|print)[^.]{0,40}command|(stop|print)[^.]{0,80}command[^.]{0,80}(refus|refuse|-d)' '-d refuse stops and prints the command'
+  require_regex "$compact" 'HEAD.{0,80}still.{0,40}tests\.gate\.hash|tests\.gate\.hash.{0,40}still.{0,80}HEAD' 'record done while HEAD is still tests.gate.hash'
   case "$compact" in
-    *MERGED*PR\ base*git\ fetch*git\ pull\ --ff-only*git\ branch\ -d*) ;;
+    *MERGED*record\ that\ held\ return*checkout*PR\ base*git\ fetch*git\ pull\ --ff-only*git\ branch\ -d*) ;;
     *)
-      printf 'post-land checkout must follow MERGED then PR base, git fetch, git pull --ff-only, git branch -d\n'
+      printf 'post-land checkout must follow MERGED, record done, then PR base, git fetch, git pull --ff-only, git branch -d\n'
       return 1
       ;;
   esac
