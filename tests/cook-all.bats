@@ -260,6 +260,15 @@ activation_section() {
   ' "$SKILL"
 }
 
+git_section() {
+  awk '
+    /^## Git/ { in_section = 1 }
+    in_section && /^## / && !/^## Git/ { exit }
+    in_section { print }
+    END { if (!in_section) exit 1 }
+  ' "$SKILL"
+}
+
 contract_paragraph() {
   local content="$1" marker="$2"
   awk -v marker="$marker" '
@@ -754,8 +763,44 @@ require_success() {
 
   require_regex "$section" 'cook <id>|named start|cook on' 'named start forms'
   require_regex "$section" 'even when.*maxParallelTasks|already equal.*maxParallelTasks|named start.*cap|claims it even when' 'named start ignores the drain cap'
-  require_regex "$section" 'main is occupied|another claim|occupied.*worktree|worktree.*occupied' 'occupied main uses a worktree'
+  require_regex "$section" 'always use[s]? a linked worktree|always.*linked worktree' 'named start always uses a worktree'
   require_regex "$section" 'cook all.*refuses|refuses.*autonomous|autonomous claim.*cap|cap is full' 'cook all refuses a new claim at cap'
+}
+
+@test "every start reads occupancy fresh from disk outside cook all" {
+  local git compact
+  git="$(git_section)" || {
+    echo "skills/cook/SKILL.md has no Git section"
+    return 1
+  }
+  compact="$(tr '\n' ' ' <<<"$git")"
+
+  require_fixed "$git" 'cook claims'
+  require_regex "$compact" 'in-flight' 'in-flight tasks'
+  require_regex "$compact" 'fresh from disk' 'occupancy fresh from disk'
+  require_regex "$compact" 'never trust' 'never trust session context'
+  require_regex "$compact" 'bare cook' 'bare cook start'
+  require_regex "$compact" 'named start|cook <id>|cook on' 'named start'
+  require_regex "$compact" 'Record.{0,8}start' 'Record+start'
+  require_regex "$compact" 'cook all' 'cook all lane'
+  require_regex "$compact" 'whether or not.{0,40}cook all|not limited to.{0,20}cook all|same check.{0,80}cook all' 'same check whether or not cook all'
+  require_regex "$compact" 'claim.{0,40}before|before advancing|claim the task' 'claim before advancing'
+}
+
+@test "Git requires a linked worktree at start and no longer calls worktrees optional" {
+  local git compact
+  git="$(git_section)" || {
+    echo "skills/cook/SKILL.md has no Git section"
+    return 1
+  }
+  compact="$(tr '\n' ' ' <<<"$git")"
+
+  if grep -qiE 'worktrees are optional' <<<"$git"; then
+    echo "Git still calls worktrees optional at start"
+    return 1
+  fi
+  require_regex "$compact" 'always use[s]? a linked worktree|always.*linked worktree and task branch' 'always worktree after claim'
+  require_regex "$compact" 'empty occupancy|never use the main checkout|not permission to take main' 'empty occupancy is not permission to take main'
 }
 
 @test "help describes drain verbs without calling them full-mode-only" {
@@ -786,9 +831,13 @@ require_success() {
   require_regex "$section" 'active claims.*maxParallelTasks|maxParallelTasks.*active claims' 'capacity comparison'
   require_regex "$section" 'claim.*next task' 'claim the next ready task'
   require_regex "$section" 'journal.*drain intent|drain intent.*journal' 'journal drain intent before opening a lane'
-  require_regex "$section" 'two or more.*claimed.*linked git worktree|linked git worktree.*two or more.*claimed' 'one linked worktree per simultaneous claim'
+  require_regex "$section" 'every claimed task.*linked git worktree|always.*linked git worktree|claimed task.*linked git worktree' 'every claimed task uses a linked worktree'
   require_regex "$section" 'own task branch|task branch.*own' 'one task branch per lane'
-  require_regex "$section" 'single claimed task.*main checkout|main checkout.*single claimed task' 'single-lane main checkout allowance'
+  require_regex "$section" 'one lane.*worktree|worktree.*one lane|single claimed task.*worktree|including one lane|empty occupancy' 'cook all with one lane uses a worktree'
+  if grep -qF 'single claimed task may use the main checkout' <<<"$section"; then
+    echo "cook all still allows a single claimed task to use the main checkout"
+    return 1
+  fi
   require_regex "$section" 'default.*1.*serial|capacity 1.*serial|1.*preserves serial' 'default capacity one preserves serial behavior'
 }
 
