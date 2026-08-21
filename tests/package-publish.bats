@@ -237,7 +237,7 @@ select_dist_tag() {
   run env npm_config_cache="$npm_cache" bash -c 'cd "$1" && npm pack --dry-run --json' _ "$REPO"
   [ "$status" -eq 0 ]
 
-  jq -e '.[0].files | map(.path) as $files | (["package.json","src/pi/extension.js","skills/cook/SKILL.md","agents/cook-plan.md","agents/cook-council.md","agents/cook-council-synthesis.md",".claude-plugin/plugin.json",".codex-plugin/plugin.json",".agents/plugins/marketplace.json"] | all(. as $p | $files | index($p)))' <<<"$output" >/dev/null
+  jq -e '(if type == "array" then .[0] else .[] end).files | map(.path) as $files | (["package.json","src/pi/extension.js","skills/cook/SKILL.md","agents/cook-plan.md","agents/cook-council.md","agents/cook-council-synthesis.md",".claude-plugin/plugin.json",".codex-plugin/plugin.json",".agents/plugins/marketplace.json"] | all(. as $p | $files | index($p)))' <<<"$output" >/dev/null
 }
 
 @test "Pi-facing docs prefer npm and label git as dev edge" {
