@@ -1944,3 +1944,48 @@ skill_outside_dispatch_rules() {
     }
   done
 }
+
+# ===========================================================================
+# task #271: order acceleration and automation after subtraction
+#
+# Seam: code-standards is shipped wholesale and is the standards floor read by
+# every code station. The YAGNI section is therefore the consumer-visible
+# contract; tests are excluded from the package and add no parallel guidance.
+# The assertions keep the wording flexible while defending the ordering,
+# prerequisites, carve-outs, and single normative home.
+# ===========================================================================
+
+@test "#271: acceleration then automation remains a YAGNI-ladder contract" {
+  local standards="$REPO/skills/code-standards/SKILL.md" section normalized marker
+
+  section="$(awk '
+    /^## Laziness \(the YAGNI ladder\)[[:space:]]*$/ { found = 1 }
+    found && /^## / && $0 !~ /^## Laziness \(the YAGNI ladder\)/ { exit }
+    found { print }
+  ' "$standards")"
+  [ -n "$section" ] || { echo "code-standards has no YAGNI ladder section"; return 1; }
+  normalized="$(printf '%s\n' "$section" | tr '\n' ' ')"
+
+  grep -qiE 'accelerat(e|ion|ing)[^.]{0,240}(validat(e|ed|ing)[^.]{0,80}minimal|minimal[^.]{0,80}validat(e|ed|ing)|observed[^.]{0,80}bottleneck)' <<<"$normalized" \
+    || { echo "the YAGNI ladder does not limit acceleration to a validated minimal design or observed bottleneck"; return 1; }
+  grep -qiE 'automat(e|ed|es|ing|ion)[^.]{0,240}stable[^.]{0,80}(process|workflow)' <<<"$normalized" \
+    || { echo "the YAGNI ladder does not limit automation to a stable process"; return 1; }
+  grep -qiE '(underst(and|ood|ands|anding)[^.]{0,80}failure[ -]?modes?|failure[ -]?modes?[^.]{0,80}underst(and|ood|ands|anding))' <<<"$normalized" \
+    || { echo "the YAGNI ladder does not require understood failure modes before automation"; return 1; }
+  grep -qiE 'deterministic[^.]{0,100}verification[^.]{0,40}signals?' <<<"$normalized" \
+    || { echo "the YAGNI ladder does not require deterministic verification signals before automation"; return 1; }
+  awk '{ text = tolower($0); acceleration = index(text, "accelerat"); automation = index(text, "automat"); exit !(acceleration > 0 && automation > acceleration) }' <<<"$normalized" \
+    || { echo "the YAGNI ladder does not order acceleration before automation"; return 1; }
+
+  for marker in safety accessibility 'data protection' rollback verification; do
+    grep -qiF -- "$marker" <<<"$normalized" \
+      || { echo "the YAGNI ladder drops the load-bearing $marker carve-out"; return 1; }
+  done
+
+  # BSD grep caps ERE repetition counts at 255; adjacent ranges preserve 0..500.
+  run grep -rniE \
+    'accelerat(e|ion|ing)[^.]{0,250}[^.]{0,250}automat(e|ion|ing)|automat(e|ion|ing)[^.]{0,250}[^.]{0,250}accelerat(e|ion|ing)' \
+    "$REPO/skills/cook" "$REPO/agents/cook-plan.md" "$REPO/agents/cook-refactor.md" "$REPO/src"
+  [ "$status" -eq 1 ] || { printf 'the sequence is duplicated outside code-standards:\n%s\n' "$output"; return 1; }
+  [ -z "$output" ]
+}

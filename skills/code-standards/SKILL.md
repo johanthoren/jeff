@@ -28,6 +28,7 @@ The best code is the code you never wrote. Before writing any, stop at the first
 4. **An already-installed dependency solves it?** Use it. Never add one for what a few lines do.
 5. **One line?** One line.
 6. **Only then:** the minimum code that works.
+- **Order speed after subtraction:** Accelerate only after the design is validated as minimal or to remove an observed bottleneck; automate only a stable, understood process with understood failure modes and deterministic verification signals. Neither may trade away safety, accessibility, data protection, rollback, or verification.
 
 - **Question every addition, including your own and the system's own docs and process: "do you need X, or does Y already cover it?"** The lazy lens applies hardest to your own work, not just to feature code; ceremony, prose, and citations are over-build too.
 - Lazy means less code, not the flimsier choice: when two correct approaches are the same size, take the more edge-case-correct one.
