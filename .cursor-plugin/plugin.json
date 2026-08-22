@@ -2,5 +2,6 @@
   "name": "jeff",
   "version": "6.4.1",
   "agents": "./agents/",
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "hooks": {}
 }
