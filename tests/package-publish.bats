@@ -237,7 +237,7 @@ select_dist_tag() {
   run env npm_config_cache="$npm_cache" bash -c 'cd "$1" && npm pack --dry-run --json' _ "$REPO"
   [ "$status" -eq 0 ]
 
-  jq -e '(if type == "array" then .[0] else .[] end).files | map(.path) as $files | (["package.json","src/pi/extension.js","skills/cook/SKILL.md","agents/cook-plan.md","agents/cook-council.md","agents/cook-council-synthesis.md",".claude-plugin/plugin.json",".codex-plugin/plugin.json",".agents/plugins/marketplace.json"] | all(. as $p | $files | index($p)))' <<<"$output" >/dev/null
+  jq -e '(if type == "array" then .[0] else .[] end).files | map(.path) as $files | (["package.json","src/pi/extension.js","skills/cook/SKILL.md","agents/cook-plan.md","agents/cook-council.md","agents/cook-council-synthesis.md",".claude-plugin/plugin.json",".codex-plugin/plugin.json",".cursor-plugin/plugin.json",".agents/plugins/marketplace.json"] | all(. as $p | $files | index($p)))' <<<"$output" >/dev/null
 }
 
 @test "Pi-facing docs prefer npm and label git as dev edge" {
@@ -294,6 +294,8 @@ select_dist_tag() {
     'codex plugin marketplace upgrade jeff'
     'grok plugin install johanthoren/jeff --trust'
     'grok plugin update jeff'
+    'agent plugin marketplace add https://github.com/johanthoren/jeff'
+    'agent plugin marketplace update jeff'
   )
   local inventory_commands=(
     'pi list'
@@ -301,7 +303,9 @@ select_dist_tag() {
     'claude plugin details jeff@jeff'
     'codex plugin list'
     'grok plugin details jeff'
+    'agent plugin marketplace list'
   )
+
 
   for command in "${commands[@]}"; do
     grep -Fxq -- "$command" "$REPO/README.md" || {
@@ -317,3 +321,17 @@ select_dist_tag() {
     }
   done
 }
+
+@test "package.json files includes Cursor plugin metadata" {
+  jq -e '.files | index(".cursor-plugin")' "$REPO/package.json"
+}
+
+@test "README documents Cursor Customize and local plugin paths" {
+  grep -F Customize "$REPO/README.md"
+  grep -F '~/.cursor/plugins/local' "$REPO/README.md"
+}
+
+@test "README does not invent a Cursor plugin install CLI" {
+  ! grep -E 'cursor(-agent)?[[:space:]]+plugin[[:space:]]+install|agent[[:space:]]+plugin[[:space:]]+install' "$REPO/README.md"
+}
+

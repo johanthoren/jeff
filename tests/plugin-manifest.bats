@@ -25,6 +25,8 @@ CLAUDE_MARKETPLACE="$REPO/.claude-plugin/marketplace.json"
 CODEX_MANIFEST="$REPO/.codex-plugin/plugin.json"
 CODEX_MARKETPLACE="$REPO/.agents/plugins/marketplace.json"
 PACKAGE_MANIFEST="$REPO/package.json"
+CURSOR_MANIFEST="$REPO/.cursor-plugin/plugin.json"
+
 
 # ---------------------------------------------------------------------------
 # AC6: Structural: marketplace fields present, non-empty, valid shape
@@ -94,24 +96,27 @@ PACKAGE_MANIFEST="$REPO/package.json"
   version="$(jq -r '.version' "$MANIFEST")"
   crate_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO/control/jeff/Cargo.toml")"
   [ "$(jq -r '.version' "$CODEX_MANIFEST")" = "$version" ]
+  [ "$(jq -r '.version' "$CURSOR_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package.json")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
   [ "$(jq -r '.packages[""].version' "$REPO/package-lock.json")" = "$version" ]
   [ "$crate_version" = "$version" ]
 }
 
-@test "published lockstep version is strictly newer than 6.3.4" {
+@test "published lockstep version is strictly newer than 6.4.0" {
   local version crate_version
   version="$(jq -r '.version' "$PACKAGE_MANIFEST")"
   crate_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO/control/jeff/Cargo.toml")"
   [ -n "$version" ] && [ "$version" != "null" ]
   [ "$(jq -r '.version' "$MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$CODEX_MANIFEST")" = "$version" ]
+  [ "$(jq -r '.version' "$CURSOR_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
   [ "$crate_version" = "$version" ]
-  [ "$version" != "6.3.4" ]
-  [ "$(printf '%s\n%s\n' "6.3.4" "$version" | sort -V | tail -n 1)" = "$version" ]
+  [ "$version" != "6.4.0" ]
+  [ "$(printf '%s\n%s\n' "6.4.0" "$version" | sort -V | tail -n 1)" = "$version" ]
 }
+
 
 
 @test "marketplace copy presents Jeff as a model-native quality control plane" {
@@ -139,3 +144,43 @@ PACKAGE_MANIFEST="$REPO/package.json"
       )
   ' "$PACKAGE_MANIFEST" "$CLAUDE_MARKETPLACE" "$CODEX_MANIFEST"
 }
+
+@test "Cursor manifest points at existing agents and skills trees" {
+  [ -f "$CURSOR_MANIFEST" ]
+  [ -d "$REPO/agents" ]
+  [ -d "$REPO/skills" ]
+  [ ! -e "$REPO/.cursor-plugin/agents" ]
+  [ ! -e "$REPO/.cursor-plugin/skills" ]
+  jq -e '
+    def points_at($dir):
+      if type == "string" then
+        . == $dir or . == ($dir + "/") or . == ("./" + $dir) or . == ("./" + $dir + "/")
+      elif type == "array" and length == 1 then
+        .[0] | points_at($dir)
+      else
+        false
+      end;
+    .name == "jeff" and
+    (.agents | points_at("agents")) and
+    (.skills | points_at("skills"))
+  ' "$CURSOR_MANIFEST"
+}
+
+@test "Cursor adapter omits marketplace.json and extra plugin components" {
+  [ -f "$CURSOR_MANIFEST" ]
+  [ ! -e "$REPO/.cursor-plugin/marketplace.json" ]
+  [ ! -e "$REPO/.cursor-plugin/rules" ]
+  [ ! -e "$REPO/.cursor-plugin/commands" ]
+  [ ! -e "$REPO/.cursor-plugin/hooks" ]
+  jq -e '
+    (has("rules") | not) and
+    (has("commands") | not) and
+    (has("hooks") | not)
+  ' "$CURSOR_MANIFEST"
+}
+
+@test "AGENTS.md and the design spec list Cursor as a first-class host" {
+  grep -E 'first-class hosts' "$REPO/AGENTS.md" | grep -F Cursor
+  grep -E 'first-class hosts' "$REPO/docs/specs/jeff-design.md" | grep -F Cursor
+}
+

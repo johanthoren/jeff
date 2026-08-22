@@ -8,7 +8,7 @@
 #
 # Public payload scan set:
 #   skills/  agents/  commands/  hooks/  src/  assets/  .claude-plugin/
-#   .codex-plugin/  .agents/plugins/  AGENTS.md  README.md  NOTICE  package.json
+#   .codex-plugin/  .cursor-plugin/  .agents/plugins/  AGENTS.md  README.md  NOTICE  package.json
 #   docs/brand.md  docs/maintaining-jeff.md  docs/specs/jeff-design.md
 #   Optional paths are skipped. Other docs, tests, .jeff/, and Makefile are
 #   excluded by construction.
@@ -27,7 +27,7 @@ setup_file() { cook_hermetic_git; }
 
 setup() {
   PAYLOAD_ARGS=()
-  for dir in skills agents commands hooks src assets .claude-plugin .codex-plugin .agents/plugins; do
+  for dir in skills agents commands hooks src assets .claude-plugin .codex-plugin .cursor-plugin .agents/plugins; do
     [ -d "$REPO/$dir" ] && PAYLOAD_ARGS+=("$REPO/$dir")
   done
   for file in AGENTS.md README.md NOTICE package.json \
