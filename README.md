@@ -142,8 +142,9 @@ execution, durability, observability, and throughput. See the
 Claude Code, Codex, Cursor, Grok Build, and Pi are first-class Jeff hosts. Oh My Pi
 installs the Pi package and uses its dispatch bridge. Grok Build consumes
 Jeff's Claude Code-compatible plugin surface, including its agents, skills,
-hooks, and marketplace metadata. The adapters differ; the method, specialist
-contracts, checked core, and evidence model remain shared.
+hooks, and marketplace metadata. A Grok Bot loads Jeff through the shipped
+Cursor plugin. The adapters differ; the method, specialist contracts,
+checked core, and evidence model remain shared.
 
 Grok Build and Grok models occupy different layers. Grok Build is the coding
 client; Grok 4.5 is a peer model-family design target alongside Claude Opus 5
@@ -228,6 +229,20 @@ grok plugin update jeff
 ```
 
 An `already up to date` response means no change was needed.
+
+### Grok Bot
+
+A Grok Bot loads Jeff through the shipped Cursor plugin on the Cursor
+account that owns the Bot. Install that plugin from Customize, or load a
+local checkout from `~/.cursor/plugins/local`. Do not copy `skills/` onto
+the Bot computer.
+
+Native specialist dispatch on that Bot's computer is Grok Build plus cook,
+using the existing `grok plugin` and `cook` commands. There is no Grok Bot
+CLI.
+
+Do not paste credentials into chat or ordinary files. Use the Grok Bot
+secrets card.
 
 ### Pi
 

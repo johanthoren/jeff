@@ -335,3 +335,56 @@ select_dist_tag() {
   ! grep -E 'cursor(-agent)?[[:space:]]+plugin[[:space:]]+install|agent[[:space:]]+plugin[[:space:]]+install' "$REPO/README.md"
 }
 
+# grok_bot_readme_section
+# The Grok Bot install block, from that heading to the next heading of the
+# same or shallower level. Empty if README has no Grok Bot section.
+grok_bot_readme_section() {
+  awk '
+    /^#+[ \t]/ {
+      match($0, /^#+/)
+      level = RLENGTH
+      if (found && level <= start_level) exit
+      if (!found && $0 ~ /Grok Bot/) { found = 1; start_level = level }
+    }
+    found { print }
+  ' "$REPO/README.md"
+}
+
+@test "README documents how a Grok Bot loads Jeff through the Cursor plugin" {
+  local section
+  section="$(grok_bot_readme_section)"
+  [ -n "$section" ] || {
+    echo "README has no Grok Bot section"
+    return 1
+  }
+  grep -Ei 'Cursor plugin|\.cursor-plugin' <<<"$section" || {
+    echo "README Grok Bot section does not say Jeff loads through the Cursor plugin"
+    return 1
+  }
+  grep -F '~/.cursor/plugins/local' <<<"$section" || grep -F Customize <<<"$section" || {
+    echo "README Grok Bot section does not name Customize or ~/.cursor/plugins/local"
+    return 1
+  }
+  ! grep -Ei 'grok-bot[[:space:]]+plugin|grokbot[[:space:]]+plugin' <<<"$section" || {
+    echo "README invents a Grok Bot plugin CLI"
+    return 1
+  }
+}
+
+@test "README documents Grok Build plus cook on the Grok Bot computer" {
+  local section
+  section="$(grok_bot_readme_section)"
+  [ -n "$section" ] || {
+    echo "README has no Grok Bot section"
+    return 1
+  }
+  grep -F 'Grok Build' <<<"$section" || {
+    echo "README Grok Bot section does not name Grok Build for native dispatch"
+    return 1
+  }
+  grep -E '\bcook\b' <<<"$section" || {
+    echo "README Grok Bot section does not name cook for native dispatch"
+    return 1
+  }
+}
+
