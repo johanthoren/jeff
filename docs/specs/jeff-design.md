@@ -20,7 +20,7 @@ the quality lifecycle of an atomic task. Coding clients host the work, models
 supply judgment, agent runtimes execute application graphs, and durable
 workflow engines own distributed recovery.
 
-Claude Code, Codex, Grok Build, and Pi are first-class hosts over the same
+Claude Code, Codex, Cursor, Grok Build, and Pi are first-class hosts over the same
 method, specialist contracts, checked-JS core, and evidence model. Grok Build
 consumes the Claude Code-compatible plugin surface. Oh My Pi installs the Pi
 package and uses the same dispatch bridge. Grok Build is the coding client;
@@ -31,7 +31,7 @@ Adjacent systems solve complementary problems:
 
 | System class | Representative systems | Primary concern | Jeff's distinction |
 |---|---|---|---|
-| Coding clients | Claude Code, Codex, Grok Build, Pi, Oh My Pi | Interactive software work and host-native agent execution | One portable quality method and ledger across host-specific dispatch mechanics |
+| Coding clients | Claude Code, Codex, Cursor, Grok Build, Pi, Oh My Pi | Interactive software work and host-native agent execution | One portable quality method and ledger across host-specific dispatch mechanics |
 | Agent runtimes | LangGraph, Microsoft Agent Framework, Mastra, Pydantic AI | Application-level graph execution, state, and tool orchestration | Repository-task completion proof while the runtime retains application execution |
 | Durable execution | Temporal, Restate, DBOS | Distributed workflow recovery and long-lived process guarantees | A local, single-operator protocol with plain-file state and a bounded write-ahead journal |
 | Task and fleet coordination | Gas Town, beads, OpenHands, fleet orchestrators | Work allocation, agent fleets, isolation, and throughput | Mechanical builder/judge separation, fresh-context judgment, and deterministic done-gates |

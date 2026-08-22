@@ -13,7 +13,7 @@
 #
 # Payload prefixes (changes require a bump):
 #   skills/  agents/  commands/  hooks/  .claude-plugin/  .codex-plugin/
-#   .agents/plugins/  src/  control/
+#   .cursor-plugin/  .agents/plugins/  src/  control/
 # Payload files:
 #   AGENTS.md  package.json
 # Excluded (changes do NOT require a bump):
@@ -77,6 +77,14 @@ if [ -f "$codex_plugin_json" ]; then
   codex_version="$(jq -r .version "$codex_plugin_json")"
   if [ "$codex_version" != "$version" ]; then
     die "version mismatch: .claude-plugin/plugin.json=$version but .codex-plugin/plugin.json=$codex_version"
+  fi
+fi
+
+cursor_plugin_json="$root/.cursor-plugin/plugin.json"
+if [ -f "$cursor_plugin_json" ]; then
+  cursor_version="$(jq -r .version "$cursor_plugin_json")"
+  if [ "$cursor_version" != "$version" ]; then
+    die "version mismatch: .claude-plugin/plugin.json=$version but .cursor-plugin/plugin.json=$cursor_version"
   fi
 fi
 
@@ -144,7 +152,7 @@ changed_payload=()
 
 while IFS= read -r -d '' path; do
   case "$path" in
-    skills/*|agents/*|commands/*|hooks/*|.claude-plugin/*|.codex-plugin/*|.agents/plugins/*|src/*|control/*|AGENTS.md|package.json)
+    skills/*|agents/*|commands/*|hooks/*|.claude-plugin/*|.codex-plugin/*|.cursor-plugin/*|.agents/plugins/*|src/*|control/*|AGENTS.md|package.json)
       changed_payload+=("$path")
       ;;
   esac

@@ -1,8 +1,8 @@
 # AGENTS.md: jeff
 
-**jeff** is a model-native quality control plane, distributed as **Claude Code and Codex plugins** and a **Pi package**. **Grok Build** consumes the Claude Code-compatible plugin surface directly. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. It is a cooperative workflow protocol for one trusted Chef and friendly frontier agents, not a security sandbox; host tool isolation is not a cross-host invariant.
+**jeff** is a model-native quality control plane, distributed as **Claude Code, Codex, and Cursor plugins** and a **Pi package**. **Grok Build** consumes the Claude Code-compatible plugin surface directly. The *method* is the product, not a runtime: a thin orchestrator drives atomic tasks through fresh specialist contexts, with enforced separation, durable evidence, and deterministic gates. It is a cooperative workflow protocol for one trusted Chef and friendly frontier agents, not a security sandbox; host tool isolation is not a cross-host invariant.
 
-Claude Code, Codex, Grok Build, and Pi are first-class hosts over the same
+Claude Code, Codex, Cursor, Grok Build, and Pi are first-class hosts over the same
 method and checked core; Oh My Pi installs the Pi package and uses its dispatch
 bridge. Grok Build is the coding client, while Grok is also a model family
 alongside Claude and GPT. Host mechanics differ; the method semantics stay
@@ -40,6 +40,7 @@ jeff ships with a kitchen persona. The voice is a render layer over a fixed subs
 
 ```
 .claude-plugin/plugin.json        # Claude Code manifest
+.cursor-plugin/plugin.json        # Cursor manifest
 .claude-plugin/marketplace.json   # Claude Code self-marketplace for `/plugin install`
 package.json                      # Pi package manifest (`pi.extensions`, `pi.skills`)
 src/pi/                           # Pi extension + role-session dispatch bridge

@@ -125,7 +125,7 @@ keeps ownership of the layer it is built to solve.
 
 | Adjacent system | Primary concern | Jeff's boundary |
 |---|---|---|
-| Claude Code, Codex, Grok Build, Pi, and Oh My Pi | Interactive coding and native specialist execution | Jeff supplies one host-neutral method, ledger, and done-gate across their different dispatch mechanics. |
+| Claude Code, Codex, Cursor, Grok Build, Pi, and Oh My Pi | Interactive coding and native specialist execution | Jeff supplies one host-neutral method, ledger, and done-gate across their different dispatch mechanics. |
 | Claude, GPT, and Grok model families | Reasoning and software-engineering judgment | Jeff inherits the orchestrator's active model by default and records actual provider, model, and effort as execution evidence. |
 | LangGraph, Microsoft Agent Framework, Mastra, and Pydantic AI | Application-level agent graphs and runtime orchestration | These systems retain runtime ownership; Jeff controls the quality lifecycle of repository tasks. |
 | Temporal, Restate, and DBOS | Durable execution and distributed workflow recovery | Jeff uses a local append-only journal and plain-file state for a narrower, single-operator engineering protocol. |
@@ -139,7 +139,7 @@ execution, durability, observability, and throughput. See the
 
 ## Hosts and models
 
-Claude Code, Codex, Grok Build, and Pi are first-class Jeff hosts. Oh My Pi
+Claude Code, Codex, Cursor, Grok Build, and Pi are first-class Jeff hosts. Oh My Pi
 installs the Pi package and uses its dispatch bridge. Grok Build consumes
 Jeff's Claude Code-compatible plugin surface, including its agents, skills,
 hooks, and marketplace metadata. The adapters differ; the method, specialist
@@ -194,6 +194,22 @@ codex plugin add jeff@jeff
 ```
 
 Restart Codex Desktop and begin a new task so it loads the updated skills.
+
+### Cursor
+
+Install from Customize, add the git marketplace, or load a local checkout
+from `~/.cursor/plugins/local`:
+
+```sh
+agent plugin marketplace add https://github.com/johanthoren/jeff
+```
+
+Update the marketplace snapshot:
+
+```sh
+agent plugin marketplace update jeff
+```
+
 
 ### Grok Build
 
@@ -259,6 +275,7 @@ the host's read-only inventory command:
 |---|---|
 | Claude Code | `claude plugin details jeff@jeff` |
 | Codex | `codex plugin list` |
+| Cursor | `agent plugin marketplace list` |
 | Grok Build | `grok plugin details jeff` |
 | Pi | `pi list` |
 | Oh My Pi | `omp plugin list` |
