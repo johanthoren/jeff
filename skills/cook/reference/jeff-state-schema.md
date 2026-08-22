@@ -11,11 +11,13 @@ Jeff is a cooperative workflow protocol for a trusted operator and friendly agen
 ## On-disk layout
 
 - `.jeff/tasks/<NNNN>-<slug>/task.json`: per-task structured state (the canonical source; the dirs are the registry).
-- `.jeff/tasks/<NNNN>-<slug>/task.md`: spec (the `capture` output: goal, acceptance criteria, non-goals, scope).
+- `.jeff/tasks/<NNNN>-<slug>/task.md`: spec (the `capture` output: goal, acceptance criteria, non-goals, locked decisions, rejected branches, scope).
 - `.jeff/tasks/<NNNN>-<slug>/notes.md`: running notes, kickback findings, decisions.
-- `.jeff/tasks/<dir>/context.md`: optional facts-only repository map whose task scope plan owns; plan creates and refreshes it, while implement and refactor maintain facts encountered during assigned code work.
+- `.jeff/tasks/<dir>/context.md`: optional facts-only repository map whose task scope plan owns; plan creates and refreshes it, while implement and refactor maintain facts encountered during assigned code work. This is not repo-root `CONTEXT.md`.
 - `.jeff/tasks/<dir>/journal.jsonl`: optional per-task append-only operational provenance, created on first journal append and pruned with the task directory.
 - `.jeff/memory/`: project memory.
+
+- Repo-root `CONTEXT.md` and `docs/adr/` are optional project glossary and decision files. Capture owns them; see `skills/cook/reference/capture-interview.md`. They are not task-ledger files and `cook validate` does not read them.
 
 Old layout (`.jeff/orders/` + `batches/` + 8 phase files + `proof/ledger.json` + `role-runs/`) is dropped.
 
