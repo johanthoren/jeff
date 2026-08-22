@@ -174,8 +174,26 @@ CURSOR_MANIFEST="$REPO/.cursor-plugin/plugin.json"
   [ ! -e "$REPO/.cursor-plugin/hooks" ]
   jq -e '
     (has("rules") | not) and
-    (has("commands") | not) and
-    (has("hooks") | not)
+    (has("commands") | not)
+  ' "$CURSOR_MANIFEST"
+}
+
+@test "Cursor manifest replaces default hooks discovery without adopting Claude hooks" {
+  [ -f "$CURSOR_MANIFEST" ]
+  [ -f "$REPO/hooks/hooks.json" ]
+  jq -e '.hooks | (type == "object" and has("PreToolUse"))' "$REPO/hooks/hooks.json"
+  jq -e '
+    def no_hook_events:
+      def events:
+        if type != "object" then empty
+        elif (.hooks | type) == "object" then .hooks | keys[]
+        elif (.hooks | type) == "array" and (.hooks | length) > 0 then "hooks"
+        else keys[] | select(. != "version" and . != "hooks")
+        end;
+      [events] | length == 0;
+    has("hooks") and
+    (.hooks | type == "object") and
+    (.hooks | no_hook_events)
   ' "$CURSOR_MANIFEST"
 }
 
