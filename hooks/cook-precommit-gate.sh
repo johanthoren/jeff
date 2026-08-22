@@ -23,7 +23,7 @@ cwd="$(printf '%s' "$payload" | node -e '
 ')" || exit 0
 [ -n "$cwd" ] || exit 0
 
-out="$(cd "$cwd" && node "${CLAUDE_PLUGIN_ROOT:-}/src/cli/cook.js" validate 2>&1)" && rc=0 || rc=$?
+out="$(cd "$cwd" && COOK_ROOT="$cwd" node "${CLAUDE_PLUGIN_ROOT:-}/src/cli/cook.js" validate 2>&1)" && rc=0 || rc=$?
 
 if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -Eq '^cook: validation FAILED'; then
   verdict="$(printf '%s\n' "$out" | grep -E '^cook: validation FAILED' | tail -n1)"

@@ -103,7 +103,7 @@ CURSOR_MANIFEST="$REPO/.cursor-plugin/plugin.json"
   [ "$crate_version" = "$version" ]
 }
 
-@test "published lockstep version is strictly newer than 6.4.0" {
+@test "published lockstep version is strictly newer than 6.4.1" {
   local version crate_version
   version="$(jq -r '.version' "$PACKAGE_MANIFEST")"
   crate_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO/control/jeff/Cargo.toml")"
@@ -113,8 +113,8 @@ CURSOR_MANIFEST="$REPO/.cursor-plugin/plugin.json"
   [ "$(jq -r '.version' "$CURSOR_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
   [ "$crate_version" = "$version" ]
-  [ "$version" != "6.4.0" ]
-  [ "$(printf '%s\n%s\n' "6.4.0" "$version" | sort -V | tail -n 1)" = "$version" ]
+  [ "$version" != "6.4.1" ]
+  [ "$(printf '%s\n%s\n' "6.4.1" "$version" | sort -V | tail -n 1)" = "$version" ]
 }
 
 
@@ -200,5 +200,32 @@ CURSOR_MANIFEST="$REPO/.cursor-plugin/plugin.json"
 @test "AGENTS.md and the design spec list Cursor as a first-class host" {
   grep -E 'first-class hosts' "$REPO/AGENTS.md" | grep -F Cursor
   grep -E 'first-class hosts' "$REPO/docs/specs/jeff-design.md" | grep -F Cursor
+}
+
+@test "AGENTS.md and the design spec list Grok Bot as a host distinct from Grok Build" {
+  grep -F 'Grok Bot' "$REPO/AGENTS.md"
+  grep -F 'Grok Bot' "$REPO/docs/specs/jeff-design.md"
+  grep -F 'Grok Build' "$REPO/AGENTS.md"
+  grep -F 'Grok Build' "$REPO/docs/specs/jeff-design.md"
+}
+
+@test "Cursor plugin skills are the Grok Bot skill surface" {
+  [ -f "$CURSOR_MANIFEST" ]
+  [ -d "$REPO/skills" ]
+  [ ! -e "$REPO/.grok-plugin" ]
+  [ ! -e "$REPO/.cursor-plugin/skills" ]
+  jq -e '
+    def points_at($dir):
+      if type == "string" then
+        . == $dir or . == ($dir + "/") or . == ("./" + $dir) or . == ("./" + $dir + "/")
+      elif type == "array" and length == 1 then
+        .[0] | points_at($dir)
+      else
+        false
+      end;
+    .skills | points_at("skills")
+  ' "$CURSOR_MANIFEST"
+  grep -F 'Grok Bot' "$REPO/AGENTS.md" | grep -Ei 'Cursor plugin|\.cursor-plugin'
+  grep -F 'Grok Bot' "$REPO/docs/specs/jeff-design.md" | grep -Ei 'Cursor plugin|\.cursor-plugin'
 }
 

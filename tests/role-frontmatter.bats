@@ -195,6 +195,40 @@ dispatch_section() {
   }
 }
 
+@test "Grok Bot dispatch uses the Cursor plugin and Grok Build plus cook" {
+  local section
+  section="$(dispatch_section)"
+  [ -n "$section" ] || { echo "SKILL.md has no Dispatch section"; return 1; }
+
+  grep -F 'Grok Bot' <<<"$section" || {
+    echo "SKILL.md Dispatch does not list Grok Bot as a host"
+    return 1
+  }
+  grep -F 'Grok Bot' <<<"$section" | grep -Ei 'Cursor plugin|\.cursor-plugin' || {
+    echo "SKILL.md Dispatch does not say Grok Bot uses the Cursor plugin"
+    return 1
+  }
+  grep -F 'Grok Bot' <<<"$section" | grep -F 'Grok Build' || {
+    echo "SKILL.md Dispatch does not say Grok Bot native dispatch is Grok Build"
+    return 1
+  }
+  grep -F 'Grok Bot' <<<"$section" | grep -E '\bcook\b' || {
+    echo "SKILL.md Dispatch does not say Grok Bot native dispatch uses cook"
+    return 1
+  }
+}
+
+@test "Grok Build dispatch stays on the Claude Code-compatible plugin path" {
+  local section
+  section="$(dispatch_section)"
+  [ -n "$section" ] || { echo "SKILL.md has no Dispatch section"; return 1; }
+
+  grep -E 'Grok Build' <<<"$section" | grep -Ei 'Claude Code-compatible' || {
+    echo "SKILL.md Dispatch no longer says Grok Build uses the Claude Code-compatible plugin surface"
+    return 1
+  }
+}
+
 
 @test "issue 173: the stations that gained command capability state that they never mutate" {
   local file role

@@ -4,7 +4,8 @@
 
 Claude Code, Codex, Cursor, Grok Build, and Pi are first-class hosts over the same
 method and checked core; Oh My Pi installs the Pi package and uses its dispatch
-bridge. Grok Build is the coding client, while Grok is also a model family
+bridge. A Grok Bot loads Jeff through the shipped Cursor plugin. Grok Build
+is the coding client, while Grok is also a model family
 alongside Claude and GPT. Host mechanics differ; the method semantics stay
 shared.
 

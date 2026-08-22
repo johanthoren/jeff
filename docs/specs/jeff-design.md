@@ -22,7 +22,8 @@ workflow engines own distributed recovery.
 
 Claude Code, Codex, Cursor, Grok Build, and Pi are first-class hosts over the same
 method, specialist contracts, checked-JS core, and evidence model. Grok Build
-consumes the Claude Code-compatible plugin surface. Oh My Pi installs the Pi
+consumes the Claude Code-compatible plugin surface.
+A Grok Bot loads Jeff through the shipped Cursor plugin. Oh My Pi installs the Pi
 package and uses the same dispatch bridge. Grok Build is the coding client;
 Claude, GPT, and Grok are model families. The default dispatch rule inherits
 the active orchestrator provider and model.
