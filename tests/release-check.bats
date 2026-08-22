@@ -10,11 +10,11 @@
 #   - last_tag = highest tag matching ^[0-9]+\.[0-9]+\.[0-9]+$
 #   - version from .claude-plugin/plugin.json
 #   - Payload prefixes: skills/ agents/ commands/ hooks/ .claude-plugin/
-#     .codex-plugin/ .agents/plugins/ src/ control/
+#     .codex-plugin/ .cursor-plugin/ .agents/plugins/ src/ control/
 #     (bin/ dropped by task 0034; skills/ covers the shell CLI; control/ is the Rust plane)
 #   - Payload files: AGENTS.md package.json
 #   - Version lockstep (when present): package.json, package-lock.json,
-#     .codex-plugin/plugin.json, control/jeff/Cargo.toml, control/Cargo.lock
+#     .codex-plugin/plugin.json, .cursor-plugin/plugin.json, control/jeff/Cargo.toml, control/Cargo.lock
 #   - Excluded: .jeff/ tests/ .github/ docs/ README.md Makefile dotfiles
 #   - Exit 0 = pass; non-zero = fail; reason on stderr
 #
@@ -210,6 +210,31 @@ teardown() {
   [[ "$output" == *"version mismatch"* ]]
   [[ "$output" == *".codex-plugin/plugin.json"* ]]
 }
+
+@test "version mismatch: Cursor plugin version differs from Claude plugin version" {
+  init_fixture_repo "$FIX" "1.0.0"
+  mkdir -p "$FIX/.cursor-plugin"
+  printf '{"version":"1.0.1"}\n' > "$FIX/.cursor-plugin/plugin.json"
+  git -C "$FIX" add .cursor-plugin/plugin.json
+  git -C "$FIX" commit -q -m "add mismatched Cursor plugin version"
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"version mismatch"* ]]
+  [[ "$output" == *".cursor-plugin/plugin.json"* ]]
+}
+
+@test "payload/cursor-plugin: metadata change requires a version bump" {
+  init_fixture_repo "$FIX" "1.0.0"
+  commit_file "$FIX" ".cursor-plugin/plugin.json" '{"version":"1.0.0","name":"jeff"}'
+
+  run_script "$FIX"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".cursor-plugin/plugin.json"* ]]
+}
+
 
 @test "package.json metadata change requires a version bump" {
   init_fixture_repo "$FIX" "1.0.0"

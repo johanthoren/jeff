@@ -172,6 +172,30 @@ dispatch_section() {
   }
 }
 
+@test "Cursor dispatch uses native subagents and records the host-observed child id" {
+  local section
+  section="$(dispatch_section)"
+  [ -n "$section" ] || { echo "SKILL.md has no Dispatch section"; return 1; }
+
+  grep -F Cursor <<<"$section" || {
+    echo "SKILL.md Dispatch does not list Cursor as a host"
+    return 1
+  }
+  grep -Ei 'native subagent|Task tool' <<<"$section" | grep -F Cursor || {
+    echo "SKILL.md Dispatch does not say Cursor uses its native subagent facility"
+    return 1
+  }
+  grep -Ei 'host-observed' <<<"$section" | grep -Ei 'child|agent id|id' | grep -F Cursor || {
+    echo "SKILL.md Dispatch does not say Cursor records the host-observed child id"
+    return 1
+  }
+  grep -Ei 'omit|omits' <<<"$section" | grep -E 'agent_id' || {
+    echo "SKILL.md Dispatch no longer says specialist returns omit agent_id"
+    return 1
+  }
+}
+
+
 @test "issue 173: the stations that gained command capability state that they never mutate" {
   local file role
   for file in cook-verify cook-audit; do
