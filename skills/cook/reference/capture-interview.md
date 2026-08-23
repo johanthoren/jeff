@@ -1,12 +1,9 @@
-# Capture interview (trial)
-
-Trial procedure on `trial/capture-prebuild`. Not merged to trunk. No schema
-or validator change. Capture still locks category, ACs, and non-goals. This
-file only thickens how Jeff interviews and what capture writes beside that
-lock.
+# Capture interview
 
 Read this at the start of every Jeff-run `capture`. It does not apply to
-Explore, Remember, or Record-pending.
+Explore, Remember, or Record-pending. No schema or validator change. Capture
+still writes category, ACs, and non-goals. It locks only the confirmed now
+increment.
 
 Influence (ideas only, no vendored files): Matt Pocock's grilling design-tree
 and recommended-answer discipline, and his project glossary / ADR split. See
@@ -30,7 +27,23 @@ Try to always pick. When you skip a recommendation, say that it is a true tie.
 Keep the existing capture push-back: does this need to exist, is it speculative,
 does a bug hit users or risk a security or data-loss incident, and is the gap
 knowledge/instruction rather than a missing capability? Apply the fake-edge
-test. Stop when the frontier is empty and you can lock the task.
+test.
+
+Stay on goals and outcomes unless you label a question increment-bounded.
+Destination answers are welcome and default; translate them onto increments.
+
+Two phases live inside this one capture stage.
+
+**Phase A** records destination decisions. Phase A does not lock a task.
+
+**Phase B** reads the live graph, files the destination onto existing or new
+nodes, and states now versus later in product language. File later work as
+pending siblings. Retarget existing nodes. Do not recreate or renumber the
+graph.
+
+Always stop for one confirm of that outcome split, not the topology. If now is
+the whole ask, the confirm is one line. Do not present a Chef-facing graph or
+DAG. After confirm, lock only the now slice.
 
 ## `task.md`
 
