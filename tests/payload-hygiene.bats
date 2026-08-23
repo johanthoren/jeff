@@ -2206,6 +2206,43 @@ skill_outside_dispatch_rules() {
   }
 }
 
+@test "#280: capture names host ask tools and keeps the chat fallback" {
+  local interview="$REPO/skills/cook/reference/capture-interview.md"
+  [ -f "$interview" ] || {
+    echo "capture-interview.md is missing"
+    return 1
+  }
+
+  grep -qF 'AskQuestion' "$interview" || {
+    echo "capture-interview.md does not name Cursor AskQuestion"
+    return 1
+  }
+  grep -qF 'AskUserQuestion' "$interview" || {
+    echo "capture-interview.md does not name Claude Code AskUserQuestion"
+    return 1
+  }
+  grep -qF 'request_user_input' "$interview" || {
+    echo "capture-interview.md does not name Codex request_user_input"
+    return 1
+  }
+  grep -qF 'ask_user_question' "$interview" || {
+    echo "capture-interview.md does not name Grok Build ask_user_question"
+    return 1
+  }
+  grep -qF 'Oh My Pi `ask`' "$interview" || {
+    echo "capture-interview.md does not name Oh My Pi ask"
+    return 1
+  }
+  grep -qiE 'when it is available|when available' "$interview" || {
+    echo "host ask is no longer optional when the tool is missing"
+    return 1
+  }
+  grep -qiE 'same shape in chat' "$interview" || {
+    echo "the chat fallback dropped the same-shape contract"
+    return 1
+  }
+}
+
 @test "#280: capture homes drop the empty-frontier lock and the unmerged-trial banner" {
   local interview="$REPO/skills/cook/reference/capture-interview.md"
   local skill="$REPO/skills/cook/SKILL.md"

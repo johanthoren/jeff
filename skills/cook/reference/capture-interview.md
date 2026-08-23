@@ -7,8 +7,8 @@ increment.
 
 Influence (ideas only, no vendored files): Matt Pocock's grilling design-tree
 and recommended-answer discipline, and his project glossary / ADR split. See
-`NOTICE`. Jeff keeps one question at a time and host `ask`. It does not batch
-the frontier.
+`NOTICE`. Jeff keeps one question at a time and the host ask tool when it
+is available. It does not batch the frontier.
 
 ## Interview
 
@@ -16,9 +16,11 @@ Keep an internal design tree of unsettled decisions. The frontier is every
 question whose prerequisites are already settled. Ask only the next frontier
 question. Dependent questions wait.
 
-One question at a time. Use the host `ask` tool when it exists: short options,
-one recommended answer, grounder first. If `ask` is unavailable, ask the same
-shape in chat. Never a bundled questionnaire.
+One question at a time. Use the host ask tool when it is available: Cursor
+`AskQuestion`, Claude Code `AskUserQuestion`, Codex `request_user_input`,
+Grok Build `ask_user_question`, Oh My Pi `ask`. Short options, one
+recommended answer, grounder first. If that tool is not available this
+turn, ask the same shape in chat. Never a bundled questionnaire.
 
 Give a recommended answer unless two options are genuinely tied and nothing in
 the Chef's stated prefs, this repo, or the locked task so far breaks the tie.
@@ -88,7 +90,8 @@ When a term or ADR is owed, create or update the files.
 ### Lite mode
 
 Never introduce the convention silently. The first capture that would write a
-term or ADR asks once, via `ask`, whether to create `CONTEXT.md` /
+term or ADR asks once, via the host ask tool when it is available,
+whether to create `CONTEXT.md` /
 `docs/adr/`. After yes, maintain them under existing write-back consent. After
 no, do not create them later in this repo unless the Chef reverses that.
 Existing files are updates, not creates: still honor write-back consent.

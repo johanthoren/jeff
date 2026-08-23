@@ -38,7 +38,7 @@ fresh specialists, one station at a time.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/architecture-dark.svg">
-  <img src="docs/img/architecture-light.svg" width="900" alt="Jeff system architecture: the operator and thin orchestrator route work through capture, builder contexts, independent judgment, a plain-file ledger, and a done gate that derives completion from recorded evidence.">
+  <img src="docs/img/architecture-light.svg" width="900" alt="Jeff system architecture: the operator and thin orchestrator route work through capture, which records a destination then locks only the now increment, builder contexts, independent judgment, a plain-file ledger, and a done gate that derives completion from recorded evidence.">
 </picture>
 
 The control plane is deliberately boring. `src/cli/cook.js` is the sole
@@ -49,8 +49,11 @@ code supplies legality.
 
 ## Two closed completion graphs
 
-Capture locks a task by its primary outcome. Code and operations then follow
-different graphs:
+Capture interviews one question at a time. It records the destination, then
+locks only the confirmed now increment and the task's primary outcome.
+Inspired by Matt Pocock (MIT; see `NOTICE`).
+The bundled YAGNI ladder is adapted from ponytail (MIT; see `NOTICE`). Loading the [ponytail](https://github.com/DietrichGebert/ponytail) plugin beside Jeff is recommended; Jeff does not require it.
+Code and operations then follow different graphs:
 
 ```text
 code       capture → plan + tests → implement → conditional refactor
