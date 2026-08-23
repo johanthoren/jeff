@@ -162,7 +162,7 @@ Jeff may not override a `needs-work` verdict. Code `review`/`audit` and operatio
 
 | stage | what the specialist does |
 |---|---|
-| `capture` | interrogate intent one question at a time until confident + aligned; **push back on scope: does this need to exist, is the request sound or speculative, does the bug actually impact users or risk a security/data-loss incident, and is this a knowledge/instruction gap (clarify the docs/instructions or reuse an existing mechanism) rather than a build?**; apply the fake-edge decomposition test; produce `task.md` (goal, acceptance criteria, non-goals). Jeff-run, at the orchestrator's own setting |
+| `capture` | interrogate intent one question at a time across two phases, then lock only the now increment after one confirm of the outcome split; **push back on scope: does this need to exist, is the request sound or speculative, does the bug actually impact users or risk a security/data-loss incident, and is this a knowledge/instruction gap (clarify the docs/instructions or reuse an existing mechanism) rather than a build?**; apply the fake-edge decomposition test; produce `task.md` (goal, acceptance criteria, non-goals, locked decisions, rejected branches, audit). Jeff-run, at the orchestrator's own setting. **Read `skills/cook/reference/capture-interview.md` before interviewing.** |
 | `plan` | category-specific design: code owns tests and targeted RED; operation owns runbook, preconditions, recovery and approval boundaries, explicit `requiresApproval`, deterministic postconditions, and verification seams |
 | `implement` | code only: make tests green; must NOT author/weaken tests |
 | `refactor` | code only: behavior-preserving simplification when owed; keep tests green |
@@ -172,7 +172,9 @@ Jeff may not override a `needs-work` verdict. Code `review`/`audit` and operatio
 | `audit` | conditional independent security judgment for either category |
 | `done` | terminal; category-specific gate enforced by `cook validate` |
 
-**Capture decomposition.** Apply the fake-edge test as guidance, not a gate. When an order contains two or more independently shippable outcomes, capture them as separate tasks. Add a `deps` edge only when one task genuinely consumes another task's output. Prefer several simple tasks when acceptance criteria cluster into independent seams.
+**Capture decomposition.** Apply the fake-edge test as guidance, not a gate. When an order contains two or more independently shippable outcomes, capture them as separate tasks and state now versus later as pending siblings. Add a `deps` edge only when one task genuinely consumes another task's output. Prefer several simple tasks when acceptance criteria cluster into independent seams.
+
+**Capture interview.** `skills/cook/reference/capture-interview.md` owns the two-phase Chef-facing interview (one `ask` at a time, design tree, recommended answer), the one confirm of the now increment, the durable tree in `task.md`, and the project `CONTEXT.md` / `docs/adr/` rules. No Chef-facing graph. Capture writes those project files before lanes start. Later stages never do.
 
 Each specialist's model follows the dispatch rules (§Dispatch). Per-stage effort is owned by `agents/cook-*.md` frontmatter, which Pi and Claude Code apply where supported; Grok Build consumes the Claude Code-compatible agent definitions through its native subagent runtime; Codex children inherit orchestrator effort.
 

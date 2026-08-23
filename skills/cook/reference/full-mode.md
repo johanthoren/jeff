@@ -7,11 +7,11 @@ Read this when a full-mode project needs task files laid down, when a task reach
 There is **no** `cook new`/`create`/`add` verb, and none is planned (a deliberate call; see `[[jeff-no-cook-new-verb]]`); tasks are **hand-authored**. When a captured task needs its files laid down, do it by hand:
 
 - **Next id** = one greater than the maximum id in the union of live task ids and `prunedTaskIds` (or `1` when that union is empty). Cross-check BACKLOG's "Next free id" line for stale orientation; the live task directories and terminal provenance are authoritative.
-- **Create `.jeff/tasks/00NN-<slug>/`** with three files: `task.json` (canonical shape in `skills/cook/reference/jeff-state-schema.md` §`task.json`, including `pipelineVersion` copied from the installed Jeff payload package's `package.json`; resolve the package root containing the shipped `skills/` directory, never the target application's package root), `task.md` (goal / acceptance criteria / non-goals / audit), and `notes.md`. `journal.jsonl` is created by the first journal append.
+- **Create `.jeff/tasks/00NN-<slug>/`** with three files: `task.json` (canonical shape in `skills/cook/reference/jeff-state-schema.md` §`task.json`, including `pipelineVersion` copied from the installed Jeff payload package's `package.json`; resolve the package root containing the shipped `skills/` directory, never the target application's package root), `task.md` (goal / acceptance criteria / non-goals / locked decisions / rejected branches / audit), and `notes.md`. `journal.jsonl` is created by the first journal append.
 - **Orient the backlog:** add the live task to `BACKLOG.md` and bump BACKLOG's "Next free id" line. Do not add a live id to `prunedTaskIds`; the task directory is its registry entry.
 - **Validate, then preserve:** run `cook validate` before integration and preserve the capture/config/backlog changes durably through the repository/context-selected checkpoint. Do not require a separate trunk commit: completed work lands as one green task commit.
 
-This covers only the **mechanical scaffolding**. The interrogation → acceptance-criteria judgement stays in the Jeff-run `capture` stage; these steps are not a bypass of it.
+This covers only the **mechanical scaffolding**. The interrogation, acceptance-criteria judgement, and project glossary/ADR writes stay in the Jeff-run `capture` stage (`skills/cook/reference/capture-interview.md`); these steps are not a bypass of it.
 
 ## BACKLOG.md: orientation and maintenance
 

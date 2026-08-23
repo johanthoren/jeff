@@ -1532,8 +1532,11 @@ LIGHT
 @test "#199 AC8: the always-loaded cook SKILL.md stays inside its budget, with no new section or reference file" {
   # Budget derivation (plan, issue #199): 281 lines at task entry, plus the ~12
   # lines of gate prose the eight criteria require, plus 2 lines of slack = 295.
-  # A new `##` section or a new reference file costs several times that and is
-  # what the budget exists to refuse, so both are bounded at their entry counts.
+  # The capture-interview trial then added capture-interview.md (reference 7)
+  # and three SKILL.md lines (298). Issue #280 completes that file in place, so
+  # the floor is 7 references and 298 lines, plus 7 lines of slack for the
+  # three existing capture passages to name the increment lock = 305.
+  # A new `##` section or an 8th reference file is still what the budget refuses.
   #
   # This is a bound, not a restated literal: skills/cook/SKILL.md loads in full
   # on every invocation, so its size is a cost every consuming host pays.
@@ -1542,7 +1545,7 @@ LIGHT
   # edits SKILL.md, which is the intent while #118, #125 and #130 are open on
   # trimming this same payload. If that coupling outlives them, re-express the
   # bound over the Entry section alone.
-  local budget=295 max_sections=11 max_references=6 lines sections references
+  local budget=305 max_sections=11 max_references=7 lines sections references
   lines="$(grep -c '' "$REPO/skills/cook/SKILL.md")"
   [ "$lines" -le "$budget" ] || {
     echo "skills/cook/SKILL.md is $lines lines, over its $budget-line budget; it loads in full on every invocation"
@@ -1557,7 +1560,7 @@ LIGHT
 
   references="$(ls -1 "$REPO"/skills/cook/reference/*.md | grep -c .)"
   [ "$references" -le "$max_references" ] || {
-    echo "skills/cook/reference/ grew to $references files from $max_references; this change is prose inside the existing gate, not a new reference file"
+    echo "skills/cook/reference/ grew to $references files from $max_references; this change is prose inside the existing interview file, not a new reference file"
     return 1
   }
 }
@@ -1988,4 +1991,235 @@ skill_outside_dispatch_rules() {
     "$REPO/skills/cook" "$REPO/agents/cook-plan.md" "$REPO/agents/cook-refactor.md" "$REPO/src"
   [ "$status" -eq 1 ] || { printf 'the sequence is duplicated outside code-standards:\n%s\n' "$output"; return 1; }
   [ -z "$output" ]
+}
+
+# ---------------------------------------------------------------------------
+# issue 280: capture locks only the confirmed now increment
+# Payload prose is the product. Item 6 fake-edge tokens stay on that test.
+# ---------------------------------------------------------------------------
+
+@test "#280: capture stays one stage and the capture row names the increment lock" {
+  local skill="$REPO/skills/cook/SKILL.md" row count
+  row="$(awk '$0 ~ /^\| `capture` \|/ { print; exit }' "$skill")"
+  [ -n "$row" ] || {
+    echo "cook SKILL.md has no capture stage row"
+    return 1
+  }
+
+  count="$(grep -cE '^\| `capture` \|' "$skill")"
+  [ "$count" -eq 1 ] || {
+    echo "cook SKILL.md has $count capture stage rows; capture stays one stage"
+    return 1
+  }
+
+  count="$(grep -cE '^\| `[a-z0-9-]+` \|' "$skill")"
+  [ "$count" -eq 9 ] || {
+    echo "the stages table has $count named stages; capture increment is not a new stage"
+    return 1
+  }
+
+  if grep -E '^\| `(increment|destination|prebuild|phase-a|phase-b|graph-map)` \|' "$skill"; then
+    echo "the stages table grew a new pipeline stage; capture increment is not a new stage"
+    return 1
+  fi
+
+  grep -qiE 'now (slice|increment)|lock[^.]{0,80}(the )?now|two phases|phase a' <<<"$row" || {
+    echo "the capture stage row still treats alignment as a destination lock"
+    return 1
+  }
+}
+
+@test "#280: capture interview phases record destination then lock only the confirmed now slice" {
+  local interview decomp paragraph
+  interview="$REPO/skills/cook/reference/capture-interview.md"
+  [ -f "$interview" ] || {
+    echo "capture-interview.md is missing"
+    return 1
+  }
+
+  grep -qiE 'one (question|ask) at a time' "$interview" || {
+    echo "capture-interview.md dropped one-question-at-a-time"
+    return 1
+  }
+  grep -qiE 'design tree' "$interview" || {
+    echo "capture-interview.md dropped the design tree"
+    return 1
+  }
+  grep -qiE 'recommended answer' "$interview" || {
+    echo "capture-interview.md dropped the recommended answer"
+    return 1
+  }
+
+  grep -qiE 'phase a' "$interview" || {
+    echo "capture-interview.md does not name Phase A"
+    return 1
+  }
+  grep -qiE 'phase a[^.]{0,240}destination|destination[^.]{0,240}phase a' "$interview" || {
+    echo "Phase A does not record destination decisions"
+    return 1
+  }
+  grep -qiE 'phase a[^.]{0,240}(do not|does not|never|without)[^.]{0,80}lock|(do not|does not|never)[^.]{0,80}lock[^.]{0,240}(phase a|destination|task)' "$interview" || {
+    echo "Phase A does not keep the destination from locking a task"
+    return 1
+  }
+
+  grep -qiE 'phase b' "$interview" || {
+    echo "capture-interview.md does not name Phase B"
+    return 1
+  }
+  grep -qiE 'live graph' "$interview" || {
+    echo "Phase B does not read the live graph"
+    return 1
+  }
+  grep -qiE 'existing[^.]{0,80}new|new[^.]{0,80}existing' "$interview" || {
+    echo "Phase B does not file onto existing or new nodes"
+    return 1
+  }
+  grep -qiE 'now versus later|now vs\.? later|now / later' "$interview" || {
+    echo "Phase B does not state now versus later"
+    return 1
+  }
+  grep -qiE 'product language' "$interview" || {
+    echo "now versus later is not required in product language"
+    return 1
+  }
+  grep -qiE 'pending siblings' "$interview" || {
+    echo "later work is not filed as pending siblings"
+    return 1
+  }
+  grep -qiE 'retarget' "$interview" || {
+    echo "existing nodes are not retargeted"
+    return 1
+  }
+  grep -qiE '(not|never|do not|does not)[^.]{0,80}(recreat|renumber)' "$interview" || {
+    echo "Phase B does not forbid recreating or renumbering the graph"
+    return 1
+  }
+  grep -qiE '(after|once)[^.]{0,80}confirm[^.]{0,80}lock[^.]{0,80}now|lock[^.]{0,80}only[^.]{0,40}now' "$interview" || {
+    echo "capture does not lock only the now slice after confirm"
+    return 1
+  }
+
+  paragraph="$(awk '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    $0 ~ /^\*\*Capture interview\.\*\*/ { print }
+  ' "$REPO/skills/cook/SKILL.md")"
+  [ -n "$paragraph" ] || {
+    echo "cook SKILL.md has no Capture interview paragraph"
+    return 1
+  }
+  grep -qiE 'phase' <<<"$paragraph" || {
+    echo "Capture interview prose does not name the phases"
+    return 1
+  }
+  grep -qiE 'now' <<<"$paragraph" || {
+    echo "Capture interview prose does not name the now increment"
+    return 1
+  }
+  grep -qiE 'confirm' <<<"$paragraph" || {
+    echo "Capture interview prose does not name the confirm"
+    return 1
+  }
+
+  decomp="$(awk '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    tolower($0) ~ /fake[- ]edge/ && $0 !~ /^\|/ { print }
+  ' "$REPO/skills/cook/SKILL.md")"
+  [ -n "$decomp" ] || {
+    echo "cook SKILL.md has no capture decomposition paragraph"
+    return 1
+  }
+  grep -qiE 'now versus later|now vs\.? later|pending siblings|now (slice|increment)' <<<"$decomp" || {
+    echo "capture decomposition prose does not carry the increment split"
+    return 1
+  }
+}
+
+@test "#280: capture always confirms the outcome split and never shows a Chef-facing graph" {
+  local interview homes row paragraph decomp
+  interview="$REPO/skills/cook/reference/capture-interview.md"
+  [ -f "$interview" ] || {
+    echo "capture-interview.md is missing"
+    return 1
+  }
+
+  grep -qiE 'always[^.]{0,80}(one )?confirm|(one )?confirm[^.]{0,80}always' "$interview" || {
+    echo "capture-interview.md does not always stop for one confirm"
+    return 1
+  }
+  grep -qiE 'one line[^.]{0,120}(whole|entire|obvious)|(whole|entire|obvious)[^.]{0,120}one line' "$interview" || {
+    echo "the whole-ask confirm is not one line"
+    return 1
+  }
+  grep -qiE '(not|never|do not|does not)[^.]{0,80}(operator-facing|chef-facing)?[^.]{0,40}(graph|dag)( diagram)?' "$interview" || {
+    echo "capture-interview.md does not forbid an operator-facing graph or DAG"
+    return 1
+  }
+  grep -qiE 'outcome split' "$interview" || {
+    echo "confirm is not bound to the outcome split"
+    return 1
+  }
+  grep -qiE '(not|never)[^.]{0,80}topology' "$interview" || {
+    echo "confirm is not kept off topology"
+    return 1
+  }
+
+  row="$(awk '$0 ~ /^\| `capture` \|/ { print; exit }' "$REPO/skills/cook/SKILL.md")"
+  paragraph="$(awk '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    $0 ~ /^\*\*Capture interview\.\*\*/ { print }
+  ' "$REPO/skills/cook/SKILL.md")"
+  decomp="$(awk '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    tolower($0) ~ /fake[- ]edge/ && $0 !~ /^\|/ { print }
+  ' "$REPO/skills/cook/SKILL.md")"
+  homes="$row $paragraph $decomp"
+  grep -qiE 'confirm' <<<"$homes" || {
+    echo "SKILL.md capture prose does not name the confirm"
+    return 1
+  }
+  grep -qiE '(not|never|no)[^.]{0,80}(graph|dag)|outcome split' <<<"$homes" || {
+    echo "SKILL.md capture prose does not keep the Chef off a graph diagram"
+    return 1
+  }
+}
+
+@test "#280: Chef questions stay on outcomes unless labeled increment-bounded" {
+  local interview
+  interview="$REPO/skills/cook/reference/capture-interview.md"
+  [ -f "$interview" ] || {
+    echo "capture-interview.md is missing"
+    return 1
+  }
+
+  grep -qiE 'outcomes' "$interview" || {
+    echo "capture-interview.md does not keep the Chef on outcomes"
+    return 1
+  }
+  grep -qiE '(bounded|bound)[^.]{0,80}(this )?increment|increment[- ]bounded' "$interview" || {
+    echo "increment questions are not labeled as bounded to this increment"
+    return 1
+  }
+  grep -qiE 'destination[^.]{0,80}(welcome|default)|(welcome|default)[^.]{0,80}destination' "$interview" || {
+    echo "destination answers are not welcome by default"
+    return 1
+  }
+}
+
+@test "#280: capture homes drop the empty-frontier lock and the unmerged-trial banner" {
+  local interview="$REPO/skills/cook/reference/capture-interview.md"
+  local skill="$REPO/skills/cook/SKILL.md"
+
+  if grep -qiE 'stop when the frontier is empty' "$interview" "$skill"; then
+    echo "the empty-frontier lock stop is still present"
+    return 1
+  fi
+  if grep -qiE 'frontier is empty[^.]{0,80}lock' "$interview" "$skill"; then
+    echo "an empty frontier is still treated as a lock"
+    return 1
+  fi
+  if grep -qiE 'not merged to trunk' "$interview"; then
+    echo "capture-interview.md still presents itself as an unmerged trial"
+    return 1
+  fi
 }
