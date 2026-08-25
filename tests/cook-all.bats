@@ -693,12 +693,14 @@ require_success() {
   fi
   require_regex "$compact" '-d[^.]{0,100}(refus|refuse)|(refus|refuse)[^.]{0,100}-d' 'if -d refuses'
   require_regex "$compact" '(refus|refuse)[^.]{0,160}(stop|print)[^.]{0,40}command|(stop|print)[^.]{0,80}command[^.]{0,80}(refus|refuse|-d)' '-d refuse stops and prints the command'
-  require_regex "$compact" 'HEAD.{0,80}is not.{0,40}tests\.gate\.hash' 'restore when HEAD is not tests.gate.hash'
-  require_regex "$compact" 'checkout.{0,20}tests\.gate\.hash' 'checkout tests.gate.hash if HEAD moved'
+  if grep -qE 'HEAD.{0,80}is not.{0,40}tests\.gate\.hash' <<<"$compact"; then
+    printf 'post-land checkout must not restore COOK_ROOT HEAD to tests.gate.hash before done\n'
+    return 1
+  fi
   case "$compact" in
-    *MERGED*HEAD*tests.gate.hash*checkout*tests.gate.hash*record\ that\ held\ return*checkout*PR\ base*git\ fetch*git\ pull\ --ff-only*git\ branch\ -d*) ;;
+    *MERGED*record\ that\ held\ return*checkout*PR\ base*git\ fetch*git\ pull\ --ff-only*git\ branch\ -d*) ;;
     *)
-      printf 'post-land checkout must follow MERGED, restore tests.gate.hash, record done, then PR base, git fetch, git pull --ff-only, git branch -d\n'
+      printf 'post-land checkout must follow MERGED, record done without restoring COOK_ROOT HEAD, then PR base, git fetch, git pull --ff-only, git branch -d\n'
       return 1
       ;;
   esac
@@ -864,13 +866,22 @@ require_success() {
   require_regex "$section" 'each lane.*independent|independently.*lane' 'independent task loops'
   require_regex "$section" 'different lanes.*concurrent|concurrent.*different lanes' 'cross-lane concurrent dispatch'
   require_regex "$section" 'record-lock.*serial|serial.*record-lock' 'serialized store writes'
-  require_regex "$section" 'integration.*serial.*main checkout|serial.*integration.*main checkout' 'serialized integration at the main checkout'
+  require_regex "$section" 'integration.*serial' 'serialized integration'
+  if grep -qiE 'serial.*integration.*main checkout|integration.*serial.*main checkout' <<<"$section"; then
+    echo "cook all still serializes integration at the main checkout"
+    return 1
+  fi
   require_regex "$section" 'completion order' 'completion-order landing'
   require_regex "$section" 'merge or rebase.*trunk|trunk.*merge or rebase' 'merge or rebase onto trunk'
   require_fixed "$section" 'cook verify --task <id>'
-  require_regex "$section" 'main root|root.*HEAD' 'root HEAD gate location'
-  require_regex "$section" 'HEAD match|HEAD.*match' 'done requires the gated HEAD'
-  require_regex "$section" 'clean tree|tree.*clean' 'done requires a clean tree'
+  require_regex "$section" 'private clean integration checkout|clean integration checkout' 'private clean integration checkout'
+  require_regex "$section" 'current trunk' 'checkout is rooted at current trunk'
+  require_regex "$section" 'bind.*integration checkout|integration checkout.*(gate|review|audit)|(gate|review|audit).*integration checkout' 'gate review and audit bind the integration checkout'
+  require_regex "$section" 'landed trunk object|trunk object.*gated checkpoint|gated checkpoint.*trunk object' 'done proves the landed trunk object'
+  if grep -qiE 'done still requires that HEAD match|done requires the gated HEAD|HEAD match and a clean tree' <<<"$section"; then
+    echo "cook all still requires COOK_ROOT HEAD or cleanliness for done"
+    return 1
+  fi
   require_regex "$section" 'record done.*release.*remove.*worktree' 'done, release, and worktree cleanup order'
 }
 
@@ -881,13 +892,21 @@ require_success() {
     return 1
   }
 
-  require_fixed "$completion" 'private integration checkpoint'
+  require_fixed "$completion" 'private clean integration checkout'
   require_fixed "$completion" 'capture the old trunk OID as O'
   require_regex "$completion" 'trunk.*unchanged.*judgment|judgment.*trunk.*unchanged' 'trunk stays unchanged during judgments'
   require_regex "$completion" 'one.*gate|gate.*once' 'one full-suite gate'
   require_regex "$completion" 'non-terminal.*judgment.*record.*immediate|record.*non-terminal.*judgment.*immediate' 'non-terminal judgment returns are recorded immediately'
   require_regex "$completion" 'hold only.*final passing|only.*final passing.*unrecorded' 'only the terminal passing return is briefly held'
-  require_regex "$completion" 'gate\.hash.*current.*HEAD|current.*HEAD.*gate\.hash' 'terminal gate hash equals main-root HEAD'
+  require_regex "$completion" 'private clean integration checkout|clean integration checkout at current trunk' 'private clean checkout at current trunk'
+  require_regex "$completion" 'state root.*(branch|files)|without changing the state root' 'create does not change the state root'
+  require_regex "$completion" 'create failure.*state root untouched|failure leaves the state root untouched' 'create failure leaves the state root untouched'
+  require_regex "$completion" 'from that checkout|from the integration checkout' 'CAS and gate bind the integration checkout'
+  require_regex "$completion" 'landed trunk object|trunk object matches the gated checkpoint' 'done matches landed trunk object to gated checkpoint'
+  if grep -qiE 'gate\.hash.*current.*HEAD|current.*HEAD.*gate\.hash' <<<"$completion"; then
+    echo "cook all still equates gate.hash with the state-root HEAD"
+    return 1
+  fi
   require_fixed "$completion" 'record the gated hash as G'
   require_regex "$completion" 'git merge-base --is-ancestor.*O.*G' 'ancestry check from old trunk O to gated checkpoint G'
   require_regex "$completion" 'git update-ref.*G.*O' 'atomic update-ref uses gated G with expected-old O'
@@ -902,8 +921,8 @@ require_success() {
   require_regex "$completion" 'never satisfy its successor|can never satisfy its successor' 'a discarded checkpoint judgment cannot satisfy the rebuilt one'
   require_regex "$completion" 'refuses.*live needs-work|live needs-work.*refuse' 'rebuild refuses an ordinary kickback'
   require_regex "$completion" 'never reached a checkpoint' 'rebuild refuses a lane with no checkpoint'
-  require_before "$completion" 'capture the old trunk OID as O' 'private integration checkpoint' 'capture old trunk before integration'
-  require_before "$completion" 'private integration checkpoint' 'cook verify --task <id>' 'checkpoint before its gate'
+  require_before "$completion" 'capture the old trunk OID as O' 'private clean integration checkout' 'capture old trunk before integration'
+  require_before "$completion" 'private clean integration checkout' 'cook verify --task <id>' 'checkpoint before its gate'
   require_before "$completion" 'cook verify --task <id>' 'dispatch review and required audit' 'gate before judgments'
   require_before "$completion" 'cook verify --task <id>' 'record the gated hash as G' 'gate before naming G'
   require_before "$completion" 'dispatch review and required audit' 'advance trunk to the exact gated hash' 'judgments before trunk'

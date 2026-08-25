@@ -200,13 +200,25 @@ function assertRecoveryJudgmentGate(task) {
   }
 }
 
-/** @param {string} root @param {MutableRecordTask} task */
-function assertCurrentRecoveryJudgmentGate(root, task) {
+/** @param {string} checkpointRoot @param {string} hash */
+function checkpointMatchesGate(checkpointRoot, hash) {
+  const head = git(checkpointRoot, ['rev-parse', 'HEAD']);
+  return head.status === 0 && hash === head.stdout.trim() && !treeDirty(checkpointRoot);
+}
+
+/** @param {string} checkpointRoot @param {MutableRecordTask} task */
+function assertCurrentRecoveryJudgmentGate(checkpointRoot, task) {
   assertRecoveryJudgmentGate(task);
-  const head = git(root, ['rev-parse', 'HEAD']);
-  if (head.status !== 0 || task.tests.gate.hash !== head.stdout.trim() || treeDirty(root)) {
+  if (!checkpointMatchesGate(checkpointRoot, task.tests.gate.hash)) {
     throw new Error('[record-transition] recovery gate must match the clean current checkpoint before judgment');
   }
+}
+
+/** @param {string} root @param {string} [trunkRef] */
+function landedTrunkOid(root, trunkRef) {
+  if (typeof trunkRef !== 'string' || trunkRef === '') return null;
+  const result = git(root, ['rev-parse', '--verify', trunkRef]);
+  return result.status === 0 ? (result.stdout ?? '').trim() : null;
 }
 
 
@@ -930,7 +942,8 @@ function recordCouncilRecovery(task, council) {
           && (recovery === undefined || recovery.builder_agent_id === scopedImplementer);
       }
       const gate = task.tests?.gate;
-      if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
+      if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === ''
+        || gate.hash === recovery?.baselineGate?.hash) {
         throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
       }
     }
@@ -1276,7 +1289,8 @@ export function transitionTask(task, stage, result) {
  *   allowTransientTerminal?: boolean,
  *   allowForeignTaskViolations?: boolean,
  *   journal?: import('./journal.js').JournalAppend | import('./journal.js').JournalAppend[],
- * }} [options]
+ *   trunkRef?: string,
+ *   checkpointRoot?: string,
  */
 export async function updateTask(root, id, update, options = {}) {
   return withStoreLock(root, async () => {
@@ -1297,21 +1311,19 @@ export async function updateTask(root, id, update, options = {}) {
       if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
         throw new Error('[record-transition] terminal completion requires a present clean green verification gate');
       }
-      const head = git(root, ['rev-parse', 'HEAD']);
-      if (head.status !== 0) {
-        throw new Error('[record-transition] git HEAD probe failed');
+      if (typeof options.checkpointRoot === 'string' && options.checkpointRoot !== '') {
+        if (!checkpointMatchesGate(options.checkpointRoot, gate.hash)) {
+          throw new Error('[record-transition] terminal checkpoint must be clean at the verification gate hash');
+        }
       }
-      if (gate.hash !== head.stdout.trim()) {
-        throw new Error('[record-transition] current HEAD does not match the terminal verification');
-      }
-      let dirty;
-      try {
-        dirty = treeDirty(root);
-      } catch {
-        throw new Error('[record-transition] git status working tree cleanliness probe failed');
-      }
-      if (dirty) {
-        throw new Error('[record-transition] terminal verification requires a clean working tree');
+      if (!lite) {
+        const trunk = landedTrunkOid(root, options.trunkRef);
+        if (trunk === null) {
+          throw new Error('[record-transition] git trunk probe failed');
+        }
+        if (gate.hash !== trunk) {
+          throw new Error('[record-transition] current trunk does not match the terminal verification');
+        }
       }
     }
     const store = tasks.map((stored) => stored._dir === taskPath ? { ...candidate, _dir: taskPath } : stored);
@@ -1547,12 +1559,13 @@ function bindCouncilObservedIdentity(specialistReturn, observedIdentity) {
  * @param {string} id
  * @param {string} file
  * @param {string | {member_agent_ids: string[], synthesizer_agent_id: string}} [observedAgentId]
+ * @param {{ checkpointRoot?: string, trunkRef?: string }} [options]
  */
-export async function recordSpecialistFile(root, stage, id, file, observedAgentId) {
+export async function recordSpecialistFile(root, stage, id, file, observedAgentId, options) {
   let parsed;
   try { parsed = JSON.parse(await readFile(file, 'utf8')); }
   catch { throw new Error(`[record-json] invalid JSON in ${file}`); }
-  return recordSpecialistReturn(root, stage, id, parsed, observedAgentId);
+  return recordSpecialistReturn(root, stage, id, parsed, observedAgentId, options);
 }
 
 /**
@@ -1561,8 +1574,9 @@ export async function recordSpecialistFile(root, stage, id, file, observedAgentI
  * @param {string} id
  * @param {unknown} value
  * @param {string | {member_agent_ids: string[], synthesizer_agent_id: string}} [observedAgentId]
+ * @param {{ checkpointRoot?: string, trunkRef?: string }} [options]
  */
-export async function recordSpecialistReturn(root, stage, id, value, observedAgentId) {
+export async function recordSpecialistReturn(root, stage, id, value, observedAgentId, options) {
   let specialistReturn;
   try {
     specialistReturn = validateSpecialistReturn(stage, value);
@@ -1608,7 +1622,9 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
     id,
     (task) => {
       if (['review', 'audit'].includes(stage) && isPendingCodeRecovery(task)) {
-        assertCurrentRecoveryJudgmentGate(root, task);
+        assertCurrentRecoveryJudgmentGate(options?.checkpointRoot ?? root, task);
+      } else if (stage === 'council' && isPendingCodeRecovery(task) && options?.checkpointRoot) {
+        assertCurrentRecoveryJudgmentGate(options.checkpointRoot, task);
       }
       const versionedTask = stage === 'council' && task.convergence?.council?.convened !== true && !requiresCouncilResearchProvenance(task)
         ? { ...task, pipelineVersion: currentPipelineVersion }
@@ -1618,6 +1634,8 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
     {
       allowTransientTerminal: true,
       journal,
+      trunkRef: options?.trunkRef,
+      checkpointRoot: options?.checkpointRoot,
     },
   );
 }
