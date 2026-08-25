@@ -337,7 +337,9 @@ async function main() {
         ? { member_agent_ids: rest.slice(2, 5), synthesizer_agent_id: rest[5] }
         : rest[2];
       const file = councilRecord ? rest[6] : rest[3];
-      await recordSpecialistFile(root, rest[0], rest[1], file, observedAgentId);
+      await recordSpecialistFile(root, rest[0], rest[1], file, observedAgentId, {
+        checkpointRoot: process.cwd(),
+      });
       return emit({ code: 0, stdout: [`cook: recorded ${rest[0]} for task ${rest[1]}`], stderr: [] });
     } catch (error) {
       process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
