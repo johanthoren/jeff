@@ -4516,6 +4516,45 @@ test('issue 284 lite done rejects when the checkpoint HEAD is not gate.hash', as
   }
 });
 
+test('issue 295 lite done rejects when omitted checkpointRoot falls back to a dirty state root', async () => {
+  const { root, taskDir } = await makeRoot(terminalReviewTask());
+  try {
+    await writeFile(join(root, 'dirt.txt'), 'dirt on the fallback root\n', 'utf8');
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer')),
+      /\[record-transition\].*(?:clean|checkpoint|gate|verification|dirty)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 295 lite done rejects when omitted checkpointRoot falls back to a drifted state root', async () => {
+  const { root, taskDir } = await makeRoot(terminalReviewTask());
+  try {
+    const gateHash = (await readTask(taskDir)).tests.gate.hash;
+    await writeFile(join(root, 'later.txt'), 'post-gate fallback drift\n', 'utf8');
+    runGit(root, ['add', 'later.txt']);
+    runGit(root, ['commit', '-qm', 'drift fallback HEAD']);
+    assert.notEqual(runGit(root, ['rev-parse', 'HEAD']), gateHash);
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer')),
+      /\[record-transition\].*(?:clean|checkpoint|gate|verification|stale|fresh)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
+    assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 284 full done records when the explicit trunk-ref matches the gate', async () => {
   const { root, taskDir, checkout, checkoutHome, gateHash, guessedMaster } = await prepareFullDoneCheckpoint();
   try {
@@ -5345,7 +5384,7 @@ test('issue 68 failed reassessment requires refute and permits no second impleme
   }
 });
 
-test('issue 67 scoped completion records done when COOK_ROOT HEAD drifted after the gate', async () => {
+test('issue 295 scoped completion rejects when omitted checkpointRoot falls back to COOK_ROOT HEAD drift', async () => {
   const { root, taskDir } = await prepareMixedStageReassessment();
   try {
     const verification = await runVerify(root, '18');
@@ -5356,29 +5395,36 @@ test('issue 67 scoped completion records done when COOK_ROOT HEAD drifted after 
     runGit(root, ['add', 'post-verify-change.txt']);
     runGit(root, ['commit', '-qm', 'post verify content change']);
     assert.notEqual(runGit(root, ['rev-parse', 'HEAD']), gateHash);
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
-    const recorded = await recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped'));
-    assert.equal(recorded.status, 'done');
-    assert.equal(recorded.stage, 'done');
-    assert.equal(recorded.tests.gate.hash, gateHash);
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped')),
+      /\[record-transition\].*(?:clean|checkpoint|gate|verification|stale|fresh)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
+    assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('issue 68 scoped completion records done when the state root is dirty and trunk still matches the gate', async () => {
+
+test('issue 295 scoped completion rejects when omitted checkpointRoot falls back to a dirty state root', async () => {
   const { root, taskDir } = await prepareMixedStageReassessment();
   try {
     const verification = await runVerify(root, '18');
     assert.equal(verification.code, 0, verification.stderr.join('\n'));
     await recordFreshCouncilJudgments(root, { includeAudit: true });
     await writeFile(join(root, 'untracked.txt'), 'content not covered by the gate\n', 'utf8');
-    const trunk = runGit(root, ['rev-parse', 'HEAD']);
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
-    const recorded = await recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped'));
-    assert.equal(recorded.status, 'done');
-    assert.equal(recorded.stage, 'done');
-    assert.equal(recorded.tests.gate.hash, trunk);
+    await assert.rejects(
+      recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped')),
+      /\[record-transition\].*(?:clean|checkpoint|gate|verification|dirty)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
     assert.equal(await readFile(join(root, 'untracked.txt'), 'utf8'), 'content not covered by the gate\n');
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -5386,7 +5432,8 @@ test('issue 68 scoped completion records done when the state root is dirty and t
 });
 
 
-test('issue 67 scoped completion records done when the state-root git status probe fails', async () => {
+
+test('issue 295 scoped completion rejects when omitted checkpointRoot falls back to a failed status probe', async () => {
   const { root, taskDir } = await prepareCompletedMixedStageReassessment();
   try {
     const corruptIndex = join(root, '.jeff', 'corrupt-index');
@@ -5402,6 +5449,7 @@ test('issue 67 scoped completion records done when the state-root git status pro
     });
     assert.equal(head.status, 0, head.stderr);
     assert.notEqual(status.status, 0);
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
     const councilResult = mixedStageCouncilReturn('scoped-fix-shipped');
     const file = await writeReturn(root, councilResult);
@@ -5421,14 +5469,15 @@ await recordSpecialistFile(process.argv[1], 'council', '18', process.argv[2], JS
       env: { ...process.env, ...env, COOK_ROOT: root },
       encoding: 'utf8',
     });
-    assert.equal(recorded.status, 0, recorded.stderr);
-    const done = await readTask(taskDir);
-    assert.equal(done.status, 'done');
-    assert.equal(done.stage, 'done');
+    assert.notEqual(recorded.status, 0);
+    assert.match(recorded.stderr, /\[git-status\]|\[record-transition\]/);
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
+
 
 
 test('issue 67 recovery completion rejects persisted pass labels with blockers atomically', async () => {
