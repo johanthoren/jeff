@@ -1324,7 +1324,7 @@ export async function updateTask(root, id, update, options = {}) {
         options.allowTransientTerminal === true
         && !lite
         && task.status !== 'done'
-        && candidate.status === 'done'
+        && (candidate.status === 'done' || candidate.status === 'operator_accepted')
         && violation.startsWith(candidatePrunePrefix)
         && violation.includes('[prune]')
       ))
@@ -1510,7 +1510,7 @@ export async function recordAcceptance(root, id, input) {
     };
     next.updatedAt = acceptedAt;
     return /** @type {TaskJson} */ (next);
-  }, { allowForeignTaskViolations: true });
+  }, { allowTransientTerminal: true, allowForeignTaskViolations: true });
 }
 
 /**
