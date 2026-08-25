@@ -1311,10 +1311,8 @@ export async function updateTask(root, id, update, options = {}) {
       if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
         throw new Error('[record-transition] terminal completion requires a present clean green verification gate');
       }
-      if (typeof options.checkpointRoot === 'string' && options.checkpointRoot !== '') {
-        if (!checkpointMatchesGate(options.checkpointRoot, gate.hash)) {
-          throw new Error('[record-transition] terminal checkpoint must be clean at the verification gate hash');
-        }
+      if (!checkpointMatchesGate(options.checkpointRoot ?? root, gate.hash)) {
+        throw new Error('[record-transition] terminal checkpoint must be clean at the verification gate hash');
       }
       if (!lite) {
         const trunk = landedTrunkOid(root, options.trunkRef);
