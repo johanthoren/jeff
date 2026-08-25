@@ -200,11 +200,16 @@ function assertRecoveryJudgmentGate(task) {
   }
 }
 
+/** @param {string} checkpointRoot @param {string} hash */
+function checkpointMatchesGate(checkpointRoot, hash) {
+  const head = git(checkpointRoot, ['rev-parse', 'HEAD']);
+  return head.status === 0 && hash === head.stdout.trim() && !treeDirty(checkpointRoot);
+}
+
 /** @param {string} checkpointRoot @param {MutableRecordTask} task */
 function assertCurrentRecoveryJudgmentGate(checkpointRoot, task) {
   assertRecoveryJudgmentGate(task);
-  const head = git(checkpointRoot, ['rev-parse', 'HEAD']);
-  if (head.status !== 0 || task.tests.gate.hash !== head.stdout.trim() || treeDirty(checkpointRoot)) {
+  if (!checkpointMatchesGate(checkpointRoot, task.tests.gate.hash)) {
     throw new Error('[record-transition] recovery gate must match the clean current checkpoint before judgment');
   }
 }
@@ -1285,7 +1290,7 @@ export function transitionTask(task, stage, result) {
  *   allowForeignTaskViolations?: boolean,
  *   journal?: import('./journal.js').JournalAppend | import('./journal.js').JournalAppend[],
  *   trunkRef?: string,
- * }} [options]
+ *   checkpointRoot?: string,
  */
 export async function updateTask(root, id, update, options = {}) {
   return withStoreLock(root, async () => {
@@ -1305,6 +1310,11 @@ export async function updateTask(root, id, update, options = {}) {
       const gate = candidate.tests?.gate;
       if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
         throw new Error('[record-transition] terminal completion requires a present clean green verification gate');
+      }
+      if (typeof options.checkpointRoot === 'string' && options.checkpointRoot !== '') {
+        if (!checkpointMatchesGate(options.checkpointRoot, gate.hash)) {
+          throw new Error('[record-transition] terminal checkpoint must be clean at the verification gate hash');
+        }
       }
       if (!lite) {
         const trunk = landedTrunkOid(root, options.trunkRef);
@@ -1625,6 +1635,7 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
       allowTransientTerminal: true,
       journal,
       trunkRef: options?.trunkRef,
+      checkpointRoot: options?.checkpointRoot,
     },
   );
 }

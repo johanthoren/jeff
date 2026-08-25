@@ -737,6 +737,66 @@ async function prepareDirtyOffTrunkRecoveryCheckpoint() {
   return { root, taskDir, checkout, checkoutHome, gateHash };
 }
 
+async function prepareLiteDoneCheckpoint() {
+  const { root, taskDir } = await makeRoot(terminalReviewTask());
+  const trunkRef = runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  const trunk = runGit(root, ['rev-parse', 'HEAD']);
+  runGit(root, ['checkout', '-q', '-b', 'task/284']);
+  await writeFile(join(root, 'feature.txt'), 'lane commit\n', 'utf8');
+  runGit(root, ['add', 'feature.txt']);
+  runGit(root, ['commit', '-qm', 'lane work']);
+  const gateHash = runGit(root, ['rev-parse', 'HEAD']);
+  await recordCurrentGate(root, taskDir);
+  const checkoutHome = await mkdtemp(join(tmpdir(), 'jeff-284-lite-done-'));
+  const checkout = join(checkoutHome, 'checkout');
+  runGit(root, ['worktree', 'add', '--detach', '-q', checkout, gateHash]);
+  await writeFile(join(root, 'unrelated-state-root.txt'), 'dirt on the state root\n', 'utf8');
+  assert.notEqual(gateHash, trunk);
+  assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
+  assert.equal(runGit(root, ['rev-parse', trunkRef]), trunk);
+  assert.equal(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+  assert.equal(runGit(checkout, ['status', '--porcelain']), '');
+  return { root, taskDir, checkout, checkoutHome, gateHash, trunk, trunkRef };
+}
+
+async function prepareFullDoneCheckpoint() {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-284-full-done-'));
+  const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
+  await mkdir(taskDir, { recursive: true });
+  await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify({ active: true }), 'utf8');
+  await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(terminalReviewTask(), null, 2)}\n`, 'utf8');
+  runGit(root, ['init', '-q', '-b', 'master']);
+  runGit(root, ['config', 'user.email', 'tests@example.com']);
+  runGit(root, ['config', 'user.name', 'Tests']);
+  runGit(root, ['config', 'commit.gpgsign', 'false']);
+  await writeFile(join(root, 'seed.txt'), 'seed\n', 'utf8');
+  runGit(root, ['add', '.']);
+  runGit(root, ['commit', '-qm', 'gated trunk']);
+  runGit(root, ['branch', 'release']);
+  const gateHash = runGit(root, ['rev-parse', 'refs/heads/release']);
+  await recordCurrentGate(root, taskDir);
+  await writeFile(join(root, 'decoy.txt'), 'guessed master is not the trunk\n', 'utf8');
+  runGit(root, ['add', 'decoy.txt']);
+  runGit(root, ['commit', '-qm', 'decoy master']);
+  const guessedMaster = runGit(root, ['rev-parse', 'refs/heads/master']);
+  const checkoutHome = await mkdtemp(join(tmpdir(), 'jeff-284-full-done-checkout-'));
+  const checkout = join(checkoutHome, 'checkout');
+  runGit(root, ['worktree', 'add', '--detach', '-q', checkout, gateHash]);
+  runGit(root, ['checkout', '-q', '-b', 'task/284']);
+  await writeFile(join(root, 'unrelated-state-root.txt'), 'dirt on the state root\n', 'utf8');
+  assert.notEqual(guessedMaster, gateHash);
+  assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
+  assert.equal(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+  assert.equal(runGit(checkout, ['status', '--porcelain']), '');
+  return { root, taskDir, checkout, checkoutHome, gateHash, guessedMaster };
+}
+
+async function removeDoneCheckpoint({ root, checkout, checkoutHome }) {
+  spawnSync('git', ['-C', root, 'worktree', 'remove', '--force', checkout], { encoding: 'utf8' });
+  await rm(checkoutHome, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true });
+}
+
 
 /** @param {string} root @param {Record<string, any>} [overrides] */
 async function recordFreshCouncilJudgments(root, overrides = {}) {
@@ -4386,126 +4446,175 @@ test('full-mode recording persists transient done state before the prune gate', 
 });
 
 test('issue 284 lite done records after wait-for-land when local trunk is not the feature gate hash', async () => {
-  const { root, taskDir } = await makeRoot(terminalReviewTask());
+  const { root, taskDir, checkout, checkoutHome, gateHash, trunk, trunkRef } = await prepareLiteDoneCheckpoint();
   try {
-    const trunkRef = runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
-    const trunk = runGit(root, ['rev-parse', 'HEAD']);
-    runGit(root, ['checkout', '-q', '-b', 'task/284']);
-    await writeFile(join(root, 'feature.txt'), 'lane commit\n', 'utf8');
-    runGit(root, ['add', 'feature.txt']);
-    runGit(root, ['commit', '-qm', 'lane work']);
-    const featureHead = runGit(root, ['rev-parse', 'HEAD']);
-    await recordCurrentGate(root, taskDir);
-    await writeFile(join(root, 'unrelated-state-root.txt'), 'dirt on the state root\n', 'utf8');
-    assert.notEqual(featureHead, trunk);
-    assert.equal((await readTask(taskDir)).tests.gate.hash, featureHead);
-    assert.equal(runGit(root, ['rev-parse', trunkRef]), trunk);
-
-    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'));
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'), {
+      checkpointRoot: checkout,
+    });
     const recorded = await readTask(taskDir);
 
     assert.equal(recorded.status, 'done');
     assert.equal(recorded.stage, 'done');
-    assert.equal(recorded.tests.gate.hash, featureHead);
-    assert.notEqual(runGit(root, ['rev-parse', trunkRef]), featureHead);
+    assert.equal(recorded.tests.gate.hash, gateHash);
+    assert.notEqual(runGit(root, ['rev-parse', trunkRef]), gateHash);
     assert.equal(runGit(root, ['rev-parse', trunkRef]), trunk);
     assert.equal(runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']), 'task/284');
     assert.equal(await readFile(join(root, 'unrelated-state-root.txt'), 'utf8'), 'dirt on the state root\n');
+    assert.equal(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+    assert.equal(runGit(checkout, ['status', '--porcelain']), '');
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeDoneCheckpoint({ root, checkout, checkoutHome });
+  }
+});
+
+test('issue 284 lite done rejects when the checkpoint is dirty', async () => {
+  const { root, taskDir, checkout, checkoutHome, gateHash } = await prepareLiteDoneCheckpoint();
+  try {
+    await writeFile(join(checkout, 'checkpoint-dirt.txt'), 'dirt on the gated checkout\n', 'utf8');
+    assert.notEqual(runGit(checkout, ['status', '--porcelain']), '');
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'), {
+        checkpointRoot: checkout,
+      }),
+      /\[record-transition\].*(?:clean|checkpoint|gate|verification|dirty)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
+    assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
+    assert.equal(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+    assert.notEqual(runGit(checkout, ['status', '--porcelain']), '');
+    assert.equal(await readFile(join(root, 'unrelated-state-root.txt'), 'utf8'), 'dirt on the state root\n');
+  } finally {
+    await removeDoneCheckpoint({ root, checkout, checkoutHome });
+  }
+});
+
+test('issue 284 lite done rejects when the checkpoint HEAD is not gate.hash', async () => {
+  const { root, taskDir, checkout, checkoutHome, gateHash } = await prepareLiteDoneCheckpoint();
+  try {
+    await writeFile(join(checkout, 'later.txt'), 'post-gate checkpoint drift\n', 'utf8');
+    runGit(checkout, ['add', 'later.txt']);
+    runGit(checkout, ['commit', '-qm', 'drift checkpoint HEAD']);
+    assert.notEqual(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'), {
+        checkpointRoot: checkout,
+      }),
+      /\[record-transition\].*(?:clean|checkpoint|gate|verification|stale|fresh)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
+    assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
+    assert.notEqual(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+    assert.equal(await readFile(join(root, 'unrelated-state-root.txt'), 'utf8'), 'dirt on the state root\n');
+  } finally {
+    await removeDoneCheckpoint({ root, checkout, checkoutHome });
   }
 });
 
 test('issue 284 full done records when the explicit trunk-ref matches the gate', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'jeff-record-full-trunk-ref-'));
-  const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
+  const { root, taskDir, checkout, checkoutHome, gateHash, guessedMaster } = await prepareFullDoneCheckpoint();
   try {
-    await mkdir(taskDir, { recursive: true });
-    await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify({ active: true }), 'utf8');
-    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(terminalReviewTask(), null, 2)}\n`, 'utf8');
-    runGit(root, ['init', '-q', '-b', 'master']);
-    runGit(root, ['config', 'user.email', 'tests@example.com']);
-    runGit(root, ['config', 'user.name', 'Tests']);
-    runGit(root, ['config', 'commit.gpgsign', 'false']);
-    await writeFile(join(root, 'seed.txt'), 'seed\n', 'utf8');
-    runGit(root, ['add', '.']);
-    runGit(root, ['commit', '-qm', 'gated trunk']);
-    runGit(root, ['branch', 'release']);
-    const gated = runGit(root, ['rev-parse', 'refs/heads/release']);
-    await recordCurrentGate(root, taskDir);
-
-    await writeFile(join(root, 'decoy.txt'), 'guessed master is not the trunk\n', 'utf8');
-    runGit(root, ['add', 'decoy.txt']);
-    runGit(root, ['commit', '-qm', 'decoy master']);
-    const guessedMaster = runGit(root, ['rev-parse', 'refs/heads/master']);
-    assert.notEqual(guessedMaster, gated);
-    assert.equal((await readTask(taskDir)).tests.gate.hash, gated);
-
-    runGit(root, ['checkout', '-q', '-b', 'task/284']);
-    await writeFile(join(root, 'unrelated-state-root.txt'), 'dirt on the state root\n', 'utf8');
-
     await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'), {
+      checkpointRoot: checkout,
       trunkRef: 'refs/heads/release',
     });
     const recorded = await readTask(taskDir);
 
     assert.equal(recorded.status, 'done');
     assert.equal(recorded.stage, 'done');
-    assert.equal(recorded.tests.gate.hash, gated);
-    assert.equal(runGit(root, ['rev-parse', 'refs/heads/release']), gated);
+    assert.equal(recorded.tests.gate.hash, gateHash);
+    assert.equal(runGit(root, ['rev-parse', 'refs/heads/release']), gateHash);
     assert.equal(runGit(root, ['rev-parse', 'refs/heads/master']), guessedMaster);
     assert.equal(runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']), 'task/284');
     assert.equal(await readFile(join(root, 'unrelated-state-root.txt'), 'utf8'), 'dirt on the state root\n');
+    assert.equal(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+    assert.equal(runGit(checkout, ['status', '--porcelain']), '');
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeDoneCheckpoint({ root, checkout, checkoutHome });
+  }
+});
+
+test('issue 284 full done rejects when the checkpoint is dirty', async () => {
+  const { root, taskDir, checkout, checkoutHome, gateHash } = await prepareFullDoneCheckpoint();
+  try {
+    await writeFile(join(checkout, 'checkpoint-dirt.txt'), 'dirt on the gated checkout\n', 'utf8');
+    assert.notEqual(runGit(checkout, ['status', '--porcelain']), '');
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'), {
+        checkpointRoot: checkout,
+        trunkRef: 'refs/heads/release',
+      }),
+      /\[record-transition\].*(?:clean|checkpoint|gate|verification|dirty)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
+    assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
+    assert.equal(runGit(root, ['rev-parse', 'refs/heads/release']), gateHash);
+    assert.notEqual(runGit(checkout, ['status', '--porcelain']), '');
+  } finally {
+    await removeDoneCheckpoint({ root, checkout, checkoutHome });
+  }
+});
+
+test('issue 284 full done rejects when the checkpoint HEAD is not gate.hash', async () => {
+  const { root, taskDir, checkout, checkoutHome, gateHash } = await prepareFullDoneCheckpoint();
+  try {
+    await writeFile(join(checkout, 'later.txt'), 'post-gate checkpoint drift\n', 'utf8');
+    runGit(checkout, ['add', 'later.txt']);
+    runGit(checkout, ['commit', '-qm', 'drift checkpoint HEAD']);
+    assert.notEqual(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+
+    await assert.rejects(
+      recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'), {
+        checkpointRoot: checkout,
+        trunkRef: 'refs/heads/release',
+      }),
+      /\[record-transition\].*(?:clean|checkpoint|gate|verification|stale|fresh)/,
+    );
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal((await readTask(taskDir)).status, 'in_progress');
+    assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
+    assert.equal(runGit(root, ['rev-parse', 'refs/heads/release']), gateHash);
+    assert.notEqual(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+  } finally {
+    await removeDoneCheckpoint({ root, checkout, checkoutHome });
   }
 });
 
 test('issue 284 cook record full done records when the explicit trunk-ref matches the gate', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'jeff-record-live-full-trunk-ref-'));
-  const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
+  const { root, taskDir, checkout, checkoutHome, gateHash, guessedMaster } = await prepareFullDoneCheckpoint();
   try {
-    await mkdir(taskDir, { recursive: true });
-    await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify({ active: true }), 'utf8');
-    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(terminalReviewTask(), null, 2)}\n`, 'utf8');
-    runGit(root, ['init', '-q', '-b', 'master']);
-    runGit(root, ['config', 'user.email', 'tests@example.com']);
-    runGit(root, ['config', 'user.name', 'Tests']);
-    runGit(root, ['config', 'commit.gpgsign', 'false']);
-    await writeFile(join(root, 'seed.txt'), 'seed\n', 'utf8');
-    runGit(root, ['add', '.']);
-    runGit(root, ['commit', '-qm', 'gated trunk']);
-    runGit(root, ['branch', 'release']);
-    const gated = runGit(root, ['rev-parse', 'refs/heads/release']);
-    await recordCurrentGate(root, taskDir);
-
-    await writeFile(join(root, 'decoy.txt'), 'guessed master is not the trunk\n', 'utf8');
-    runGit(root, ['add', 'decoy.txt']);
-    runGit(root, ['commit', '-qm', 'decoy master']);
-    const guessedMaster = runGit(root, ['rev-parse', 'refs/heads/master']);
-    assert.notEqual(guessedMaster, gated);
-    assert.equal((await readTask(taskDir)).tests.gate.hash, gated);
-
-    runGit(root, ['checkout', '-q', '-b', 'task/284']);
-    await writeFile(join(root, 'unrelated-state-root.txt'), 'dirt on the state root\n', 'utf8');
-
     const file = await writeReturn(root, reviewReturn('reviewer'));
-    const result = runCook(root, [
-      'record', 'review', '18', 'reviewer', file,
+    const result = spawnSync(process.execPath, [
+      COOK_JS, 'record', 'review', '18', 'reviewer', file,
       '--trunk-ref', 'refs/heads/release',
-    ]);
+    ], {
+      cwd: checkout,
+      env: { ...process.env, COOK_ROOT: root },
+      encoding: 'utf8',
+    });
     const recorded = await readTask(taskDir);
 
-    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.status, 0, result.stderr);
     assert.equal(recorded.status, 'done');
     assert.equal(recorded.stage, 'done');
-    assert.equal(recorded.tests.gate.hash, gated);
-    assert.equal(runGit(root, ['rev-parse', 'refs/heads/release']), gated);
+    assert.equal(recorded.tests.gate.hash, gateHash);
+    assert.equal(runGit(root, ['rev-parse', 'refs/heads/release']), gateHash);
     assert.equal(runGit(root, ['rev-parse', 'refs/heads/master']), guessedMaster);
     assert.equal(runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']), 'task/284');
     assert.equal(await readFile(join(root, 'unrelated-state-root.txt'), 'utf8'), 'dirt on the state root\n');
+    assert.equal(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+    assert.equal(runGit(checkout, ['status', '--porcelain']), '');
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeDoneCheckpoint({ root, checkout, checkoutHome });
   }
 });
 
