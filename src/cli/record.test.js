@@ -4461,6 +4461,54 @@ test('issue 284 full done records when the explicit trunk-ref matches the gate',
   }
 });
 
+test('issue 284 cook record full done records when the explicit trunk-ref matches the gate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jeff-record-live-full-trunk-ref-'));
+  const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
+  try {
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(root, '.jeff', 'config.json'), JSON.stringify({ active: true }), 'utf8');
+    await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(terminalReviewTask(), null, 2)}\n`, 'utf8');
+    runGit(root, ['init', '-q', '-b', 'master']);
+    runGit(root, ['config', 'user.email', 'tests@example.com']);
+    runGit(root, ['config', 'user.name', 'Tests']);
+    runGit(root, ['config', 'commit.gpgsign', 'false']);
+    await writeFile(join(root, 'seed.txt'), 'seed\n', 'utf8');
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-qm', 'gated trunk']);
+    runGit(root, ['branch', 'release']);
+    const gated = runGit(root, ['rev-parse', 'refs/heads/release']);
+    await recordCurrentGate(root, taskDir);
+
+    await writeFile(join(root, 'decoy.txt'), 'guessed master is not the trunk\n', 'utf8');
+    runGit(root, ['add', 'decoy.txt']);
+    runGit(root, ['commit', '-qm', 'decoy master']);
+    const guessedMaster = runGit(root, ['rev-parse', 'refs/heads/master']);
+    assert.notEqual(guessedMaster, gated);
+    assert.equal((await readTask(taskDir)).tests.gate.hash, gated);
+
+    runGit(root, ['checkout', '-q', '-b', 'task/284']);
+    await writeFile(join(root, 'unrelated-state-root.txt'), 'dirt on the state root\n', 'utf8');
+
+    const file = await writeReturn(root, reviewReturn('reviewer'));
+    const result = runCook(root, [
+      'record', 'review', '18', 'reviewer', file,
+      '--trunk-ref', 'refs/heads/release',
+    ]);
+    const recorded = await readTask(taskDir);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(recorded.status, 'done');
+    assert.equal(recorded.stage, 'done');
+    assert.equal(recorded.tests.gate.hash, gated);
+    assert.equal(runGit(root, ['rev-parse', 'refs/heads/release']), gated);
+    assert.equal(runGit(root, ['rev-parse', 'refs/heads/master']), guessedMaster);
+    assert.equal(runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']), 'task/284');
+    assert.equal(await readFile(join(root, 'unrelated-state-root.txt'), 'utf8'), 'dirt on the state root\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 
 test('follow-up-only audit reaches an INV-4-compatible terminal outcome with evidence retained', async () => {
   const followup = { ...blockingFinding({ class: 'follow-up', line: 105, severity: 'low' }), cwe: null };

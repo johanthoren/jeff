@@ -327,7 +327,16 @@ async function main() {
   if (sub === 'record') {
     const councilRecord = rest[0] === 'council';
     const expectedArguments = councilRecord ? 7 : 4;
-    if (rest.length !== expectedArguments) {
+    /** @type {string | undefined} */
+    let trunkRef;
+    if (rest[expectedArguments] === '--trunk-ref') {
+      trunkRef = rest[expectedArguments + 1];
+      if (!trunkRef || trunkRef.startsWith('-')) {
+        process.stderr.write("cook: record: option '--trunk-ref' requires a value\n");
+        return process.exit(1);
+      }
+    }
+    if (rest.length !== (trunkRef === undefined ? expectedArguments : expectedArguments + 2)) {
       process.stderr.write('cook: usage: cook record <stage> <id> <observed-agent-id> <file>\n');
       process.stderr.write('       or: cook record council <id> <member-agent-id> <member-agent-id> <member-agent-id> <synthesizer-agent-id> <file>\n');
       return process.exit(1);
@@ -339,6 +348,7 @@ async function main() {
       const file = councilRecord ? rest[6] : rest[3];
       await recordSpecialistFile(root, rest[0], rest[1], file, observedAgentId, {
         checkpointRoot: process.cwd(),
+        ...(trunkRef === undefined ? {} : { trunkRef }),
       });
       return emit({ code: 0, stdout: [`cook: recorded ${rest[0]} for task ${rest[1]}`], stderr: [] });
     } catch (error) {
