@@ -232,7 +232,7 @@ async function main() {
   }
   if (sub === 'verify') {
     if (rest.length === 0) return emit(await runVerify(root));
-    if (rest[0] === '--task' && rest[1] && rest.length === 2) return emit(await runVerify(root, rest[1]));
+    if (rest[0] === '--task' && rest[1] && rest.length === 2) return emit(await runVerify(root, rest[1], { checkpointRoot: process.cwd() }));
     if (rest[0]?.startsWith('-')) process.stderr.write(`cook: verify: unknown option '${rest[0]}'\n`);
     else process.stderr.write(`cook: verify: unexpected argument '${rest[0]}'\n`);
     return process.exit(1);

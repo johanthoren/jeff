@@ -108,6 +108,7 @@ async function recordCurrentGate(root, taskDir) {
 /** @param {string} root @param {string[]} args @param {NodeJS.ProcessEnv} [env] */
 function runCook(root, args, env = {}) {
   const result = spawnSync(process.execPath, [COOK_JS, ...args], {
+    cwd: root,
     env: { ...process.env, ...env, COOK_ROOT: root },
     encoding: 'utf8',
   });

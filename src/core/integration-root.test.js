@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { appendTaskJournal } from './journal.js';
 import { runVerify } from './verify.js';
@@ -23,6 +24,8 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: 'test@jeff.example',
 };
 
+const COOK_JS = join(dirname(fileURLToPath(import.meta.url)), '../cli/cook.js');
+
 const DIRTY_REL = 'unrelated-state-root.txt';
 const DIRTY_CONTENTS = 'state-root dirt that must survive checkout create\n';
 
@@ -36,6 +39,16 @@ function gitOk(root, args) {
   const result = git(root, args);
   assert.equal(result.status, 0, result.stderr);
   return (result.stdout ?? '').trim();
+}
+
+/** @param {string} root @param {string[]} args @param {string} cwd */
+function runCook(root, args, cwd) {
+  const result = spawnSync(process.execPath, [COOK_JS, ...args], {
+    cwd,
+    env: { ...GIT_ENV, COOK_ROOT: root },
+    encoding: 'utf8',
+  });
+  return { code: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
 /** @param {string} root */
@@ -234,6 +247,53 @@ test('runVerify --task full binds the integrated HEAD not the bare trunk checkou
     assert.notEqual(gated.tests.gate.hash, featureHead);
     assert.equal(gated.tests.gate.clean, true);
     assert.equal(gated.tests.green, true);
+    assert.equal(gitOk(root, ['rev-parse', '--abbrev-ref', 'HEAD']), before.branch);
+    assert.equal(gitOk(root, ['rev-parse', 'HEAD']), featureHead);
+    assert.equal(gitOk(root, ['rev-parse', 'master']), before.trunk);
+    assert.equal(await readFile(join(root, DIRTY_REL), 'utf8'), DIRTY_CONTENTS);
+    assert.match(gitOk(root, ['status', '--porcelain']), /unrelated-state-root\.txt/);
+  } finally {
+    git(root, ['worktree', 'remove', '--force', checkout]);
+    await rm(checkoutHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('issue 284 cook verify --task binds cwd checkout HEAD not COOK_ROOT', async () => {
+  const { root, taskDir, trunkOid, featureHead } = await makeDirtyOffTrunkRoot('full');
+  const checkoutHome = await mkdtemp(join(tmpdir(), 'jeff-cli-checkpoint-'));
+  const checkout = join(checkoutHome, 'checkout');
+  try {
+    gitOk(root, ['worktree', 'add', '--detach', '-q', checkout, trunkOid]);
+    gitOk(checkout, ['merge', '--no-ff', '-m', 'integrate task lane', featureHead]);
+    const integrated = gitOk(checkout, ['rev-parse', 'HEAD']);
+    assert.notEqual(integrated, trunkOid);
+    assert.notEqual(integrated, featureHead);
+    assert.equal(gitOk(checkout, ['status', '--porcelain']), '');
+
+    await writeFile(join(root, '.jeff', 'config.json'), `${JSON.stringify({
+      schemaVersion: 1,
+      active: true,
+      testCommand: `test "$(git rev-parse HEAD)" = '${integrated}' && printf ran > "$COOK_ROOT/.jeff/suite-ran"`,
+    })}\n`, 'utf8');
+
+    const before = snapshotStateRoot(root);
+    const verification = runCook(root, ['verify', '--task', '18'], checkout);
+    assert.equal(verification.code, 0, verification.stderr);
+
+    const gated = JSON.parse(await readFile(join(taskDir, 'task.json'), 'utf8'));
+    assert.equal(gated.tests.gate.hash, integrated);
+    assert.notEqual(gated.tests.gate.hash, trunkOid);
+    assert.notEqual(gated.tests.gate.hash, featureHead);
+    assert.notEqual(gated.tests.gate.hash, before.head);
+    assert.equal(gated.tests.gate.clean, true);
+    assert.equal(gated.tests.green, true);
+    assert.equal(await readFile(join(root, '.jeff', 'suite-ran'), 'utf8'), 'ran');
+    await assert.rejects(() => readFile(join(checkout, '.jeff', 'suite-ran'), 'utf8'));
+    await assert.rejects(() => readFile(join(checkout, '.jeff', 'tasks', '018-record-specialists', 'task.json'), 'utf8'));
+    await assert.rejects(() => readFile(join(checkout, '.jeff', 'tasks', '018-record-specialists', 'journal.jsonl'), 'utf8'));
+    await assert.rejects(() => readFile(join(checkout, '.jeff', '.record-lock'), 'utf8'));
+    assert.match(await readFile(join(taskDir, 'journal.jsonl'), 'utf8'), /"event":"gate"/);
     assert.equal(gitOk(root, ['rev-parse', '--abbrev-ref', 'HEAD']), before.branch);
     assert.equal(gitOk(root, ['rev-parse', 'HEAD']), featureHead);
     assert.equal(gitOk(root, ['rev-parse', 'master']), before.trunk);
