@@ -1291,6 +1291,7 @@ export function transitionTask(task, stage, result) {
  *   journal?: import('./journal.js').JournalAppend | import('./journal.js').JournalAppend[],
  *   trunkRef?: string,
  *   checkpointRoot?: string,
+ * }} [options]
  */
 export async function updateTask(root, id, update, options = {}) {
   return withStoreLock(root, async () => {
@@ -1477,19 +1478,22 @@ export async function recordAcceptance(root, id, input) {
     throw new Error('[record-accept] operator identity is required');
   }
   return updateTask(root, id, (task) => {
+    const acceptance = task.acceptance;
     if (task.status === 'operator_accepted'
-      && task.acceptance?.hash === input.hash
-      && task.acceptance.acceptedBy === operator
-      && task.acceptance.reason === input.reason
-      && isDeepStrictEqual(task.acceptance.evidence, input.evidence)) {
+      && acceptance
+      && acceptance.hash === input.hash
+      && acceptance.acceptedBy === operator
+      && acceptance.reason === input.reason
+      && isDeepStrictEqual(acceptance.evidence, input.evidence)) {
       return task;
     }
     if (isOperation(task)) {
       throw new Error('[record-accept] ineligible: only a code task can be accepted');
     }
+    const recovery = /** @type {import('./types.js').CodeConvergence | undefined} */ (task.convergence)?.recovery;
     if (task.status !== 'blocked'
       || task.convergence?.council?.outcome !== 'blocked-to-operator'
-      || task.convergence?.recovery?.episode !== 1) {
+      || recovery?.episode !== 1) {
       throw new Error('[record-accept] ineligible: requires an exhausted blocked-to-operator council recovery');
     }
     const gateHash = task.tests?.gate?.hash;

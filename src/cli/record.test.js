@@ -791,6 +791,7 @@ async function prepareFullDoneCheckpoint() {
   return { root, taskDir, checkout, checkoutHome, gateHash, guessedMaster };
 }
 
+/** @param {{ root: string, checkout: string, checkoutHome: string }} checkpoint */
 async function removeDoneCheckpoint({ root, checkout, checkoutHome }) {
   spawnSync('git', ['-C', root, 'worktree', 'remove', '--force', checkout], { encoding: 'utf8' });
   await rm(checkoutHome, { recursive: true, force: true });
