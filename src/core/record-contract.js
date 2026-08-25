@@ -220,6 +220,7 @@ function validateReview(value) {
   findings(value.findings, 'findings', ['capture', 'plan', 'implement', 'refactor'], false);
   evidence(value.evidence, 'evidence');
   if (value.verdict === 'pass' && value.findings.length !== 0) invalid('findings');
+  if (value.verdict === 'pass' && value.acLedger.some((/** @type {any} */ item) => item.ok !== true)) invalid('acLedger');
   if (value.verdict === 'needs-work' && value.findings.length === 0) invalid('findings');
 }
 

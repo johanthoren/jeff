@@ -3125,6 +3125,29 @@ test('issue 70 record accepts a terminal review at the current clean verified HE
   }
 });
 
+test('record rejects review pass when any acLedger.ok is false', async () => {
+  const { root, taskDir } = await makeRoot(terminalReviewTask());
+  try {
+    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    const file = await writeReturn(root, reviewReturn('reviewer', {
+      verdict: 'pass',
+      findings: [],
+      acLedger: [
+        { ac: 'AC1', claimed: 'write', rederived: 'write', ok: true },
+        { ac: 'AC2', claimed: 'reuse', rederived: 'reuse', ok: false },
+      ],
+    }), '.jeff/return.json');
+
+    const result = runCook(root, ['record', 'review', '18', 'reviewer', file]);
+
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /\[record-schema\].*acLedger/);
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('issue 70 terminal recording rejects absent and null verification gates atomically', async (t) => {
   for (const gateState of ['absent', 'null']) {
     await t.test(gateState, async () => {
@@ -4148,6 +4171,8 @@ test('follow-up-only review progresses while retaining its judgment evidence', a
     }));
     const recorded = await readTask(first.taskDir);
     assert.equal(recorded.status, 'done');
+    assert.equal(recorded.review.verdict, 'pass');
+    assert.equal(recorded.review.reportedVerdict, 'needs-work');
     assert.deepEqual(recorded.review.findings, [followup]);
     assert.deepEqual(recorded.review.evidence, [{ command: 'git diff --check', output: 'clean' }]);
   } finally {
