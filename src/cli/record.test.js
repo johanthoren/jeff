@@ -742,19 +742,22 @@ async function prepareDirtyOffTrunkRecoveryCheckpoint() {
 async function recordFreshCouncilJudgments(root, overrides = {}) {
   const taskDir = join(root, '.jeff', 'tasks', '018-record-specialists');
   const cycle = (await readTask(taskDir)).judgmentHistory?.length ?? 0;
+  const recordOptions = overrides.checkpointRoot === undefined
+    ? undefined
+    : { checkpointRoot: overrides.checkpointRoot };
   await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-reviewer-one', {
     cycle,
     ...overrides.review,
-  }));
+  }), recordOptions);
   await recordSpecialistReturn(root, 'review', '18', reviewReturn('fresh-reviewer-two', {
     cycle,
     ...overrides.review2,
-  }));
+  }), recordOptions);
   if (overrides.includeAudit === true) {
     await recordSpecialistReturn(root, 'audit', '18', auditReturn('fresh-auditor', {
       cycle,
       ...overrides.audit,
-    }));
+    }), recordOptions);
   }
 }
 
@@ -4358,7 +4361,7 @@ test('full-mode recording persists transient done state before the prune gate', 
       agents: { implementer_agent_id: 'implementer', reviewer_agent_id: null, reviewer2_agent_id: null, audit_agent_id: null },
       tests: { authored_by_agent_id: 'plan-agent', green: true, evidence: ['full gate'] },
     }), null, 2)}\n`, 'utf8');
-    runGit(root, ['init', '-q']);
+    runGit(root, ['init', '-q', '-b', 'master']);
     runGit(root, ['config', 'user.email', 'tests@example.com']);
     runGit(root, ['config', 'user.name', 'Tests']);
     runGit(root, ['config', 'commit.gpgsign', 'false']);
@@ -4366,12 +4369,15 @@ test('full-mode recording persists transient done state before the prune gate', 
     runGit(root, ['commit', '-qm', 'baseline']);
     await recordCurrentGate(root, taskDir);
 
-    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'));
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'), {
+      trunkRef: 'refs/heads/master',
+    });
     const recorded = await readTask(taskDir);
     const validation = runCook(root, ['validate']);
 
     assert.equal(recorded.status, 'done');
     assert.equal(recorded.stage, 'done');
+    assert.equal(recorded.tests.gate.hash, runGit(root, ['rev-parse', 'refs/heads/master']));
     assert.notEqual(validation.code, 0);
     assert.match(validation.stderr, /\[prune\]/);
   } finally {
@@ -4905,16 +4911,21 @@ test('issue 65 scoped council completion requires fresh verification after the r
   try {
     const verification = await runVerify(root, '18');
     assert.equal(verification.code, 0, verification.stderr.join('\n'));
+    const freshHash = (await readTask(taskDir)).tests.gate.hash;
     await recordFreshCouncilJudgments(root, { includeAudit: true });
     const stale = await readTask(taskDir);
-    stale.tests.gate = structuredClone(stale.convergence.recovery.baselineGate);
+    const baseline = structuredClone(stale.convergence.recovery.baselineGate);
+    assert.notEqual(baseline.hash, freshHash);
+    stale.tests.gate = baseline;
     await writeFile(join(taskDir, 'task.json'), `${JSON.stringify(stale, null, 2)}\n`, 'utf8');
+    assert.equal(runGit(root, ['rev-parse', 'HEAD']), freshHash);
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
     await assert.rejects(
       recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped')),
       /\[record-transition\].*(?:fresh|stale|verification)/,
     );
     assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal(runGit(root, ['rev-parse', 'HEAD']), freshHash);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -5011,22 +5022,29 @@ test('issue 65 scoped council completion accepts a recorded fix followed by a fr
 });
 
 test('issue 65 recovery rejects a gate made stale by committed HEAD drift', async () => {
-  const { root, taskDir } = await prepareScopedCouncilRecovery();
+  const { root, taskDir, checkout, checkoutHome, gateHash } = await prepareDirtyOffTrunkRecoveryCheckpoint();
   try {
-    const verification = await runVerify(root, '18');
-    assert.equal(verification.code, 0, verification.stderr.join('\n'));
-    await recordFreshCouncilJudgments(root, { includeAudit: true });
-    await writeFile(join(root, 'refactor-marker.txt'), 'later code-changing transition\n', 'utf8');
-    runGit(root, ['add', '.']);
-    runGit(root, ['commit', '-qm', 'record post-gate HEAD drift']);
+    await recordFreshCouncilJudgments(root, { includeAudit: true, checkpointRoot: checkout });
+    await writeFile(join(checkout, 'refactor-marker.txt'), 'later code-changing transition\n', 'utf8');
+    runGit(checkout, ['add', 'refactor-marker.txt']);
+    runGit(checkout, ['commit', '-qm', 'record post-gate checkpoint HEAD drift']);
+    assert.notEqual(runGit(checkout, ['rev-parse', 'HEAD']), gateHash);
+    assert.equal((await readTask(taskDir)).tests.gate.hash, gateHash);
     const before = await readFile(join(taskDir, 'task.json'), 'utf8');
 
     await assert.rejects(
-      recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped')),
-      /\[record-transition\].*(?:fresh|stale|verification)/,
+      recordSpecialistReturn(root, 'council', '18', councilReturn('scoped-fix-shipped'), {
+        checkpointRoot: checkout,
+      }),
+      /\[record-transition\].*(?:fresh|stale|verification|checkpoint)/,
     );
     assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal(runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']), 'task/284');
+    assert.notEqual(runGit(root, ['rev-parse', 'HEAD']), gateHash);
+    assert.equal(await readFile(join(root, 'unrelated-state-root.txt'), 'utf8'), 'dirt on the state root\n');
   } finally {
+    spawnSync('git', ['-C', root, 'worktree', 'remove', '--force', checkout], { encoding: 'utf8' });
+    await rm(checkoutHome, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
   }
 });

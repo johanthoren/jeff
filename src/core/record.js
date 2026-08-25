@@ -937,7 +937,8 @@ function recordCouncilRecovery(task, council) {
           && (recovery === undefined || recovery.builder_agent_id === scopedImplementer);
       }
       const gate = task.tests?.gate;
-      if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
+      if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === ''
+        || gate.hash === recovery?.baselineGate?.hash) {
         throw new Error('[record-transition] scoped council completion requires a fresh clean green verification');
       }
     }
@@ -1612,6 +1613,8 @@ export async function recordSpecialistReturn(root, stage, id, value, observedAge
     (task) => {
       if (['review', 'audit'].includes(stage) && isPendingCodeRecovery(task)) {
         assertCurrentRecoveryJudgmentGate(options?.checkpointRoot ?? root, task);
+      } else if (stage === 'council' && isPendingCodeRecovery(task) && options?.checkpointRoot) {
+        assertCurrentRecoveryJudgmentGate(options.checkpointRoot, task);
       }
       const versionedTask = stage === 'council' && task.convergence?.council?.convened !== true && !requiresCouncilResearchProvenance(task)
         ? { ...task, pipelineVersion: currentPipelineVersion }
