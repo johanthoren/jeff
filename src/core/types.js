@@ -5,7 +5,7 @@
  * Runtime readers separately accept the documented legacy-only fields.
  */
 
-/** @typedef {'pending' | 'in_progress' | 'blocked' | 'done' | 'abandoned'} TaskStatus */
+/** @typedef {'pending' | 'in_progress' | 'blocked' | 'done' | 'abandoned' | 'operator_accepted'} TaskStatus */
 /** @typedef {'code' | 'operation'} TaskCategory */
 /** @typedef {'capture' | 'plan' | 'implement' | 'refactor' | 'execute' | 'review' | 'verify' | 'audit' | 'done'} TaskStage */
 /** @typedef {'p0' | 'p1' | 'p2' | 'p3' | 'p4'} TaskPriority */
@@ -77,6 +77,15 @@
  * @property {string} grantedBy
  * @property {string} grantedAt
  * @property {number} [requestId] Historical grants omit this and stay valid through the old latest-request checks; new recorder grants persist the answered request id.
+ */
+
+/**
+ * @typedef {Object} Acceptance
+ * @property {string} hash
+ * @property {string} acceptedBy
+ * @property {string} acceptedAt
+ * @property {string} reason
+ * @property {Evidence[]} evidence
  */
 
 /**
@@ -369,6 +378,7 @@
  * @property {Kickback[]} kickbacks
  * @property {string | null} blockedReason
  * @property {string | null} abandonReason
+ * @property {Acceptance} [acceptance]
  * @property {string} [externalRef]
  * @property {Convergence} [convergence]
  */

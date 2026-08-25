@@ -15,7 +15,13 @@ import {
 import { isOneOf, isType } from './validate.js';
 import { validateSpecialistReturn } from './record-contract.js';
 
-const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
+const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned', 'operator_accepted'];
+const TERMINAL_STATUSES = ['done', 'abandoned', 'operator_accepted'];
+
+/** @param {unknown} status */
+export function isTerminalStatus(status) {
+  return typeof status === 'string' && TERMINAL_STATUSES.includes(status);
+}
 const CODE_STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'review', 'audit', 'done'];
 const OPERATION_STAGES = ['capture', 'plan', 'execute', 'verify', 'audit', 'done'];
 const STAGES = [...new Set([...CODE_STAGES, ...OPERATION_STAGES])];
@@ -597,6 +603,44 @@ function validateApproval(value, field, out) {
   }
 }
 
+/** @param {any} value @param {string} field @param {string[]} out */
+function validateAcceptance(value, field, out) {
+  const keys = ['hash', 'acceptedBy', 'acceptedAt', 'reason', 'evidence'];
+  requireField(out, field, isType(value, 'object')
+    && keys.every((key) => Object.hasOwn(value, key))
+    && Object.keys(value).every((key) => keys.includes(key)));
+  if (!isType(value, 'object')) return;
+  requireField(out, `${field}.hash`, isNonemptyString(value.hash));
+  requireField(out, `${field}.acceptedBy`, isNonemptyString(value.acceptedBy));
+  requireField(out, `${field}.acceptedAt`, isIsoDateTime(value.acceptedAt));
+  requireField(out, `${field}.reason`, isNonemptyString(value.reason));
+  validateEvidence(value.evidence, `${field}.evidence`, out);
+  if (Array.isArray(value.evidence) && value.evidence.length === 0) {
+    out.push(`[schema] ${field}.evidence is invalid`);
+  }
+}
+
+/** @param {any} task @param {string[]} out */
+function validateAcceptanceDisposition(task, out) {
+  if (task.status !== 'operator_accepted') {
+    if (task.acceptance !== undefined) out.push('[schema] acceptance is invalid');
+    return;
+  }
+  requireField(out, 'acceptance', isType(task.acceptance, 'object'));
+  if (!isType(task.acceptance, 'object')) return;
+  validateAcceptance(task.acceptance, 'acceptance', out);
+  if (task.acceptance.hash !== task.tests?.gate?.hash) {
+    out.push('[schema] acceptance.hash must equal tests.gate.hash');
+  }
+  const source = task.convergence?.council?.stage;
+  const judgment = source === 'audit' ? task.audit
+    : source === 'review2' ? task.review2
+    : task.review;
+  if (judgment?.verdict === 'pass') {
+    out.push('[schema] operator_accepted cannot rewrite a failed review judgment');
+  }
+}
+
 
 /** @param {any} task @param {string[]} out */
 function validateApprovalRequests(task, out) {
@@ -1099,6 +1143,7 @@ export function taskSchemaViolations(task, { lite }) {
   for (const field of ['blockedReason', 'abandonReason']) {
     requireField(out, field, isNullableString(task[field]));
   }
+  validateAcceptanceDisposition(task, out);
   if (task.convergence !== undefined) {
     validateConvergence(task.convergence, out, operation, requiresCouncilResearchProvenance(task));
   }

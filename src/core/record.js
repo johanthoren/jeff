@@ -1274,6 +1274,7 @@ export function transitionTask(task, stage, result) {
  * @param {(task: TaskJson) => TaskJson} update
  * @param {{
  *   allowTransientTerminal?: boolean,
+ *   allowForeignTaskViolations?: boolean,
  *   journal?: import('./journal.js').JournalAppend | import('./journal.js').JournalAppend[],
  * }} [options]
  */
@@ -1326,6 +1327,11 @@ export async function updateTask(root, id, update, options = {}) {
         && candidate.status === 'done'
         && violation.startsWith(candidatePrunePrefix)
         && violation.includes('[prune]')
+      ))
+      .filter((violation) => !(
+        options.allowForeignTaskViolations === true
+        && violation.startsWith('task ')
+        && !violation.startsWith(candidatePrunePrefix)
       ));
     if (violations.length) throw new Error(violations[0]);
     if (options.journal !== undefined) {
@@ -1446,6 +1452,65 @@ export async function recordApproval(root, id, grantedBy) {
     next.updatedAt = grantedAt;
     return /** @type {TaskJson} */ (next);
   }, { journal: { event: 'record', stage: 'execute', agent: grantedBy } });
+}
+
+/**
+ * Accept an exhausted code council-block against the recorded gate hash.
+ *
+ * @param {string} root
+ * @param {string} id
+ * @param {{ operator?: unknown, hash?: unknown, reason?: unknown, evidence?: unknown }} input
+ */
+export async function recordAcceptance(root, id, input) {
+  const operator = input?.operator;
+  if (typeof operator !== 'string' || operator.trim().length === 0) {
+    throw new Error('[record-accept] operator identity is required');
+  }
+  return updateTask(root, id, (task) => {
+    if (task.status === 'operator_accepted'
+      && task.acceptance?.hash === input.hash
+      && task.acceptance.acceptedBy === operator
+      && task.acceptance.reason === input.reason
+      && isDeepStrictEqual(task.acceptance.evidence, input.evidence)) {
+      return task;
+    }
+    if (isOperation(task)) {
+      throw new Error('[record-accept] ineligible: only a code task can be accepted');
+    }
+    if (task.status !== 'blocked'
+      || task.convergence?.council?.outcome !== 'blocked-to-operator'
+      || task.convergence?.recovery?.episode !== 1) {
+      throw new Error('[record-accept] ineligible: requires an exhausted blocked-to-operator council recovery');
+    }
+    const gateHash = task.tests?.gate?.hash;
+    if (typeof gateHash !== 'string' || gateHash.length === 0) {
+      throw new Error('[record-accept] ineligible: tests.gate.hash is required');
+    }
+    if (input.hash !== gateHash) {
+      throw new Error('[record-accept] checkpoint does not match tests.gate.hash');
+    }
+    if (typeof input.reason !== 'string' || input.reason.length === 0) {
+      throw new Error('[record-accept] reason is required');
+    }
+    if (!Array.isArray(input.evidence) || input.evidence.length === 0
+      || input.evidence.some((item) => !item
+        || typeof item.command !== 'string' || item.command.length === 0
+        || typeof item.output !== 'string' || item.output.length === 0)) {
+      throw new Error('[record-accept] evidence is required');
+    }
+    const next = /** @type {any} */ (structuredClone(task));
+    const acceptedAt = now();
+    next.status = 'operator_accepted';
+    next.acceptance = {
+      hash: input.hash,
+      acceptedBy: operator,
+      acceptedAt,
+      reason: input.reason,
+      evidence: structuredClone(input.evidence),
+    };
+    next.updatedAt = acceptedAt;
+    return /** @type {TaskJson} */ (next);
+  }, { allowForeignTaskViolations: true });
 }
 
 /**

@@ -30,6 +30,7 @@ import {
   isOperationCycle,
   isSameApproval,
 } from './operation-state.js';
+import { isTerminalStatus } from './task-schema.js';
 
 /**
  * jq's `a // b`: yield `b` when `a` is null, false, or absent.
@@ -88,7 +89,7 @@ function assertContainerType(v, type, name) {
   }
 }
 
-const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned'];
+const STATUSES = ['pending', 'in_progress', 'blocked', 'done', 'abandoned', 'operator_accepted'];
 // `test` is accepted only as a legacy persisted-ledger resume state.
 const STAGES = ['capture', 'plan', 'test', 'implement', 'refactor', 'execute', 'review', 'verify', 'audit', 'done'];
 const PRIOS = ['p0', 'p1', 'p2', 'p3', 'p4'];
@@ -742,8 +743,8 @@ export function runInvariants(
       }
     }
 
-    // prune: a done/abandoned dir must not rest in the store (full only)
-    if (!lite && (t.status === 'done' || t.status === 'abandoned')) {
+    // prune: a terminal dir must not rest in the store (full only)
+    if (!lite && isTerminalStatus(t.status)) {
       out.push(`task ${id}: status "${jqStr(t.status)}" task dir must not rest in the store; append the id to config prunedTaskIds only after it becomes terminal, leave successor deps intact, remove only the terminal dir, and commit the removal (archive is git history/tags) [prune]`);
     }
 
@@ -1049,7 +1050,7 @@ function convergenceChecks(t, id, ids, out) {
       }
     }
     if (recovery?.route === 'operator-escalation'
-      && (cl.outcome !== 'blocked-to-operator' || t.status !== 'blocked')) {
+      && (cl.outcome !== 'blocked-to-operator' || (t.status !== 'blocked' && t.status !== 'operator_accepted'))) {
       out.push(`task ${id}: operator escalation must block the same task [inv11]`);
     }
   }
@@ -1061,7 +1062,7 @@ function convergenceChecks(t, id, ids, out) {
   }
   // inv11: block resolution / done-gate.
   if (conv && cl.verdict === 'block' && cl.outcome === 'blocked-to-operator'
-    && t.status !== 'blocked' && t.status !== 'abandoned') {
+    && t.status !== 'blocked' && t.status !== 'abandoned' && t.status !== 'operator_accepted') {
     out.push(`task ${id}: council blocked-to-operator requires status == blocked or abandoned [inv11]`);
   }
   if (t.status === 'done' && conv && cl.verdict === 'block' && cl.outcome !== 'scoped-fix-shipped') {
