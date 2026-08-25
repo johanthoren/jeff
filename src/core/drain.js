@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { compareById } from './reporters.js';
 import { assertStoreContained, collectTasks, readConfig } from './store.js';
 import { locateTask, withStoreLock } from './store-lock.js';
+import { isTerminalStatus } from './task-schema.js';
 
 /**
  * @typedef {Object} Report
@@ -12,8 +13,6 @@ import { locateTask, withStoreLock } from './store-lock.js';
  * @property {string[]} stdout
  * @property {string[]} stderr
  */
-
-const TERMINAL_STATUSES = new Set(['done', 'abandoned']);
 
 /** @param {string} message @returns {Report} */
 function failure(message) {
@@ -81,7 +80,7 @@ export async function readyReport(root) {
       const deps = Array.isArray(task.deps) ? task.deps : [];
       const satisfied = deps.every((/** @type {number} */ id) => {
         const dependency = byId.get(id);
-        return pruned.has(id) || (dependency !== undefined && TERMINAL_STATUSES.has(dependency.status));
+        return pruned.has(id) || (dependency !== undefined && isTerminalStatus(dependency.status));
       });
       if (satisfied) ready.push(task);
     }
@@ -114,7 +113,7 @@ export async function claimReport(root, id, options = {}) {
       const tasks = await collectTasks(root);
       const { taskDir, taskPath } = await locateTask(root, id, tasks);
       const task = tasks.find((candidate) => candidate._dir === taskPath);
-      if (task.status === 'blocked' || TERMINAL_STATUSES.has(task.status)) {
+      if (task.status === 'blocked' || isTerminalStatus(task.status)) {
         return failure(`claim: task ${id} is ${task.status}`);
       }
       const claimDir = join(taskDir, '.claim');

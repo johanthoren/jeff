@@ -7,6 +7,7 @@
  * Imports only Node stdlib and `src/core/*`; host launch adapters remain outside.
  */
 
+import { readFile } from 'node:fs/promises';
 import { validateStore } from '../core/validate-store.js';
 import { lsReport, statusReport, showReport } from '../core/reporters.js';
 import { snapshotReport } from '../core/snapshot.js';
@@ -23,7 +24,7 @@ import { adoptPlan, planSection, planCheck, planAppend, isIssueRef, planIssueOp 
 import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
 import { git, indiffReport } from '../core/git.js';
-import { recordApproval, recordRebuild, recordReverify, recordSpecialistFile } from '../core/record.js';
+import { recordAcceptance, recordApproval, recordRebuild, recordReverify, recordSpecialistFile } from '../core/record.js';
 import { appendTaskJournal, isJournalIntentStage } from '../core/journal.js';
 import { claimReport, claimsReport, readyReport, releaseReport } from '../core/drain.js';
 
@@ -74,6 +75,7 @@ function usageReport() {
       '  verify       Run a standalone baseline; use `cook verify --task <id>` to bind a task gate.',
       '  record       Record a specialist or council result.',
       '  approve <id> <operator>  Grant the exact pending operation request.',
+      '  accept <id> <operator> <file>  Accept an exhausted council-block checkpoint.',
       '  rebuild <id>   Archive judgments earned against a stale integration checkpoint and re-gate.',
       '  reverify <id>  Archive an eligible failed operation verification and request a fresh verifier.',
       '  journal <id> <intent|external>  Append an operator journal event.',
@@ -259,6 +261,31 @@ async function main() {
     try {
       await recordApproval(root, rest[0], rest[1]);
       return emit({ code: 0, stdout: [`cook: recorded approval for task ${rest[0]}`], stderr: [] });
+    } catch (error) {
+      process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
+      return process.exit(1);
+    }
+  }
+
+  if (sub === 'accept') {
+    if (rest.length !== 3) {
+      process.stderr.write('cook: usage: cook accept <id> <operator> <file>\n');
+      return process.exit(1);
+    }
+    try {
+      let parsed;
+      try {
+        parsed = JSON.parse(await readFile(rest[2], 'utf8'));
+      } catch {
+        throw new Error(`[record-json] invalid JSON in ${rest[2]}`);
+      }
+      await recordAcceptance(root, rest[0], {
+        operator: rest[1],
+        hash: parsed.hash,
+        reason: parsed.reason,
+        evidence: parsed.evidence,
+      });
+      return emit({ code: 0, stdout: [`cook: recorded acceptance for task ${rest[0]}`], stderr: [] });
     } catch (error) {
       process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
       return process.exit(1);
