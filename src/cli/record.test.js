@@ -4357,6 +4357,36 @@ test('full-mode recording persists transient done state before the prune gate', 
   }
 });
 
+test('issue 284 done records when trunk matches the gate while the state root is dirty and off-trunk', async () => {
+  const { root, taskDir } = await makeRoot(terminalReviewTask());
+  try {
+    const trunkRef = runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    const trunk = runGit(root, ['rev-parse', 'HEAD']);
+    runGit(root, ['checkout', '-q', '-b', 'task/284']);
+    await writeFile(join(root, 'feature.txt'), 'lane commit\n', 'utf8');
+    runGit(root, ['add', 'feature.txt']);
+    runGit(root, ['commit', '-qm', 'lane work']);
+    await writeFile(join(root, 'unrelated-state-root.txt'), 'dirt on the state root\n', 'utf8');
+    const headBefore = runGit(root, ['rev-parse', 'HEAD']);
+    const gated = await readTask(taskDir);
+    assert.equal(gated.tests.gate.hash, trunk);
+    assert.notEqual(headBefore, trunk);
+
+    await recordSpecialistReturn(root, 'review', '18', reviewReturn('reviewer'));
+    const recorded = await readTask(taskDir);
+
+    assert.equal(recorded.status, 'done');
+    assert.equal(recorded.stage, 'done');
+    assert.equal(recorded.tests.gate.hash, trunk);
+    assert.equal(runGit(root, ['rev-parse', trunkRef]), trunk);
+    assert.equal(runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']), 'task/284');
+    assert.equal(await readFile(join(root, 'unrelated-state-root.txt'), 'utf8'), 'dirt on the state root\n');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
 test('follow-up-only audit reaches an INV-4-compatible terminal outcome with evidence retained', async () => {
   const followup = { ...blockingFinding({ class: 'follow-up', line: 105, severity: 'low' }), cwe: null };
   const { root, taskDir } = await makeRoot(auditStageTask());
@@ -5092,26 +5122,27 @@ test('issue 67 recovery completion rejects post-verify HEAD drift atomically', a
   }
 });
 
-test('issue 68 scoped completion rejects a dirty working tree atomically', async () => {
+test('issue 68 scoped completion records done when the state root is dirty and trunk still matches the gate', async () => {
   const { root, taskDir } = await prepareMixedStageReassessment();
   try {
     const verification = await runVerify(root, '18');
     assert.equal(verification.code, 0, verification.stderr.join('\n'));
     await recordFreshCouncilJudgments(root, { includeAudit: true });
     await writeFile(join(root, 'untracked.txt'), 'content not covered by the gate\n', 'utf8');
-    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
+    const trunk = runGit(root, ['rev-parse', 'HEAD']);
 
-    await assert.rejects(
-      recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped')),
-      /\[record-transition\].*(?:clean|dirty|worktree|verification)/,
-    );
-    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    const recorded = await recordSpecialistReturn(root, 'council', '18', mixedStageCouncilReturn('scoped-fix-shipped'));
+    assert.equal(recorded.status, 'done');
+    assert.equal(recorded.stage, 'done');
+    assert.equal(recorded.tests.gate.hash, trunk);
+    assert.equal(await readFile(join(root, 'untracked.txt'), 'utf8'), 'content not covered by the gate\n');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('issue 67 council scoped completion fails closed when git status probe fails', async () => {
+
+test('issue 67 scoped completion records done when the state-root git status probe fails', async () => {
   const { root, taskDir } = await prepareCompletedMixedStageReassessment();
   try {
     const corruptIndex = join(root, '.jeff', 'corrupt-index');
@@ -5128,7 +5159,6 @@ test('issue 67 council scoped completion fails closed when git status probe fail
     assert.equal(head.status, 0, head.stderr);
     assert.notEqual(status.status, 0);
 
-    const before = await readFile(join(taskDir, 'task.json'), 'utf8');
     const councilResult = mixedStageCouncilReturn('scoped-fix-shipped');
     const file = await writeReturn(root, councilResult);
     const observedIdentity = {
@@ -5147,13 +5177,15 @@ await recordSpecialistFile(process.argv[1], 'council', '18', process.argv[2], JS
       env: { ...process.env, ...env, COOK_ROOT: root },
       encoding: 'utf8',
     });
-    assert.notEqual(recorded.status, 0);
-    assert.match(recorded.stderr, /\[record-transition\].*(?:git status|cleanliness|probe|working tree)/);
-    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), before);
+    assert.equal(recorded.status, 0, recorded.stderr);
+    const done = await readTask(taskDir);
+    assert.equal(done.status, 'done');
+    assert.equal(done.stage, 'done');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
+
 
 test('issue 67 recovery completion rejects persisted pass labels with blockers atomically', async () => {
   const { root, taskDir } = await prepareMixedStageReassessment();

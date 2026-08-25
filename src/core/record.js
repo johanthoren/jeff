@@ -209,6 +209,15 @@ function assertCurrentRecoveryJudgmentGate(root, task) {
   }
 }
 
+/** @param {string} root */
+function landedTrunkOid(root) {
+  for (const ref of ['refs/heads/master', 'refs/heads/main']) {
+    const result = git(root, ['rev-parse', '--verify', ref]);
+    if (result.status === 0) return (result.stdout ?? '').trim();
+  }
+  return null;
+}
+
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function assertCurrentJudgment(task, result) {
@@ -1297,21 +1306,12 @@ export async function updateTask(root, id, update, options = {}) {
       if (!gate || gate.green !== true || gate.clean !== true || typeof gate.hash !== 'string' || gate.hash === '') {
         throw new Error('[record-transition] terminal completion requires a present clean green verification gate');
       }
-      const head = git(root, ['rev-parse', 'HEAD']);
-      if (head.status !== 0) {
-        throw new Error('[record-transition] git HEAD probe failed');
+      const trunk = landedTrunkOid(root);
+      if (trunk === null) {
+        throw new Error('[record-transition] git trunk probe failed');
       }
-      if (gate.hash !== head.stdout.trim()) {
-        throw new Error('[record-transition] current HEAD does not match the terminal verification');
-      }
-      let dirty;
-      try {
-        dirty = treeDirty(root);
-      } catch {
-        throw new Error('[record-transition] git status working tree cleanliness probe failed');
-      }
-      if (dirty) {
-        throw new Error('[record-transition] terminal verification requires a clean working tree');
+      if (gate.hash !== trunk) {
+        throw new Error('[record-transition] current trunk does not match the terminal verification');
       }
     }
     const store = tasks.map((stored) => stored._dir === taskPath ? { ...candidate, _dir: taskPath } : stored);

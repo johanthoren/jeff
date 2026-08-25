@@ -112,11 +112,15 @@ function logTestRun(root, cmd, result) {
  * own stdout/stderr stream straight through the inherited fds (NOT captured),
  * so the verdict arrays carry only cook's own line.
  *
+ * Task-state reads and writes stay on `root`. When `options.checkpointRoot` is
+ * set, the bound hash and cleanliness come from that checkout.
+ *
  * @param {string} root
  * @param {string} [taskId]
+ * @param {{ checkpointRoot?: string }} [options]
  * @returns {Promise<Verdict>}
  */
-export async function runVerify(root, taskId) {
+export async function runVerify(root, taskId, options) {
   if (taskId === undefined) {
     let tasks;
     try {
@@ -129,9 +133,10 @@ export async function runVerify(root, taskId) {
     }
   }
 
+  const checkpointRoot = options?.checkpointRoot ?? root;
   let hash = '';
   if (taskId !== undefined) {
-    const head = git(root, ['rev-parse', 'HEAD']);
+    const head = git(checkpointRoot, ['rev-parse', 'HEAD']);
     hash = head.status === 0 ? (head.stdout ?? '').trim() : '';
     if (!hash) {
       return { code: 1, stdout: [], stderr: ['cook: verify: could not determine the current Git HEAD.'] };
@@ -172,7 +177,7 @@ export async function runVerify(root, taskId) {
   if (mode !== 'lite') logTestRun(root, cmd, rc === 0 ? 'green' : 'red');
 
   if (taskId !== undefined) {
-    const clean = !treeDirty(root);
+    const clean = !treeDirty(checkpointRoot);
     const output = verdict.stdout[0] ?? verdict.stderr[0];
     try {
       await updateTask(root, taskId, (task) => {

@@ -125,18 +125,18 @@ Lite landing is a feature branch, push, and open PR. Lite landing does not use t
 1. Read `cook ready` and `cook claims` fresh from disk. Never trust context. While unclaimed ready tasks exist and active claims are fewer than `maxParallelTasks`, claim the next task, journal a drain intent, and open its lane.
 2. Every claimed task, including cook all with one lane, gets its own linked git worktree on its own task branch.
 3. Run each lane through The Loop independently. Dispatch stages of different lanes concurrently when the host supports it; otherwise interleave them. The `.record-lock` serializes store writes, and lanes share no checkout.
-4. **In full mode: Integration is serialized at the main checkout, in completion order.**
+4. **In full mode: Integration is serialized in completion order.**
    - Reserve one landing slot and capture the old trunk OID as O.
-   - Create a private integration checkpoint from O, then merge or rebase the task branch onto that trunk-based checkpoint without moving trunk.
-   - At the clean private checkpoint in the main root, run the one full-suite gate, `cook verify --task <id>`, exactly once. It records the checkpoint's root HEAD and clean tree.
-   - With trunk unchanged, dispatch review and required audit against that exact gated checkpoint. Record every non-terminal judgment return immediately.
+   - Create a private clean integration checkout at current trunk without changing the state root branch or files. Create failure leaves the state root untouched. Merge or rebase the task branch onto that checkout at current trunk; never bind the bare O checkout.
+   - From that checkout, run the one full-suite gate, `cook verify --task <id>`, exactly once, so gate, review, and audit bind the integration checkout. It records that checkout's HEAD and cleanliness. Task-state reads and writes stay on COOK_ROOT.
+   - With trunk unchanged during judgment, dispatch review and required audit against that exact gated checkpoint. Record every non-terminal judgment return immediately.
    - A gate failure or needs-work judgment never advances trunk and returns the lane to its normal recovery path. A merge conflict follows step 5.
    - When the final required passing return would cause the terminal transition, hold only that final passing return unrecorded and record the gated hash as G.
-   - With that return held, verify `git merge-base --is-ancestor O G`.
-   - Only after the ancestry check succeeds, atomically advance trunk to the exact gated hash with the native Git ref primitive and expected-old O→G compare-and-swap `git update-ref <trunk-ref> G O`. This leaves the private checkpoint's content and the main checkout's current HEAD unchanged.
+   - With that return held, verify `git merge-base --is-ancestor O G` from the integration checkout.
+   - Only after the ancestry check succeeds, atomically advance trunk to the exact gated hash with the native Git ref primitive and expected-old O→G compare-and-swap `git update-ref <trunk-ref> G O` from that checkout.
    - If the ancestry check fails or an expected-old mismatch occurs, leave trunk unchanged and do not record the final passing return. Run `cook rebuild <id>`, which archives every judgment earned against the stale checkpoint (a code lane's gate, review, and audit; an operation lane's verification and audit), then rebuild the checkpoint from current trunk through the lane's existing normal recovery path. A rebuilt checkpoint therefore re-establishes its own gate and re-dispatches its judgments with fresh identities; a judgment from the discarded checkpoint can never satisfy its successor. `cook rebuild` applies only to a stale checkpoint: it refuses a lane holding a live needs-work verdict, which is an ordinary kickback, and a lane that never reached a checkpoint.
-   - After the compare-and-swap succeeds, immediately record the final passing return. The recorder now sees `gate.hash` equal to the current main-root HEAD; done still requires that HEAD match and a clean tree.
-   - The final return must record done; release the claim, remove the lane worktree, then clean up the private integration checkpoint, in that order.
+   - After the compare-and-swap succeeds, immediately record the final passing return. Done proves the landed trunk object matches the gated checkpoint.
+   - The final return must record done; release the claim, remove the lane worktree, then clean up the private clean integration checkout, in that order.
 5. A merge conflict while landing a later lane is a discovered hidden edge. A landing or rebase conflict is the same hidden edge. Route the conflict as an ordinary scoped kickback to implement for that lane, in its worktree. Tasks that obviously touch the same area run in sequence, not in parallel.
 6. A capture lock, approval stop, escalation, or blocked-to-operator condition stops only its own lane. The drain continues the rest and includes each stopped lane with its Chef-facing grounder in the final report.
 7. Refresh ready tasks and claims after every completion because completed tasks can unblock successors. Stop when no ready unclaimed tasks remain and every claim is either resolved or retained by a lane stopped under step 6. Report a drain summary with each task's terminal state, cycles, and kickbacks.
