@@ -512,6 +512,9 @@ function resetJudgmentsAfterFix(task, at, files) {
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function recordReview(task, result) {
+  if (task.tests?.gate?.green === false) {
+    throw new Error('[record-transition] review requires a green latest verification gate');
+  }
   const firstOccupied = task.review?.reviewer_agent_id != null || task.agents.reviewer_agent_id != null;
   const secondOccupied = task.review2?.reviewer_agent_id != null || task.agents.reviewer2_agent_id != null;
   if (firstOccupied && secondOccupied) {
@@ -1409,6 +1412,39 @@ export async function recordRebuild(root, id) {
     // Operations carry no `tests`; their verification is already reset above.
     if (!operation) invalidateVerification(next);
     next.stage = operation ? 'verify' : 'refactor';
+    next.updatedAt = at;
+    return /** @type {TaskJson} */ (next);
+  });
+}
+
+/**
+ * Record the orchestrator's chosen builder stage after a red task-bound gate.
+ * Legal only for a code task whose latest `tests.gate` exists and is red.
+ * @param {string} root
+ * @param {string} id
+ * @param {string} target
+ */
+export async function recordReturn(root, id, target) {
+  return updateTask(root, id, (task) => {
+    if (isOperation(task)) {
+      throw new Error('[record-return] requires a code task');
+    }
+    if (target !== 'implement' && target !== 'plan') {
+      throw new Error('[record-return] target must be implement or plan');
+    }
+    const gate = task.tests?.gate;
+    if (!gate || gate.green !== false) {
+      throw new Error('[record-return] requires a red latest task-bound verification gate');
+    }
+    const next = /** @type {any} */ (structuredClone(task));
+    const at = now();
+    next.stage = target;
+    next.kickbacks = [...next.kickbacks, {
+      from: 'verify',
+      to: target,
+      reason: 'full verification gate failed',
+      at,
+    }];
     next.updatedAt = at;
     return /** @type {TaskJson} */ (next);
   });

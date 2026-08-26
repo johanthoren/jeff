@@ -24,7 +24,7 @@ import { adoptPlan, planSection, planCheck, planAppend, isIssueRef, planIssueOp 
 import { runBaseline } from '../core/baseline.js';
 import { flavorReport } from '../core/flavor.js';
 import { git, indiffReport } from '../core/git.js';
-import { recordAcceptance, recordApproval, recordRebuild, recordReverify, recordSpecialistFile } from '../core/record.js';
+import { recordAcceptance, recordApproval, recordRebuild, recordReturn, recordReverify, recordSpecialistFile } from '../core/record.js';
 import { appendTaskJournal, isJournalIntentStage } from '../core/journal.js';
 import { claimReport, claimsReport, readyReport, releaseReport } from '../core/drain.js';
 
@@ -78,6 +78,7 @@ function usageReport() {
       '  accept <id> <operator> <file>  Accept an exhausted council-block checkpoint.',
       '  rebuild <id>   Archive judgments earned against a stale integration checkpoint and re-gate.',
       '  reverify <id>  Archive an eligible failed operation verification and request a fresh verifier.',
+      '  return <id> <implement|plan>  Record the builder stage after a red task-bound gate.',
       '  journal <id> <intent|external>  Append an operator journal event.',
       '  baseline check [<hash>]  Check the green, clean baseline log.',
       '  ready        List tasks ready to run as JSON lines.',
@@ -317,6 +318,21 @@ async function main() {
     try {
       await recordReverify(root, rest[0]);
       return emit({ code: 0, stdout: [`cook: requested fresh verification for task ${rest[0]}`], stderr: [] });
+    } catch (error) {
+      process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
+      return process.exit(1);
+    }
+  }
+
+  if (sub === 'return') {
+    if (rest.length < 2 || rest[0] === '' || rest[1] === '') {
+      process.stderr.write('cook: usage: cook return <id> <implement|plan>\n');
+      return process.exit(1);
+    }
+    if (rejectUnknownArgs('return', rest.slice(2))) return process.exit(1);
+    try {
+      await recordReturn(root, rest[0], rest[1]);
+      return emit({ code: 0, stdout: [`cook: returned task ${rest[0]} to ${rest[1]}`], stderr: [] });
     } catch (error) {
       process.stderr.write(`cook: ${/** @type {Error} */ (error).message}\n`);
       return process.exit(1);
