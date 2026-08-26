@@ -1,7 +1,8 @@
 // @ts-check
 
 import { truncateToVisualLines } from '@earendil-works/pi-coding-agent';
-import { readConfig } from '../core/store.js';
+import { collectTasks, readConfig } from '../core/store.js';
+import { locateTask } from '../core/store-lock.js';
 import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
 import { recordSpecialistReturn } from '../core/record.js';
 import {
@@ -290,8 +291,8 @@ const AUDIT_CATEGORIES = [
   'insecure_permissions',
 ];
 
-/** @param {string} stage */
-function interruptedSpecialistReturn(stage) {
+/** @param {string} stage @param {number} [cycle] */
+function interruptedSpecialistReturn(stage, cycle = 0) {
   const evidence = [{ command: 'dispatch', output: INTERRUPTED }];
   switch (stage) {
     case 'plan':
@@ -336,7 +337,7 @@ function interruptedSpecialistReturn(stage) {
     case 'review':
       return {
         stage: 'review',
-        cycle: 0,
+        cycle,
         verdict: 'needs-work',
         acLedger: [],
         findings: [{
@@ -353,7 +354,7 @@ function interruptedSpecialistReturn(stage) {
     case 'verify':
       return {
         stage: 'verify',
-        cycle: 0,
+        cycle,
         verdict: 'needs-work',
         postconditions: [{ postcondition: INTERRUPTED, ok: false, evidence: INTERRUPTED }],
         findings: [{
@@ -370,7 +371,7 @@ function interruptedSpecialistReturn(stage) {
     case 'audit':
       return {
         stage: 'audit',
-        cycle: 0,
+        cycle,
         verdict: 'needs-work',
         scan: { command: 'dispatch', recommendation: 'BLOCK', reportPath: 'dispatch' },
         coverage: AUDIT_CATEGORIES.map((category) => ({ category, status: 'not_covered' })),
@@ -389,7 +390,7 @@ function interruptedSpecialistReturn(stage) {
     case 'refute':
       return {
         stage: 'refute',
-        cycle: 0,
+        cycle,
         finding: INTERRUPTED,
         verdict: 'survives',
         rationale: INTERRUPTED,
@@ -517,7 +518,14 @@ export default function jeffExtension(pi, dependencies = {}) {
         else validateSpecialistReturn(params.stage, specialistReturn);
       } catch {
         if (!contextStatus) throw new Error('cook_dispatch: specialist return is invalid');
-        specialistReturn = interruptedSpecialistReturn(params.stage);
+        let cycle = 0;
+        if (params.taskId) {
+          const tasks = await collectTasks(ctx.cwd);
+          const { taskPath } = await locateTask(ctx.cwd, params.taskId, tasks);
+          const task = tasks.find((item) => item._dir === taskPath);
+          cycle = Array.isArray(task?.judgmentHistory) ? task.judgmentHistory.length : 0;
+        }
+        specialistReturn = interruptedSpecialistReturn(params.stage, cycle);
       }
 
       if (params.taskId) {
