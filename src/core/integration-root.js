@@ -1,8 +1,8 @@
 // @ts-check
 
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { git } from './git.js';
 
 /**
@@ -24,6 +24,57 @@ function trunkRefName(trunkRef) {
   return trunkRef.startsWith('refs/') ? trunkRef : `refs/heads/${trunkRef}`;
 }
 
+/** @param {string} taskId */
+function integrationHomePrefix(taskId) {
+  return `jeff-integrate-${taskId}-`;
+}
+
+/**
+ * @param {string} root
+ * @returns {string[]}
+ */
+function listedWorktrees(root) {
+  const out = gitOk(root, ['worktree', 'list', '--porcelain'], '[integration-root] could not list worktrees');
+  /** @type {string[]} */
+  const paths = [];
+  for (const line of out.split('\n')) {
+    if (line.startsWith('worktree ')) paths.push(line.slice('worktree '.length));
+  }
+  return paths;
+}
+
+/**
+ * @param {string} root
+ * @param {{ taskId: string, checkoutRoot?: string }} options
+ * @returns {Promise<{ checkoutRoot: string, home: string }>}
+ */
+async function requireOwnedCheckout(root, options) {
+  const prefix = integrationHomePrefix(options.taskId);
+  const rootReal = await realpath(root);
+  const tmpReal = await realpath(tmpdir());
+  /** @type {{ checkoutRoot: string, home: string }[]} */
+  const owned = [];
+  for (const listed of listedWorktrees(root)) {
+    const checkoutRoot = await realpath(listed);
+    if (checkoutRoot === rootReal) continue;
+    if (basename(checkoutRoot) !== 'checkout') continue;
+    const home = dirname(checkoutRoot);
+    if (!basename(home).startsWith(prefix)) continue;
+    if ((await realpath(dirname(home))) !== tmpReal) continue;
+    owned.push({ checkoutRoot, home });
+  }
+  if (options.checkoutRoot !== undefined) {
+    const wanted = await realpath(options.checkoutRoot);
+    const match = owned.find((item) => item.checkoutRoot === wanted);
+    if (!match) throw new Error('[integration-root] unattributable integration checkout');
+    return match;
+  }
+  if (owned.length !== 1) {
+    throw new Error('[integration-root] could not identify leftover integration checkout');
+  }
+  return owned[0];
+}
+
 /**
  * Create a private clean checkout at the current trunk OID without changing
  * the state-root branch or files.
@@ -38,7 +89,7 @@ export async function createIntegrationCheckout(root, options) {
     ['rev-parse', '--verify', `${options.trunkRef}^{commit}`],
     `[integration-root] trunk ref '${options.trunkRef}' is not resolvable`,
   );
-  const home = await mkdtemp(join(tmpdir(), `jeff-integrate-${options.taskId}-`));
+  const home = await mkdtemp(join(tmpdir(), integrationHomePrefix(options.taskId)));
   const checkoutRoot = join(home, 'checkout');
   gitOk(
     root,
@@ -70,4 +121,42 @@ export async function compareAndSwapTrunk(options) {
     ['update-ref', trunkRefName(options.trunkRef), options.next, options.expectedOld],
     '[integration-root] stale trunk compare-and-swap',
   );
+}
+
+/**
+ * Reuse a still-valid owned leftover integration checkout without creating
+ * another worktree or moving HEAD.
+ *
+ * @param {string} root
+ * @param {{ taskId: string, checkoutRoot?: string }} options
+ * @returns {Promise<{ checkoutRoot: string }>}
+ */
+export async function resumeIntegrationCheckout(root, options) {
+  const owned = await requireOwnedCheckout(root, options);
+  const status = gitOk(
+    owned.checkoutRoot,
+    ['status', '--porcelain'],
+    '[integration-root] could not read leftover checkout status',
+  );
+  if (status !== '') {
+    throw new Error('[integration-root] leftover integration checkout is not clean');
+  }
+  return { checkoutRoot: owned.checkoutRoot };
+}
+
+/**
+ * Remove only an owned integration worktree and its home.
+ *
+ * @param {string} root
+ * @param {{ taskId: string, checkoutRoot: string }} options
+ * @returns {Promise<void>}
+ */
+export async function discardIntegrationCheckout(root, options) {
+  const owned = await requireOwnedCheckout(root, options);
+  gitOk(
+    root,
+    ['worktree', 'remove', '--force', owned.checkoutRoot],
+    '[integration-root] could not remove integration checkout',
+  );
+  await rm(owned.home, { recursive: true, force: true });
 }
