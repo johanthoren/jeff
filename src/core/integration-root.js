@@ -51,13 +51,16 @@ function listedWorktrees(root) {
 async function requireOwnedCheckout(root, options) {
   const prefix = integrationHomePrefix(options.taskId);
   const rootReal = await realpath(root);
+  const tmpReal = await realpath(tmpdir());
   /** @type {{ checkoutRoot: string, home: string }[]} */
   const owned = [];
   for (const listed of listedWorktrees(root)) {
     const checkoutRoot = await realpath(listed);
     if (checkoutRoot === rootReal) continue;
+    if (basename(checkoutRoot) !== 'checkout') continue;
     const home = dirname(checkoutRoot);
     if (!basename(home).startsWith(prefix)) continue;
+    if ((await realpath(dirname(home))) !== tmpReal) continue;
     owned.push({ checkoutRoot, home });
   }
   if (options.checkoutRoot !== undefined) {
@@ -152,7 +155,7 @@ export async function discardIntegrationCheckout(root, options) {
   const owned = await requireOwnedCheckout(root, options);
   gitOk(
     root,
-    ['worktree', 'remove', owned.checkoutRoot],
+    ['worktree', 'remove', '--force', owned.checkoutRoot],
     '[integration-root] could not remove integration checkout',
   );
   await rm(owned.home, { recursive: true, force: true });

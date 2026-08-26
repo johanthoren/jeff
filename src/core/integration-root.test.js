@@ -542,3 +542,100 @@ test('unattributable checkout is refused for resume and discard without touching
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('discardIntegrationCheckout removes a dirty owned leftover while resume still refuses dirty', async () => {
+  const { root, taskDir, featureHead } = await makeDirtyOffTrunkRoot('full');
+  /** @type {string | undefined} */
+  let ownedCheckout;
+  try {
+    const { createIntegrationCheckout, resumeIntegrationCheckout, discardIntegrationCheckout } = await loadIntegrationRoot();
+    const owned = await createIntegrationCheckout(root, { trunkRef: 'master', taskId: '18' });
+    ownedCheckout = owned.checkoutRoot;
+    await writeFile(join(owned.checkoutRoot, 'wip.txt'), 'uncommitted landing dirt\n', 'utf8');
+    assert.notEqual(gitOk(owned.checkoutRoot, ['status', '--porcelain']), '');
+
+    const before = snapshotStateRoot(root);
+    const beforeTask = await readFile(join(taskDir, 'task.json'), 'utf8');
+    const ownedHome = dirname(owned.checkoutRoot);
+    const ownedReal = await realpath(owned.checkoutRoot);
+
+    await assert.rejects(() => resumeIntegrationCheckout(root, { taskId: '18' }));
+    assert.notEqual(gitOk(owned.checkoutRoot, ['status', '--porcelain']), '');
+    await access(ownedHome);
+
+    await discardIntegrationCheckout(root, { taskId: '18', checkoutRoot: owned.checkoutRoot });
+
+    const trees = await resolvedWorktrees(root);
+    assert.ok(!trees.includes(ownedReal));
+    await assert.rejects(() => access(ownedHome));
+
+    assert.deepEqual(snapshotStateRoot(root), before);
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeTask);
+    assert.equal(gitOk(root, ['rev-parse', '--abbrev-ref', 'HEAD']), 'task/284');
+    assert.equal(gitOk(root, ['rev-parse', 'HEAD']), featureHead);
+    assert.equal(gitOk(root, ['rev-parse', 'master']), before.trunk);
+    assert.equal(await readFile(join(root, DIRTY_REL), 'utf8'), DIRTY_CONTENTS);
+    ownedCheckout = undefined;
+  } finally {
+    if (ownedCheckout) git(root, ['worktree', 'remove', '--force', ownedCheckout]);
+    if (ownedCheckout) await rm(dirname(ownedCheckout), { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('resume and discard refuse a registered same-prefix lookalike that is not the 284 layout', async () => {
+  const { root, taskDir, trunkOid, featureHead } = await makeDirtyOffTrunkRoot('full');
+  const userBase = await mkdtemp(join(tmpdir(), 'jeff-user-lookalike-'));
+  const lookalikeHome = join(userBase, 'jeff-integrate-18-lookalike');
+  const lookalikeCheckout = join(lookalikeHome, 'checkout');
+  const wrongLeafHome = await mkdtemp(join(tmpdir(), 'jeff-integrate-18-'));
+  const wrongLeafTree = join(wrongLeafHome, 'not-checkout');
+  /** @type {string | undefined} */
+  let ownedCheckout;
+  try {
+    const { createIntegrationCheckout, resumeIntegrationCheckout, discardIntegrationCheckout } = await loadIntegrationRoot();
+    const owned = await createIntegrationCheckout(root, { trunkRef: 'master', taskId: '18' });
+    ownedCheckout = owned.checkoutRoot;
+    await mkdir(lookalikeHome, { recursive: true });
+    gitOk(root, ['worktree', 'add', '--detach', '-q', lookalikeCheckout, trunkOid]);
+    gitOk(root, ['worktree', 'add', '--detach', '-q', wrongLeafTree, trunkOid]);
+
+    const before = snapshotStateRoot(root);
+    const beforeTask = await readFile(join(taskDir, 'task.json'), 'utf8');
+    const ownedReal = await realpath(owned.checkoutRoot);
+    const lookalikeReal = await realpath(lookalikeCheckout);
+    const wrongLeafReal = await realpath(wrongLeafTree);
+
+    const resumed = await resumeIntegrationCheckout(root, { taskId: '18' });
+    assert.equal(await realpath(resumed.checkoutRoot), ownedReal);
+
+    await assert.rejects(() => resumeIntegrationCheckout(root, { taskId: '18', checkoutRoot: lookalikeCheckout }));
+    await assert.rejects(() => discardIntegrationCheckout(root, { taskId: '18', checkoutRoot: lookalikeCheckout }));
+    await assert.rejects(() => resumeIntegrationCheckout(root, { taskId: '18', checkoutRoot: wrongLeafTree }));
+    await assert.rejects(() => discardIntegrationCheckout(root, { taskId: '18', checkoutRoot: wrongLeafTree }));
+
+    const trees = await resolvedWorktrees(root);
+    assert.ok(trees.includes(ownedReal));
+    assert.ok(trees.includes(lookalikeReal));
+    assert.ok(trees.includes(wrongLeafReal));
+    await access(dirname(owned.checkoutRoot));
+    await access(lookalikeHome);
+    await access(wrongLeafHome);
+
+    assert.deepEqual(snapshotStateRoot(root), before);
+    assert.equal(await readFile(join(taskDir, 'task.json'), 'utf8'), beforeTask);
+    assert.equal(gitOk(root, ['rev-parse', '--abbrev-ref', 'HEAD']), 'task/284');
+    assert.equal(gitOk(root, ['rev-parse', 'HEAD']), featureHead);
+    assert.equal(gitOk(root, ['rev-parse', 'master']), before.trunk);
+    assert.equal(await readFile(join(root, DIRTY_REL), 'utf8'), DIRTY_CONTENTS);
+  } finally {
+    if (ownedCheckout) git(root, ['worktree', 'remove', '--force', ownedCheckout]);
+    git(root, ['worktree', 'remove', '--force', lookalikeCheckout]);
+    git(root, ['worktree', 'remove', '--force', wrongLeafTree]);
+    if (ownedCheckout) await rm(dirname(ownedCheckout), { recursive: true, force: true });
+    await rm(userBase, { recursive: true, force: true });
+    await rm(wrongLeafHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
