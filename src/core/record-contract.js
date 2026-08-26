@@ -11,7 +11,7 @@ const STAGES = ['plan', 'implement', 'refactor', 'execute', 'review', 'verify', 
 const RESULTS = {
   plan: ['red', 'plan', 'escalation'],
   implement: ['green', 'kickback'],
-  refactor: ['refactored', 'clean'],
+  refactor: ['refactored', 'clean', 'kickback'],
   execute: ['executed', 'kickback', 'approval-required'],
 };
 const AUDIT_CATEGORIES = [
@@ -195,12 +195,18 @@ function validateExecute(value) {
 
 /** @param {any} value */
 function validateRefactor(value) {
-  closed(value, '', ['stage', 'result', 'files', 'outsideDiff', 'greenRun', 'summary']);
+  closedOptional(value, '', ['stage', 'result', 'files', 'outsideDiff', 'greenRun', 'summary'], ['kickback']);
   oneOf(value.result, 'result', RESULTS.refactor);
   strings(value.files, 'files');
   strings(value.outsideDiff, 'outsideDiff');
   run(value.greenRun, 'greenRun');
   strings(value.summary, 'summary');
+  if (value.kickback != null) {
+    closed(value.kickback, 'kickback', ['to', 'reason']);
+    oneOf(value.kickback.to, 'kickback.to', ['plan']);
+    string(value.kickback.reason, 'kickback.reason');
+  }
+  if ((value.result === 'kickback') !== (value.kickback != null)) invalid('kickback');
 }
 
 /** @param {any} value */

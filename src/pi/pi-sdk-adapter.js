@@ -14,6 +14,18 @@ function isBundledSkill(packageRoot, filePath) {
   }
 }
 
+/**
+ * @param {string} packageRoot
+ * @param {string | undefined} filePath
+ * @param {string | undefined} name
+ * @param {Set<string> | undefined} declaredNames
+ */
+export function isDeclaredBundledSkill(packageRoot, filePath, name, declaredNames) {
+  if (!isBundledSkill(packageRoot, filePath)) return false;
+  return declaredNames === undefined || declaredNames.has(name ?? '');
+}
+
+
 /** @param {any} parentModelRegistry @param {any} model @param {string} agentId */
 async function createCredentialStore(parentModelRegistry, model, agentId) {
   if (typeof parentModelRegistry?.getApiKey !== 'function') {
@@ -115,7 +127,7 @@ function isolateModelRuntime(runtime, model) {
  * independent auth, settings, resource discovery, or model state.
  *
  * @param {any} sdk
- * @param {{ cwd: string, packageRoot: string, tools: string[], effort: string | undefined, agentId: string, parentModelRegistry: any, currentModel: any }} opts
+ * @param {{ cwd: string, packageRoot: string, tools: string[], effort: string | undefined, agentId: string, parentModelRegistry: any, currentModel: any, declaredSkillNames?: Set<string> }} opts
  */
 export async function prepareInstalledSdkSession(sdk, opts) {
   if (typeof sdk.ModelRuntime?.create !== 'function'
@@ -162,7 +174,7 @@ export async function prepareInstalledSdkSession(sdk, opts) {
     noContextFiles: true,
     skillsOverride: (/** @type {{ skills: any[], diagnostics: any[] }} */ result) => ({
       ...result,
-      skills: result.skills.filter((skill) => isBundledSkill(opts.packageRoot, skill.filePath)),
+      skills: result.skills.filter((skill) => isDeclaredBundledSkill(opts.packageRoot, skill.filePath, skill.name, opts.declaredSkillNames)),
     }),
   });
   await resourceLoader.reload();

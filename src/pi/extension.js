@@ -108,7 +108,17 @@ function displayProjection(result) {
           : [],
       };
     case 'refactor':
-      return { stage, ...status, summary: displayTexts(result.summary) };
+      return {
+        stage,
+        ...status,
+        summary: displayTexts(result.summary),
+        ...(result.kickback ? {
+          kickback: {
+            to: displayText(result.kickback.to),
+            reason: displayText(result.kickback.reason),
+          },
+        } : {}),
+      };
     case 'review':
     case 'audit':
       return {
@@ -264,6 +274,169 @@ function renderDispatchCall(args) {
   return textComponent([`${stage}: running`]);
 }
 
+
+const INTERRUPTED = 'Context acquisition was interrupted';
+const AUDIT_CATEGORIES = [
+  'secrets',
+  'injection_sql',
+  'injection_command',
+  'path_traversal',
+  'insecure_deserialization',
+  'weak_crypto',
+  'dynamic_execution',
+  'tls_transport',
+  'xss',
+  'sensitive_logging',
+  'insecure_permissions',
+];
+
+/** @param {string} stage */
+function interruptedSpecialistReturn(stage) {
+  const evidence = [{ command: 'dispatch', output: INTERRUPTED }];
+  switch (stage) {
+    case 'plan':
+      return {
+        stage: 'plan',
+        result: 'escalation',
+        complexity: 'complex',
+        auditRequired: true,
+        slices: [INTERRUPTED],
+        escalation: {
+          fork: 'context-loading timeout',
+          options: ['record the partial and continue'],
+        },
+      };
+    case 'implement':
+      return {
+        stage: 'implement',
+        result: 'kickback',
+        files: [],
+        greenRun: { command: null, output: INTERRUPTED },
+        kickback: { to: 'plan', reason: INTERRUPTED },
+      };
+    case 'execute':
+      return {
+        stage: 'execute',
+        result: 'kickback',
+        actions: [INTERRUPTED],
+        evidence,
+        kickback: { to: 'plan', reason: INTERRUPTED },
+        approvalRequired: null,
+      };
+    case 'refactor':
+      return {
+        stage: 'refactor',
+        result: 'kickback',
+        files: [],
+        outsideDiff: [],
+        greenRun: { command: null, output: INTERRUPTED },
+        summary: [INTERRUPTED],
+        kickback: { to: 'plan', reason: INTERRUPTED },
+      };
+    case 'review':
+      return {
+        stage: 'review',
+        cycle: 0,
+        verdict: 'needs-work',
+        acLedger: [],
+        findings: [{
+          file: 'dispatch',
+          line: 1,
+          severity: 'high',
+          class: 'blocking',
+          kickTo: 'plan',
+          what: INTERRUPTED,
+          why: INTERRUPTED,
+        }],
+        evidence,
+      };
+    case 'verify':
+      return {
+        stage: 'verify',
+        cycle: 0,
+        verdict: 'needs-work',
+        postconditions: [{ postcondition: INTERRUPTED, ok: false, evidence: INTERRUPTED }],
+        findings: [{
+          file: 'dispatch',
+          line: 1,
+          severity: 'low',
+          class: 'follow-up',
+          kickTo: 'plan',
+          what: INTERRUPTED,
+          why: INTERRUPTED,
+        }],
+        evidence,
+      };
+    case 'audit':
+      return {
+        stage: 'audit',
+        cycle: 0,
+        verdict: 'needs-work',
+        scan: { command: 'dispatch', recommendation: 'BLOCK', reportPath: 'dispatch' },
+        coverage: AUDIT_CATEGORIES.map((category) => ({ category, status: 'not_covered' })),
+        findings: [{
+          file: 'dispatch',
+          line: 1,
+          severity: 'high',
+          class: 'blocking',
+          cwe: null,
+          kickTo: 'plan',
+          what: INTERRUPTED,
+          why: INTERRUPTED,
+        }],
+        evidence,
+      };
+    case 'refute':
+      return {
+        stage: 'refute',
+        cycle: 0,
+        finding: INTERRUPTED,
+        verdict: 'survives',
+        rationale: INTERRUPTED,
+        evidence,
+      };
+    case 'council':
+      return {
+        stage: 'council',
+        lens: 'integrity',
+        temperature: null,
+        inquiry: {
+          question: INTERRUPTED,
+          problemRestatement: INTERRUPTED,
+          causalHypotheses: [INTERRUPTED],
+          solutionStrategies: ['record the partial and continue'],
+          findingVotes: [{ id: 'C1', blocking: false, rationale: INTERRUPTED }],
+          decisiveEvidence: [INTERRUPTED],
+        },
+      };
+    case 'council-synthesis':
+      return {
+        stage: 'council-synthesis',
+        synthesis: {
+          problemRestatement: INTERRUPTED,
+          survivingBlockers: [],
+          causalHypotheses: [INTERRUPTED],
+          solutionStrategies: ['confined-repair', 'full-replan'],
+          rejectedAlternatives: [],
+          selectedStrategy: 'confined-repair',
+          decisiveEvidence: [INTERRUPTED],
+        },
+      };
+    default:
+      return {
+        stage,
+        result: 'escalation',
+        complexity: 'complex',
+        auditRequired: true,
+        slices: [INTERRUPTED],
+        escalation: {
+          fork: 'context-loading timeout',
+          options: ['record the partial and continue'],
+        },
+      };
+  }
+}
+
 /** @param {string} cwd */
 async function assertActiveJeffProject(cwd) {
   const cfg = await readConfig(cwd);
@@ -310,11 +483,11 @@ export default function jeffExtension(pi, dependencies = {}) {
     /**
      * @param {string} _toolCallId
      * @param {{ stage: string, brief: string, taskDir?: string, taskId?: string }} params
-     * @param {AbortSignal | undefined} _signal
+     * @param {AbortSignal | undefined} signal
      * @param {unknown} _onUpdate
      * @param {any} ctx
      */
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       await assertActiveJeffProject(ctx.cwd);
       const isCouncilWork = ['council', 'council-synthesis'].includes(params.stage);
       if (isCouncilWork && params.taskId !== undefined) {
@@ -329,7 +502,12 @@ export default function jeffExtension(pi, dependencies = {}) {
         modelRegistry: ctx.modelRegistry,
         sdk: pi.pi,
         taskId: params.taskId,
+        signal,
       });
+
+      const contextStatus = result.contextStatus === 'timeout' || result.contextStatus === 'partial'
+        ? result.contextStatus
+        : undefined;
 
       let specialistReturn;
       try {
@@ -338,7 +516,8 @@ export default function jeffExtension(pi, dependencies = {}) {
         else if (params.stage === 'council-synthesis') validateCouncilSynthesisReturn(specialistReturn);
         else validateSpecialistReturn(params.stage, specialistReturn);
       } catch {
-        throw new Error('cook_dispatch: specialist return is invalid');
+        if (!contextStatus) throw new Error('cook_dispatch: specialist return is invalid');
+        specialistReturn = interruptedSpecialistReturn(params.stage);
       }
 
       if (params.taskId) {
@@ -349,9 +528,12 @@ export default function jeffExtension(pi, dependencies = {}) {
         }
       }
 
-      const details = isCouncilWork
-        ? { ...specialistReturn, agent_id: result.agent_id }
-        : displayProjection(specialistReturn);
+      const details = {
+        ...(isCouncilWork
+          ? { ...specialistReturn, agent_id: result.agent_id }
+          : displayProjection(specialistReturn)),
+        ...(contextStatus ? { contextStatus } : {}),
+      };
       return {
         content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
         details,

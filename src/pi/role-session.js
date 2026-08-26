@@ -3,9 +3,9 @@
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { prepareInstalledSdkSession } from './pi-sdk-adapter.js';
+import { isDeclaredBundledSkill, prepareInstalledSdkSession } from './pi-sdk-adapter.js';
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
 const COMMAND_TOOLS = [...READ_TOOLS, 'bash'];
@@ -74,19 +74,67 @@ export function parseRoleFile(raw) {
   return { frontmatter, body: match[2].trim() };
 }
 
+const BUNDLED_SKILL_RE = /skills\/([A-Za-z0-9-]+)\/SKILL\.md/g;
+const BUNDLED_PATH_RE = /skills\/[A-Za-z0-9][A-Za-z0-9._/-]*/g;
+
+/** @param {string} text */
+function bundledSkillNames(text) {
+  return new Set([...text.matchAll(BUNDLED_SKILL_RE)].map((match) => match[1]));
+}
+
+/** @param {string} text */
+function oneHopReferencePaths(text) {
+  return [...text.matchAll(BUNDLED_PATH_RE)]
+    .map((match) => match[0].replace(/[.,;:)']+$/, ''))
+    .filter((path) => !path.endsWith('/SKILL.md'));
+}
+
 /**
- * @param {{ stage: string, roleBody: string, brief: string, taskDir?: string }} opts
+ * @param {string} stage
+ * @param {string} roleText
+ * @param {string} repoRoot
+ * @returns {Promise<{ names: Set<string>, paths: string[] }>}
+ */
+async function declaredSkillContext(stage, roleText, repoRoot) {
+  const names = bundledSkillNames(roleText);
+  if (repoRoot !== PACKAGE_ROOT) {
+    try {
+      const packaged = await readFile(join(PACKAGE_ROOT, 'agents', `cook-${stage}.md`), 'utf8');
+      for (const name of bundledSkillNames(packaged)) names.add(name);
+    } catch {
+      // Consumer fixtures may omit the packaged role.
+    }
+  }
+  const skillPaths = [...names].sort().map((name) => join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'));
+  /** @type {Set<string>} */
+  const references = new Set();
+  for (const skillPath of skillPaths) {
+    try {
+      for (const relativePath of oneHopReferencePaths(await readFile(skillPath, 'utf8'))) {
+        references.add(join(PACKAGE_ROOT, relativePath));
+      }
+    } catch {
+      // Still name the declared skill path when the file is missing.
+    }
+  }
+  return { names, paths: [...skillPaths, ...[...references].sort()] };
+}
+
+
+/**
+ * @param {{ stage: string, roleBody: string, brief: string, taskDir?: string, declaredPaths?: string[] }} opts
  * @returns {string}
  */
 export function buildRolePrompt(opts) {
   const taskDirLine = opts.taskDir ? `Task directory: ${opts.taskDir}\n` : '';
+  const declared = opts.declaredPaths?.length ? `${opts.declaredPaths.join('\n')}\n` : '';
   return [
     `stage: ${opts.stage}`,
     '',
     opts.roleBody,
     '',
     '## Jeff dispatch brief',
-    taskDirLine + opts.brief,
+    taskDirLine + declared + opts.brief,
   ].join('\n');
 }
 
@@ -283,17 +331,12 @@ function createExactModelRegistry(authStorage, currentModel) {
   };
 }
 
-/** @param {any} skill */
-function isAllowedOmpSkill(skill) {
+/** @param {any} skill @param {Set<string>} declaredNames */
+function isAllowedOmpSkill(skill, declaredNames) {
   const provider = skill?._source?.provider;
   if (provider === 'omp-managed' || provider === 'claude-plugins') return false;
   if (provider !== 'omp-plugins') return true;
-  try {
-    const relativePath = relative(PACKAGE_ROOT, realpathSync(skill.filePath));
-    return relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath);
-  } catch {
-    return false;
-  }
+  return isDeclaredBundledSkill(PACKAGE_ROOT, skill.filePath, skill.name, declaredNames);
 }
 
 /** @param {any} sdk */
@@ -318,8 +361,9 @@ async function loadOmpIsolation(sdk) {
  * @param {string} agentId
  * @param {any} parentModelRegistry
  * @param {any} currentModel
+ * @param {Set<string>} declaredNames
  */
-async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, currentModel) {
+async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, currentModel, declaredNames) {
   const isolation = await loadOmpIsolation(sdk);
   const settings = sdk.createSubagentSettings(sdk.settings, OMP_SETTINGS);
   if (typeof parentModelRegistry?.getApiKey !== 'function' || !parentModelRegistry.authStorage) {
@@ -345,7 +389,7 @@ async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, 
       disableExtensionDiscovery: true,
       preloadedCustomToolPaths: [],
       enableMCP: false,
-      skills: skills.filter(isAllowedOmpSkill),
+      skills: skills.filter((skill) => isAllowedOmpSkill(skill, declaredNames)),
       rules: [],
       spawns: '',
       taskDepth: 1,
@@ -373,8 +417,9 @@ async function prepareOmpSession(sdk, cwd, tools, agentId, parentModelRegistry, 
  *   modelRegistry?: unknown,
  *   sdk?: unknown,
  *   generateAgentId?: () => string,
+ *   signal?: AbortSignal,
  * }} opts
- * @returns {Promise<{ agent_id: string, stage: string, brain: { provider: string | undefined, model: string | undefined, effort: string | undefined }, transcript: string }>}
+ * @returns {Promise<{ agent_id: string, stage: string, brain: { provider: string | undefined, model: string | undefined, effort: string | undefined }, transcript: string, contextStatus?: 'timeout' | 'partial' }>}
  */
 export async function dispatchRoleSession(opts) {
   if (!STAGES.includes(opts.stage)) throw new Error(`cook_dispatch: unknown stage '${opts.stage}'`);
@@ -382,6 +427,7 @@ export async function dispatchRoleSession(opts) {
   const repoRoot = opts.repoRoot ?? PACKAGE_ROOT;
   const rawRole = await readFile(join(repoRoot, 'agents', `cook-${opts.stage}.md`), 'utf8');
   const role = parseRoleFile(rawRole);
+  const declared = await declaredSkillContext(opts.stage, rawRole, repoRoot);
   const agentId = (opts.generateAgentId ?? generateAgentId)();
   const current = modelParts(opts.currentModel);
   if (!current.provider || !current.id) throw new Error('cook_dispatch: orchestrator model is unavailable');
@@ -391,6 +437,7 @@ export async function dispatchRoleSession(opts) {
     roleBody: role.body,
     brief: opts.brief,
     taskDir: opts.taskDir,
+    declaredPaths: declared.paths,
   });
 
   let streamed = '';
@@ -398,7 +445,7 @@ export async function dispatchRoleSession(opts) {
   const sessionManager = sdk.SessionManager?.inMemory?.(opts.cwd);
   const tools = STAGE_TOOLS[opts.stage];
   const omp = typeof sdk.createSubagentSettings === 'function'
-    ? await prepareOmpSession(sdk, opts.cwd, tools, agentId, opts.modelRegistry, opts.currentModel)
+    ? await prepareOmpSession(sdk, opts.cwd, tools, agentId, opts.modelRegistry, opts.currentModel, declared.names)
     : undefined;
   const isolation = omp ?? await prepareInstalledSdkSession(sdk, {
     cwd: opts.cwd,
@@ -408,6 +455,7 @@ export async function dispatchRoleSession(opts) {
     agentId,
     parentModelRegistry: opts.modelRegistry,
     currentModel: opts.currentModel,
+    declaredSkillNames: declared.names,
   });
   /** @type {Record<string, any>} */
   const sessionOptions = {
@@ -453,11 +501,15 @@ export async function dispatchRoleSession(opts) {
           .join('\n');
       }
     });
-    await session.prompt(prompt);
+    if (!opts.signal?.aborted) {
+      await session.prompt(prompt);
+    }
     actual = modelParts(session.model ?? opts.currentModel);
     if (actual.provider !== current.provider || actual.id !== current.id) {
       throw new Error(`cook_dispatch: child model drifted from ${current.provider}/${current.id} to ${actual.provider ?? 'unknown'}/${actual.id ?? 'unknown'}`);
     }
+  } catch (error) {
+    if (!opts.signal?.aborted) throw error;
   } finally {
     await session.dispose();
   }
@@ -471,5 +523,6 @@ export async function dispatchRoleSession(opts) {
       effort: typeof session.thinkingLevel === 'string' ? session.thinkingLevel : role.frontmatter.effort,
     },
     transcript: (streamed || final || lastAssistantText(session)).trim(),
+    ...(opts.signal?.aborted ? { contextStatus: /** @type {const} */ ('timeout') } : {}),
   };
 }

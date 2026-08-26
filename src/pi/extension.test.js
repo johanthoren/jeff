@@ -1032,3 +1032,76 @@ test('issue 239 standalone council synthesis rejects empty research arrays', asy
   }
 });
 
+
+test('#290 cook_dispatch surfaces a partial-result signal without another dispatch', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-partial-signal-'));
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    const tool = registeredDispatchTool({
+      dispatchRoleSession: async () => ({
+        stage: 'plan',
+        agent_id: 'plan-partial',
+        brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
+        transcript: JSON.stringify({
+          stage: 'plan',
+          result: 'escalation',
+          complexity: 'complex',
+          auditRequired: true,
+          slices: ['Bound stage context'],
+          escalation: {
+            fork: 'context-loading timeout',
+            options: ['record the partial and continue'],
+          },
+        }),
+        contextStatus: 'partial',
+      }),
+    });
+
+    const result = await tool.execute(
+      'call-partial',
+      { stage: 'plan', brief: 'Keep the partial result.' },
+      undefined,
+      undefined,
+      { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+    );
+
+    assert.equal(result.details.contextStatus, 'partial');
+    assert.match(result.content[0].text, /partial/);
+    assert.equal(result.details.stage, 'plan');
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('#290 cook_dispatch timeout without JSON still returns a schema-valid plan result', async () => {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-timeout-signal-'));
+  try {
+    await mkdir(join(cwd, '.jeff'));
+    await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+    const tool = registeredDispatchTool({
+      dispatchRoleSession: async () => ({
+        stage: 'plan',
+        agent_id: 'plan-timeout',
+        brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
+        transcript: '',
+        contextStatus: 'timeout',
+      }),
+    });
+
+    const result = await tool.execute(
+      'call-timeout',
+      { stage: 'plan', brief: 'Return a schema-valid partial.' },
+      undefined,
+      undefined,
+      { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+    );
+
+    assert.equal(result.details.contextStatus, 'timeout');
+    assert.match(result.content[0].text, /timeout/);
+    assert.equal(result.details.stage, 'plan');
+    assert.match(String(result.details.result), /red|plan|escalation/);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

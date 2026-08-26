@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dispatchRoleSession, loadSdk, STAGES } from './role-session.js';
+import { validateSpecialistReturn } from '../core/record-contract.js';
 
 const REVIEW_AGENT = `---
 name: cook-review
@@ -1703,5 +1704,237 @@ test('issue 237 Pi dispatch exposes fresh read-only inquiry and synthesis sessio
     assert.deepEqual(captured.map((options) => options.thinkingLevel), [
       'xhigh', 'xhigh', 'xhigh', 'xhigh',
     ]);
+  });
+});
+
+const PLAN_RETURN = {
+  stage: 'plan',
+  result: 'red',
+  complexity: 'complex',
+  auditRequired: true,
+  refactorOpportunity: null,
+  slices: ['Bound stage context'],
+  testFiles: ['src/pi/role-session.test.js'],
+  redRun: { command: 'node --test --test-name-pattern=#290', output: 'unbounded context' },
+  escalation: null,
+};
+
+/** @param {string} name */
+function bundledSkill(name) {
+  return {
+    name,
+    filePath: join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'),
+    _source: { provider: 'omp-plugins', level: 'user' },
+  };
+}
+
+/**
+ * @param {any[]} skills
+ * @returns {Promise<number>}
+ */
+async function skillBytes(skills) {
+  let total = 0;
+  for (const skill of skills) {
+    if (typeof skill?.content === 'string') {
+      total += skill.content.length;
+      continue;
+    }
+    if (typeof skill?.filePath === 'string') {
+      try {
+        total += (await readFile(skill.filePath, 'utf8')).length;
+      } catch {
+        total += 0;
+      }
+    }
+  }
+  return total;
+}
+
+test('#290 plan dispatch keeps only declared bundled skills and the language floor', async () => {
+  await withRepo(async (repoRoot) => {
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-plan.md'),
+      await readFile(join(PACKAGE_ROOT, 'agents', 'cook-plan.md'), 'utf8'),
+    );
+    await writeFile(join(repoRoot, 'rust-skill.md'), '---\nname: rust\n---\nrust floor\n');
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    const modelRegistry = ompParentModelRegistry(currentModel);
+    const discoveredSkills = [
+      bundledSkill('cook'),
+      bundledSkill('code-standards'),
+      bundledSkill('testing'),
+      bundledSkill('security-auditor'),
+      {
+        name: 'rust',
+        filePath: join(repoRoot, 'rust-skill.md'),
+        _source: { provider: 'agents', level: 'project' },
+      },
+    ];
+    /** @type {string[]} */
+    let bundledNames = [];
+    /** @type {string[]} */
+    let allNames = [];
+    const sdk = ompSdk(async (options) => ({
+      session: {
+        model: currentModel,
+        thinkingLevel: 'xhigh',
+        getActiveToolNames: () => activeOmpTools(options),
+        subscribe() {},
+        async prompt() {
+          const skills = options.skills ?? [];
+          allNames = skills.map((/** @type {any} */ skill) => skill.name);
+          bundledNames = skills
+            .filter((/** @type {any} */ skill) => skill._source?.provider === 'omp-plugins')
+            .map((/** @type {any} */ skill) => skill.name)
+            .sort();
+        },
+        dispose() {},
+      },
+    }), { discoveredSkills });
+
+    await dispatchRoleSession({
+      stage: 'plan',
+      brief: 'Do not load every bundled skill.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      modelRegistry,
+      sdk,
+    });
+
+    assert.deepEqual(bundledNames, ['code-standards', 'testing']);
+    assert.ok(allNames.includes('rust'));
+    assert.equal(allNames.includes('cook'), false);
+    assert.equal(allNames.includes('security-auditor'), false);
+  });
+});
+
+test('#290 plan prompt names only the declared skill paths as absolute package paths', async () => {
+  await withRepo(async (repoRoot) => {
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-plan.md'),
+      await readFile(join(PACKAGE_ROOT, 'agents', 'cook-plan.md'), 'utf8'),
+    );
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    const modelRegistry = ompParentModelRegistry(currentModel);
+    let capturedPrompt = '';
+    const sdk = ompSdk(async (options) => ({
+      session: {
+        model: currentModel,
+        thinkingLevel: 'xhigh',
+        getActiveToolNames: () => activeOmpTools(options),
+        subscribe() {},
+        /** @param {string} prompt */
+        async prompt(prompt) { capturedPrompt = prompt; },
+        dispose() {},
+      },
+    }), {
+      discoveredSkills: [
+        bundledSkill('cook'),
+        bundledSkill('code-standards'),
+        bundledSkill('testing'),
+        bundledSkill('security-auditor'),
+      ],
+    });
+
+    await dispatchRoleSession({
+      stage: 'plan',
+      brief: 'Name only this stage\'s declared skills.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      modelRegistry,
+      sdk,
+    });
+
+    const codeStandards = join(PACKAGE_ROOT, 'skills', 'code-standards', 'SKILL.md');
+    const testing = join(PACKAGE_ROOT, 'skills', 'testing', 'SKILL.md');
+    const cook = join(PACKAGE_ROOT, 'skills', 'cook', 'SKILL.md');
+    const security = join(PACKAGE_ROOT, 'skills', 'security-auditor', 'SKILL.md');
+    assert.ok(capturedPrompt.includes(codeStandards), capturedPrompt);
+    assert.ok(capturedPrompt.includes(testing), capturedPrompt);
+    assert.equal(capturedPrompt.includes(cook), false, capturedPrompt);
+    assert.equal(capturedPrompt.includes(security), false, capturedPrompt);
+  });
+});
+
+test('#290 plan dispatch with several large skills still returns the required schema within the bound', async () => {
+  await withRepo(async (repoRoot) => {
+    await writeFile(
+      join(repoRoot, 'agents', 'cook-plan.md'),
+      await readFile(join(PACKAGE_ROOT, 'agents', 'cook-plan.md'), 'utf8'),
+    );
+    const currentModel = { provider: 'openai', id: 'gpt-5.6' };
+    const modelRegistry = ompParentModelRegistry(currentModel);
+    const overflowBytes = 24 * 1024;
+    /** @type {(event: any) => void} */
+    let listener = () => {};
+    const sdk = ompSdk(async (options) => ({
+      session: {
+        model: currentModel,
+        thinkingLevel: 'xhigh',
+        getActiveToolNames: () => activeOmpTools(options),
+        /** @param {(event: any) => void} fn */
+        subscribe(fn) { listener = fn; },
+        async prompt() {
+          const loaded = await skillBytes(options.skills ?? []);
+          if (loaded > overflowBytes) return;
+          listener({
+            type: 'message_end',
+            message: { role: 'assistant', content: [{ type: 'text', text: JSON.stringify(PLAN_RETURN) }] },
+          });
+        },
+        dispose() {},
+      },
+    }), {
+      discoveredSkills: [
+        bundledSkill('cook'),
+        bundledSkill('code-standards'),
+        bundledSkill('testing'),
+        bundledSkill('security-auditor'),
+      ],
+    });
+
+    const result = await dispatchRoleSession({
+      stage: 'plan',
+      brief: 'Return the plan contract before context fills.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel,
+      modelRegistry,
+      sdk,
+    });
+
+    const parsed = JSON.parse(result.transcript);
+    assert.deepEqual(validateSpecialistReturn('plan', parsed), PLAN_RETURN);
+  });
+});
+
+test('#290 dispatchRoleSession signals timeout when the child is aborted before a return', async () => {
+  await withRepo(async (repoRoot) => {
+    const result = await dispatchRoleSession({
+      stage: 'review',
+      brief: 'Check the diff.',
+      cwd: repoRoot,
+      repoRoot,
+      currentModel: { provider: 'local', id: 'qwen-dev' },
+      modelRegistry: { find: assert.fail, getAvailable: assert.fail },
+      sdk: {
+        SessionManager: { inMemory: () => ({}) },
+        createAgentSession: async () => ({
+          session: {
+            model: { provider: 'local', id: 'qwen-dev' },
+            thinkingLevel: 'xhigh',
+            subscribe() {},
+            async prompt() {},
+            dispose() {},
+          },
+        }),
+      },
+      signal: AbortSignal.abort(),
+      generateAgentId: () => 'abortedchild01',
+    });
+
+    assert.equal(result.contextStatus, 'timeout');
   });
 });
