@@ -34,6 +34,7 @@ In plain mode, address the Chef plainly and drop the kitchen tokens; the finding
 **Chef-facing grounder (always).** Before any question, confirmation, option menu, or hard call put to the Chef (capture, escape-by-return, blocked-to-operator, irreversible git, lifecycle consent, abandon/supersede, or any other stop), open with **1–2 plain sentences** that re-orient a cold Chef who may be juggling many parallel sessions and codebases. Cover, in order:
 1. **What** this is: task id + one-line goal/subject (what the order is about in product or code terms).
 2. **Where we are and why this decision**: the **root issue** the Chef must judge, not only the method-internal reason ("both reviews agreed," "cap hit," "council sustained").
+Ask or stop only for a product or engineering-design fork, or an irreversible or shared side effect. Method plumbing is never a Chef question. Undecided plumbing is a method defect; pick the existing convention.
 
 Lead with the substance of the dish and the fork, then any findings substrate (`file:line` + reason + fix), then pipeline mechanics, then the question. Keep it short: no full ledger dump, no stage-by-stage replay.
 
@@ -219,7 +220,7 @@ When capture locks `category: "operation"`, **read `skills/cook/reference/operat
 
 ### Gate model: capture-lock + escape-by-return
 
-The pipeline stops for the capture lock and for an operation's exact shared-mutation approval. The executor requests that approval and stops; Jeff presents the request, records the operator's exact grant through `cook approve <id> <operator>`, and only then re-fires execute. Otherwise the pipeline runs autonomously. A specialist with a genuine unresolved fork returns an escalation to Jeff; an operation plan escalation is recorded without mutation and stays at `plan` until Jeff grounds the question for the Chef and re-dispatches plan with the answer.
+The pipeline stops for the capture lock and for an operation's exact shared-mutation approval. The executor requests that approval and stops; Jeff presents the request, records the operator's exact grant through `cook approve <id> <operator>`, and only then re-fires execute. Otherwise the pipeline runs autonomously. A specialist with a genuine unresolved fork returns an escalation to Jeff; an operation plan escalation is recorded without mutation and stays at `plan` until Jeff grounds the question for the Chef and re-dispatches plan with the answer. Jeff does not ground plumbing as a Chef-facing escalation.
 
 ### Council (task-wide, triggered when a stage hits the cap)
 

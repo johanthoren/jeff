@@ -33,6 +33,10 @@ test.
 
 Stay on goals and outcomes unless you label a question increment-bounded.
 Destination answers are welcome and default; translate them onto increments.
+Ask only product or engineering-design forks, or irreversible or shared side effects.
+Method plumbing is never a Chef question: recorder bind, resume vs seam, cycle identity, worktree vs clone, and who writes a stage.
+Undecided plumbing is a method defect; pick the existing convention and do not ask.
+Keep that confirm when now versus later is a real product increment.
 
 Two phases live inside this one capture stage.
 

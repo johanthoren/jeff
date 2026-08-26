@@ -2260,3 +2260,137 @@ skill_outside_dispatch_rules() {
     return 1
   fi
 }
+
+# ===========================================================================
+# issue 292: Chef-facing stops never ask method plumbing
+#
+# Seam: the payload prose IS the product. Jeff-run capture reads
+# capture-interview.md; every other Chef-facing stop opens from the
+# SKILL.md grounder. There is no second runtime that asks the Chef.
+# Marker discipline matches #280: contract nouns that survive rewording
+# (product / design fork, irreversible or shared side effect, the five
+# plumbing splits, method defect, existing convention). No assertion
+# pins a sentence a maintainer may legitimately rephrase.
+# ===========================================================================
+
+@test "#292: Chef-facing stops ask only product or design forks or real side effects" {
+  local interview skill grounder allow effects
+  interview="$REPO/skills/cook/reference/capture-interview.md"
+  skill="$REPO/skills/cook/SKILL.md"
+  [ -f "$interview" ] || {
+    echo "capture-interview.md is missing"
+    return 1
+  }
+
+  grounder="$(awk '
+    BEGIN { RS = ""; ORS = "\n\n" }
+    $0 ~ /^\*\*Chef-facing grounder/ { print }
+  ' "$skill")"
+  [ -n "$grounder" ] || {
+    echo "cook SKILL.md has no Chef-facing grounder"
+    return 1
+  }
+
+  allow='(ask|question|stop)s?[^.]{0,200}(only|solely)[^.]{0,200}(product|engineering[- ]design|design fork)'
+  effects='(irreversible|shared)[^.]{0,80}(side[- ]effect|mutation)'
+
+  grep -qiE "$allow" "$interview" || {
+    echo "capture-interview.md does not limit Chef questions to product or design forks"
+    return 1
+  }
+  grep -qiE "$effects" "$interview" || {
+    echo "capture-interview.md does not keep irreversible or shared side effects as Chef-facing stops"
+    return 1
+  }
+  grep -qiE "$allow" <<<"$grounder" || {
+    echo "the Chef-facing grounder does not limit stops to product or design forks"
+    return 1
+  }
+  grep -qiE "$effects" <<<"$grounder" || {
+    echo "the Chef-facing grounder does not keep irreversible or shared side effects as Chef-facing stops"
+    return 1
+  }
+
+  grep -qiE 'now versus later|now vs\.? later|now / later' "$interview" || {
+    echo "the now-versus-later confirm is gone"
+    return 1
+  }
+  grep -qiE '(real )?product increment' "$interview" || {
+    echo "the now-versus-later confirm is not kept as a real product increment"
+    return 1
+  }
+  grep -qiE 'confirm[^.]{0,120}(stay|keep|remain)|(stay|keep|remain)[^.]{0,120}confirm' "$interview" || {
+    echo "the plumbing rule does not keep the now-versus-later confirm"
+    return 1
+  }
+}
+
+@test "#292: method plumbing is never a Chef question" {
+  local interview skill split forbid
+  interview="$REPO/skills/cook/reference/capture-interview.md"
+  skill="$REPO/skills/cook/SKILL.md"
+  [ -f "$interview" ] || {
+    echo "capture-interview.md is missing"
+    return 1
+  }
+
+  while IFS='|' read -r split; do
+    grep -qiE "$split" "$interview" || {
+      echo "capture-interview.md does not name the plumbing split: $split"
+      return 1
+    }
+  done <<'SPLITS'
+recorder bind
+resume vs\.? seam|resume versus seam
+cycle identity
+worktree vs\.? clone|worktree versus clone
+who writes a stage
+SPLITS
+
+  forbid='(plumbing|method[- ]internal)[^.]{0,160}(never|not)[^.]{0,100}(chef|operator)[^.]{0,40}question|(never|not)[^.]{0,80}(chef|operator)[^.]{0,40}question[^.]{0,160}(plumbing|method[- ]internal)'
+  grep -qiE "$forbid" "$interview" || {
+    echo "capture-interview.md does not forbid plumbing as a Chef question"
+    return 1
+  }
+  grep -qiE "$forbid" "$skill" || {
+    echo "cook SKILL.md does not forbid plumbing as a Chef question"
+    return 1
+  }
+}
+
+@test "#292: undecided plumbing is a method defect, not a Chef stop" {
+  local interview skill gate
+  interview="$REPO/skills/cook/reference/capture-interview.md"
+  skill="$REPO/skills/cook/SKILL.md"
+  [ -f "$interview" ] || {
+    echo "capture-interview.md is missing"
+    return 1
+  }
+
+  grep -qiF 'method defect' "$interview" || {
+    echo "capture-interview.md does not file undecided plumbing as a method defect"
+    return 1
+  }
+  grep -qiE 'existing convention' "$interview" || {
+    echo "capture-interview.md does not pick the existing convention"
+    return 1
+  }
+  grep -qiF 'method defect' "$skill" || {
+    echo "cook SKILL.md does not file undecided plumbing as a method defect"
+    return 1
+  }
+  grep -qiE 'existing convention' "$skill" || {
+    echo "cook SKILL.md does not pick the existing convention"
+    return 1
+  }
+
+  gate="$(skill_section '^### Gate model')"
+  [ -n "$gate" ] || {
+    echo "cook SKILL.md has no Gate model section"
+    return 1
+  }
+  grep -qiE '(plumbing|method[- ]internal|method defect)[^.]{0,200}(not|never|do not)[^.]{0,80}(escalat|ground)|(not|never|do not)[^.]{0,80}(escalat|ground)[^.]{0,200}(plumbing|method[- ]internal)' <<<"$gate" || {
+    echo "the gate model still grounds plumbing as a Chef-facing escalation"
+    return 1
+  }
+}
