@@ -108,7 +108,17 @@ function displayProjection(result) {
           : [],
       };
     case 'refactor':
-      return { stage, ...status, summary: displayTexts(result.summary) };
+      return {
+        stage,
+        ...status,
+        summary: displayTexts(result.summary),
+        ...(result.kickback ? {
+          kickback: {
+            to: displayText(result.kickback.to),
+            reason: displayText(result.kickback.reason),
+          },
+        } : {}),
+      };
     case 'review':
     case 'audit':
       return {
@@ -316,19 +326,28 @@ function interruptedSpecialistReturn(stage) {
     case 'refactor':
       return {
         stage: 'refactor',
-        result: 'clean',
+        result: 'kickback',
         files: [],
         outsideDiff: [],
         greenRun: { command: null, output: INTERRUPTED },
         summary: [INTERRUPTED],
+        kickback: { to: 'plan', reason: INTERRUPTED },
       };
     case 'review':
       return {
         stage: 'review',
         cycle: 0,
-        verdict: 'pass',
+        verdict: 'needs-work',
         acLedger: [],
-        findings: [],
+        findings: [{
+          file: 'dispatch',
+          line: 1,
+          severity: 'high',
+          class: 'blocking',
+          kickTo: 'plan',
+          what: INTERRUPTED,
+          why: INTERRUPTED,
+        }],
         evidence,
       };
     case 'verify':
@@ -352,10 +371,19 @@ function interruptedSpecialistReturn(stage) {
       return {
         stage: 'audit',
         cycle: 0,
-        verdict: 'na',
-        scan: { command: 'dispatch', recommendation: 'PASS', reportPath: 'dispatch' },
+        verdict: 'needs-work',
+        scan: { command: 'dispatch', recommendation: 'BLOCK', reportPath: 'dispatch' },
         coverage: AUDIT_CATEGORIES.map((category) => ({ category, status: 'not_covered' })),
-        findings: [],
+        findings: [{
+          file: 'dispatch',
+          line: 1,
+          severity: 'high',
+          class: 'blocking',
+          cwe: null,
+          kickTo: 'plan',
+          what: INTERRUPTED,
+          why: INTERRUPTED,
+        }],
         evidence,
       };
     case 'refute':

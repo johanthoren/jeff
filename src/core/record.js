@@ -1268,8 +1268,18 @@ export function transitionTask(task, stage, result) {
       greenRun: result.greenRun,
       summary: result.summary,
     };
-    if (pendingRecovery && (result.result === 'clean' || result.files.length === 0)) {
+    if (pendingRecovery && (result.result === 'clean' || result.result === 'kickback' || result.files.length === 0)) {
       blockCouncilRecovery(next);
+      return /** @type {TaskJson} */ (next);
+    }
+    if (result.result === 'kickback') {
+      next.kickbacks = [...next.kickbacks, {
+        from: 'refactor',
+        to: result.kickback.to,
+        reason: result.kickback.reason,
+        at,
+      }];
+      next.stage = result.kickback.to;
       return /** @type {TaskJson} */ (next);
     }
     const scopedJudgmentRepair = resetJudgmentsAfterFix(next, at, result.files);
