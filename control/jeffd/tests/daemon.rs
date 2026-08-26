@@ -4700,7 +4700,9 @@ fn task_236_surviving_contract_long_id_cannot_poison_retained_snapshot_service()
     assert_eq!(encoded_id.len(), RESPONSE_ID_BYTES * 6 + 2);
     assert!(
         encoded_id.as_bytes()[1..encoded_id.len() - 1]
-            .chunks_exact(6)
+            .as_chunks::<6>()
+            .0
+            .iter()
             .all(|escape| escape == br"\u0000"),
         "every decoded NUL byte must use the worst legal six-byte JSON escape"
     );
