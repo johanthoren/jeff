@@ -570,6 +570,9 @@ function recordVerify(task, result) {
 
 /** @param {MutableRecordTask} task @param {Record<string, any>} result */
 function recordAudit(task, result) {
+  if (task.tests?.gate?.green === false) {
+    throw new Error('[record-transition] audit requires a green latest verification gate');
+  }
   if (task.audit?.audit_agent_id != null || task.agents.audit_agent_id != null) {
     throw new Error('[record-transition] audit slot is already occupied for this judgment cycle');
   }
