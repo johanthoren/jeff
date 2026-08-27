@@ -31,7 +31,7 @@ Hard rules:
 - Do not make code tests pass by implementing the feature.
 - Use deterministic tests and verification seams: no uncontrolled network, sleeps, shared mutable state, unseeded RNG, or clock/FS-time assumptions.
 - Keep `context.md` facts-only; conclusions belong in `notes.md` and the plan return.
-- Apply the Chef's `code-standards` and `testing` skills, bundled at `skills/code-standards/SKILL.md` and `skills/testing/SKILL.md`, plus the matching language skill when present. Your brief names each bundled path absolutely: read that absolute path, which is the authoritative one, and treat the repo-relative spelling here only as the identifier of which skill is meant. If such a path is missing from the brief or does not resolve, return an `escalation` whose fork names it rather than planning without the skill.
+- Apply the Chef's `code-standards` and `testing` skills, bundled at `skills/code-standards/SKILL.md` and `skills/testing/SKILL.md`, plus the matching language skill when present. Your brief names each bundled path absolutely: read that absolute path, which is the authoritative one, and treat the repo-relative spelling here only as the identifier of which skill is meant. Fail closed only when a claimed required path does not resolve: return an `escalation` whose fork names it rather than planning without the skill. An optional language skill omitted from the brief is not a stop.
 
 Escape by return: if the criteria contain a genuine unresolved fork, return an escalation rather than guessing. For an operation unresolved fork, use the operation-specific strict shape below; it persists at `plan` without creating execution state.
 

@@ -1,10 +1,11 @@
 // @ts-check
 
 import { randomBytes } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveDispatchSkills } from '../core/skill-dispatch.js';
 import { isDeclaredBundledSkill, prepareInstalledSdkSession } from './pi-sdk-adapter.js';
 
 const READ_TOOLS = ['read', 'grep', 'find', 'ls'];
@@ -105,10 +106,19 @@ async function declaredSkillContext(stage, roleText, repoRoot) {
       // Consumer fixtures may omit the packaged role.
     }
   }
-  const skillPaths = [...names].sort().map((name) => join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'));
+  const mandatory = [...names].sort().map((name) => ({
+    name,
+    path: join(PACKAGE_ROOT, 'skills', name, 'SKILL.md'),
+  }));
+  const resolved = resolveDispatchSkills({
+    mandatory,
+    languageName: null,
+    sources: { host: [], repo: [], installed: [] },
+    exists: existsSync,
+  });
   /** @type {Set<string>} */
   const references = new Set();
-  for (const skillPath of skillPaths) {
+  for (const skillPath of resolved.claimed) {
     try {
       for (const relativePath of oneHopReferencePaths(await readFile(skillPath, 'utf8'))) {
         references.add(join(PACKAGE_ROOT, relativePath));
@@ -117,7 +127,7 @@ async function declaredSkillContext(stage, roleText, repoRoot) {
       // Still name the declared skill path when the file is missing.
     }
   }
-  return { names, paths: [...skillPaths, ...[...references].sort()] };
+  return { names, paths: [...resolved.claimed, ...[...references].sort()] };
 }
 
 
