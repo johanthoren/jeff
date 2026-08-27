@@ -672,12 +672,23 @@ require_success() {
 }
 
 @test "lite integration terminal checks out the PR base and git branch -d after MERGED" {
-  local section compact
+  local section compact post_land
   section="$(lite_integration_section)" || {
     echo "skills/cook/reference/lite-mode.md has no pipeline / integration terminal section"
     return 1
   }
   compact="$(tr '\n' ' ' <<<"$section")"
+  post_land="$(
+    awk '
+      /Post-land checkout/ { found = 1 }
+      found && /^\- \*\*/ && !/Post-land checkout/ { exit }
+      found { print }
+      END { if (!found) exit 1 }
+    ' <<<"$section"
+  )" || {
+    echo "missing cook all contract: post-land checkout bullet"
+    return 1
+  }
 
   require_regex "$section" 'post-land checkout' 'lite-mode.md names post-land checkout'
   require_regex "$compact" 'wait-for-land' 'post-land checkout lives next to wait-for-land'
@@ -686,13 +697,7 @@ require_success() {
   require_fixed "$section" 'git fetch'
   require_fixed "$section" 'git pull --ff-only'
   require_fixed "$section" 'git branch -d'
-  require_regex "$compact" 'never[^.]{0,20}-D|-D[^.]{0,20}never' 'never git branch -D'
-  if grep -qE -- 'git branch[[:space:]]+-D' <<<"$section"; then
-    printf 'post-land cleanup must not use git branch -D\n'
-    return 1
-  fi
-  require_regex "$compact" '-d[^.]{0,100}(refus|refuse)|(refus|refuse)[^.]{0,100}-d' 'if -d refuses'
-  require_regex "$compact" '(refus|refuse)[^.]{0,160}(stop|print)[^.]{0,40}command|(stop|print)[^.]{0,80}command[^.]{0,80}(refus|refuse|-d)' '-d refuse stops and prints the command'
+  require_regex "$post_land" '-d[^.]{0,100}(refus|refuse)|(refus|refuse)[^.]{0,100}-d' 'if -d refuses'
   if grep -qE 'HEAD.{0,80}is not.{0,40}tests\.gate\.hash' <<<"$compact"; then
     printf 'post-land checkout must not restore COOK_ROOT HEAD to tests.gate.hash before done\n'
     return 1
@@ -704,6 +709,32 @@ require_success() {
       return 1
       ;;
   esac
+
+  if grep -qiE -- '(refus|refuse)[^.]{0,160}(stop|print)[^.]{0,40}command|(stop|print)[^.]{0,80}command[^.]{0,80}(refus|refuse|-d)' <<<"$post_land"; then
+    printf 'post-land cleanup must not stop-and-print on -d refusal\n'
+    return 1
+  fi
+  if grep -qiE -- 'never[[:space:]]+`?-D' <<<"$post_land"; then
+    printf 'post-land cleanup must not blanket-forbid git branch -D\n'
+    return 1
+  fi
+  require_regex "$post_land" 'git branch -d[^.]{0,80}first|-d[^.]{0,40}first|first[^.]{0,40}(-d|git branch -d)' 'git branch -d first'
+  require_regex "$post_land" 'blind[^.]{0,40}-D|-D[^.]{0,40}blind|never[^.]{0,40}blind' 'never blind -D'
+  require_fixed "$post_land" 'headRefOid'
+  require_regex "$post_land" '-D[^.]{0,160}headRefOid|headRefOid[^.]{0,160}-D' '-D only with recorded merged PR headRefOid'
+  require_regex "$post_land" 'exactly equal|exact(ly)? equalit|tip[^.]{0,80}equal' 'force-delete requires exact headRefOid equality'
+  require_regex "$post_land" 'ahead' 'ahead leftovers are named'
+  require_regex "$post_land" 'behind' 'behind leftovers are named'
+  require_regex "$post_land" 'diverged' 'diverged leftovers are named'
+  require_regex "$post_land" 'retain' 'retain leftover refs'
+  require_regex "$post_land" 'report' 'report leftover refs'
+  require_regex "$post_land" 'continue' 'drain continues'
+  require_regex "$post_land" '(refus|refuse)[^.]{0,160}(not a Chef stop|Chef stop|continue)|(continue|Chef stop)[^.]{0,160}(refus|refuse|-d)' '-d refusal is not a Chef stop; drain continues'
+  require_regex "$post_land" 'Jeff-owned' 'positively Jeff-owned task worktree'
+  require_regex "$post_land" 'worktree' 'task worktree'
+  require_regex "$post_land" 'clean' 'remove only a clean owned worktree'
+  require_regex "$post_land" '(remov|removal)[^.]{0,120}(refus|refuse)|(refus|refuse)[^.]{0,120}(remov|removal|worktree)' 'if worktree removal refuses'
+  require_regex "$post_land" 'preserve' 'preserve the worktree when removal refuses'
 }
 
 @test "lite gh pr merge includes --delete-branch unless keep-branch or repo already deletes" {
