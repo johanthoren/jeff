@@ -1105,3 +1105,190 @@ test('#290 cook_dispatch timeout without JSON still returns a schema-valid plan 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+const PLANNED_POSTCONDITION = 'The source is absent and the destination exists exactly once.';
+
+/** @param {Record<string, any>} [overrides] */
+function operationTimeoutTask(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    operationStateVersion: 1,
+    id: 18,
+    slug: 'record-operation',
+    title: 'Record operation',
+    category: 'operation',
+    status: 'in_progress',
+    stage: 'verify',
+    priority: 'p2',
+    deps: [],
+    complexity: 'simple',
+    createdAt: '2026-07-12T00:00:00Z',
+    updatedAt: '2026-07-12T00:00:00Z',
+    agents: {
+      executor_agent_id: 'executor',
+      verifier_agent_id: null,
+      audit_agent_id: null,
+    },
+    plan: {
+      result: 'plan',
+      slices: ['Reconcile the bounded registry state.'],
+      runbook: ['Confirm the source entry, then move it to the destination.'],
+      preconditions: ['The source entry exists exactly once.'],
+      recoveryBoundary: 'Before the shared registry write, restore the captured source entry.',
+      approvalBoundary: 'Rewrite the shared release registry entry from source to destination.',
+      requiresApproval: false,
+      postconditions: [PLANNED_POSTCONDITION],
+      verificationSeams: ['Read the source and destination entries independently.'],
+      escalation: null,
+    },
+    execution: {
+      result: 'executed',
+      executor_agent_id: 'executor',
+      cycle: 0,
+      recordedAt: '2026-07-12T00:20:00Z',
+      actions: ['Moved the bounded registry entry.'],
+      evidence: [{ command: 'inspect registry transition', output: 'transition complete' }],
+      approvalRequired: null,
+    },
+    verification: {
+      verdict: null,
+      verifier_agent_id: null,
+      postconditions: [],
+      findings: [],
+      evidence: [],
+    },
+    audit: { required: false, verdict: 'na', audit_agent_id: null, findings: [], evidence: [] },
+    commits: [],
+    kickbacks: [],
+    convergence: {
+      cap: 2,
+      stages: { verify: { blockingKickbacks: 0 }, audit: { blockingKickbacks: 0 } },
+      council: { convened: false, stage: null, members: [], findings: [], verdict: null, outcome: null },
+    },
+    blockedReason: null,
+    abandonReason: null,
+    ...overrides,
+  };
+}
+
+/** @param {Record<string, any>} task */
+async function withOperationTimeoutProject(task) {
+  const cwd = await mkdtemp(join(tmpdir(), 'jeff-pi-interrupt-'));
+  const taskDir = join(cwd, '.jeff', 'tasks', '018-record-operation');
+  await mkdir(taskDir, { recursive: true });
+  await writeFile(join(cwd, '.jeff', 'config.json'), JSON.stringify({ active: true, mode: 'lite' }), 'utf8');
+  const taskFile = join(taskDir, 'task.json');
+  await writeFile(taskFile, `${JSON.stringify(task, null, 2)}\n`, 'utf8');
+  return { cwd, taskFile };
+}
+
+/**
+ * @param {string} cwd
+ * @param {string} stage
+ * @param {string} taskId
+ */
+async function executeTimeoutDispatch(cwd, stage, taskId) {
+  const tool = registeredDispatchTool({
+    dispatchRoleSession: async () => ({
+      stage,
+      agent_id: `${stage}-timeout`,
+      brain: { provider: 'local', model: 'test-model', effort: 'xhigh' },
+      transcript: '',
+      contextStatus: 'timeout',
+    }),
+  });
+  return tool.execute(
+    `call-${stage}-timeout`,
+    { stage, brief: 'Return a timeout without a specialist JSON.', taskId },
+    undefined,
+    undefined,
+    { cwd, model: { provider: 'local', id: 'test-model' }, modelRegistry: {} },
+  );
+}
+
+test('#290 cook_dispatch timeout with taskId on an operation whose execution.cycle differs from judgmentHistory.length returns contextStatus', async () => {
+  const { cwd, taskFile } = await withOperationTimeoutProject(operationTimeoutTask({
+    execution: {
+      result: 'executed',
+      executor_agent_id: 'executor',
+      cycle: 3,
+      recordedAt: '2026-07-12T00:20:00Z',
+      actions: ['Moved the bounded registry entry.'],
+      evidence: [{ command: 'inspect registry transition', output: 'transition complete' }],
+      approvalRequired: null,
+    },
+  }));
+  try {
+    const result = await executeTimeoutDispatch(cwd, 'verify', '18');
+
+    assert.equal(result.details.contextStatus, 'timeout');
+    assert.match(result.content[0].text, /timeout/);
+    const recorded = JSON.parse(await readFile(taskFile, 'utf8'));
+    assert.equal(recorded.execution.cycle, 3);
+    assert.equal(recorded.judgmentHistory, undefined);
+    assert.equal(recorded.verification.verifier_agent_id, null);
+    assert.deepEqual(recorded.verification.postconditions, []);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('#290 cook_dispatch timeout with taskId on verify does not persist forged plan postconditions', async () => {
+  const { cwd, taskFile } = await withOperationTimeoutProject(operationTimeoutTask());
+  try {
+    const result = await executeTimeoutDispatch(cwd, 'verify', '18');
+
+    assert.equal(result.details.contextStatus, 'timeout');
+    assert.match(result.content[0].text, /timeout/);
+    const recorded = JSON.parse(await readFile(taskFile, 'utf8'));
+    assert.deepEqual(recorded.plan.postconditions, [PLANNED_POSTCONDITION]);
+    assert.equal(recorded.verification.verifier_agent_id, null);
+    assert.deepEqual(recorded.verification.postconditions, []);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('#290 cook_dispatch timeout with taskId on refute does not persist finding INTERRUPTED as a survivor', async () => {
+  const blocker = {
+    file: 'src/core/record.js',
+    line: 10,
+    severity: 'high',
+    class: 'blocking',
+    kickTo: 'execute',
+    what: 'The recording path loses a result.',
+    why: 'A supported completion order can overwrite durable evidence.',
+  };
+  const { cwd, taskFile } = await withOperationTimeoutProject(operationTimeoutTask({
+    agents: {
+      executor_agent_id: 'executor',
+      verifier_agent_id: 'verifier',
+      audit_agent_id: null,
+    },
+    verification: {
+      verdict: 'needs-work',
+      reportedVerdict: 'needs-work',
+      verifier_agent_id: 'verifier',
+      postconditions: [{
+        postcondition: PLANNED_POSTCONDITION,
+        ok: false,
+        evidence: 'independent read found two destination entries',
+      }],
+      findings: [blocker],
+      evidence: [{ command: 'inspect registry', output: 'two destination entries' }],
+    },
+  }));
+  try {
+    const result = await executeTimeoutDispatch(cwd, 'refute', '18');
+
+    assert.equal(result.details.contextStatus, 'timeout');
+    assert.match(result.content[0].text, /timeout/);
+    const recorded = JSON.parse(await readFile(taskFile, 'utf8'));
+    assert.equal((recorded.refutes ?? []).length, 0);
+    assert.equal(recorded.verification.findings[0].refute, undefined);
+    assert.equal(recorded.verification.findings[0].what, blocker.what);
+    assert.equal(recorded.verification.findings[0].class, 'blocking');
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

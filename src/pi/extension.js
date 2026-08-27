@@ -1,8 +1,7 @@
 // @ts-check
 
 import { truncateToVisualLines } from '@earendil-works/pi-coding-agent';
-import { collectTasks, readConfig } from '../core/store.js';
-import { locateTask } from '../core/store-lock.js';
+import { readConfig } from '../core/store.js';
 import { dispatchRoleSession as runRoleSession, STAGES } from './role-session.js';
 import { recordSpecialistReturn } from '../core/record.js';
 import {
@@ -511,6 +510,7 @@ export default function jeffExtension(pi, dependencies = {}) {
         : undefined;
 
       let specialistReturn;
+      let hostForged = false;
       try {
         specialistReturn = JSON.parse(result.transcript);
         if (params.stage === 'council') validateCouncilInquiryReturn(specialistReturn);
@@ -518,17 +518,13 @@ export default function jeffExtension(pi, dependencies = {}) {
         else validateSpecialistReturn(params.stage, specialistReturn);
       } catch {
         if (!contextStatus) throw new Error('cook_dispatch: specialist return is invalid');
-        let cycle = 0;
-        if (params.taskId) {
-          const tasks = await collectTasks(ctx.cwd);
-          const { taskPath } = await locateTask(ctx.cwd, params.taskId, tasks);
-          const task = tasks.find((item) => item._dir === taskPath);
-          cycle = Array.isArray(task?.judgmentHistory) ? task.judgmentHistory.length : 0;
-        }
-        specialistReturn = interruptedSpecialistReturn(params.stage, cycle);
+        hostForged = true;
+        specialistReturn = interruptedSpecialistReturn(params.stage);
       }
 
-      if (params.taskId) {
+      const skipHostForgedJudgment = hostForged
+        && ['review', 'verify', 'audit', 'refute'].includes(params.stage);
+      if (params.taskId && !skipHostForgedJudgment) {
         try {
           await recordSpecialistReturn(ctx.cwd, params.stage, params.taskId, specialistReturn, result.agent_id);
         } catch {
