@@ -1,6 +1,6 @@
 {
   "name": "jeff",
-  "version": "6.6.0",
+  "version": "6.6.1",
   "agents": "./agents/",
   "skills": "./skills/",
   "hooks": {}
