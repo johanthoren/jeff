@@ -199,6 +199,10 @@ function hasTargetedRepairProof(task) {
 
   const history = task.judgmentHistory.at(-1);
   const council = task.convergence?.council;
+  if (task.convergence?.recovery?.episode === 1
+    && council?.convened === true
+    && council.verdict === 'block'
+    && council.outcome === null) return true;
   const lastKickback = judgmentKickbacks.at(-1);
   const councilReason = `Council block: ${(Array.isArray(council?.findings) ? council.findings : [])
     .filter((/** @type {any} */ finding) => finding.survived === true)
