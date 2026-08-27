@@ -290,8 +290,8 @@ const AUDIT_CATEGORIES = [
   'insecure_permissions',
 ];
 
-/** @param {string} stage */
-function interruptedSpecialistReturn(stage) {
+/** @param {string} stage @param {number} [cycle] */
+function interruptedSpecialistReturn(stage, cycle = 0) {
   const evidence = [{ command: 'dispatch', output: INTERRUPTED }];
   switch (stage) {
     case 'plan':
@@ -336,7 +336,7 @@ function interruptedSpecialistReturn(stage) {
     case 'review':
       return {
         stage: 'review',
-        cycle: 0,
+        cycle,
         verdict: 'needs-work',
         acLedger: [],
         findings: [{
@@ -353,7 +353,7 @@ function interruptedSpecialistReturn(stage) {
     case 'verify':
       return {
         stage: 'verify',
-        cycle: 0,
+        cycle,
         verdict: 'needs-work',
         postconditions: [{ postcondition: INTERRUPTED, ok: false, evidence: INTERRUPTED }],
         findings: [{
@@ -370,7 +370,7 @@ function interruptedSpecialistReturn(stage) {
     case 'audit':
       return {
         stage: 'audit',
-        cycle: 0,
+        cycle,
         verdict: 'needs-work',
         scan: { command: 'dispatch', recommendation: 'BLOCK', reportPath: 'dispatch' },
         coverage: AUDIT_CATEGORIES.map((category) => ({ category, status: 'not_covered' })),
@@ -389,7 +389,7 @@ function interruptedSpecialistReturn(stage) {
     case 'refute':
       return {
         stage: 'refute',
-        cycle: 0,
+        cycle,
         finding: INTERRUPTED,
         verdict: 'survives',
         rationale: INTERRUPTED,
@@ -510,6 +510,7 @@ export default function jeffExtension(pi, dependencies = {}) {
         : undefined;
 
       let specialistReturn;
+      let hostForged = false;
       try {
         specialistReturn = JSON.parse(result.transcript);
         if (params.stage === 'council') validateCouncilInquiryReturn(specialistReturn);
@@ -517,10 +518,13 @@ export default function jeffExtension(pi, dependencies = {}) {
         else validateSpecialistReturn(params.stage, specialistReturn);
       } catch {
         if (!contextStatus) throw new Error('cook_dispatch: specialist return is invalid');
+        hostForged = true;
         specialistReturn = interruptedSpecialistReturn(params.stage);
       }
 
-      if (params.taskId) {
+      const skipHostForgedJudgment = hostForged
+        && ['review', 'verify', 'audit', 'refute'].includes(params.stage);
+      if (params.taskId && !skipHostForgedJudgment) {
         try {
           await recordSpecialistReturn(ctx.cwd, params.stage, params.taskId, specialistReturn, result.agent_id);
         } catch {

@@ -3310,6 +3310,35 @@ test('Item 4 council recovery accepts positive single-owner scoped retention led
   }
 });
 
+test('Item 4 INV-12 slices a pending untyped council-block kickback to plan', async () => {
+  const task = item4RetainedLedger('review');
+  const summary = 'The confined repair left the design unproven.';
+  task.stage = 'plan';
+  task.kickbacks.push({
+    from: 'review',
+    to: 'plan',
+    reason: `Council block: ${summary}`,
+    at: '2026-07-12T00:50:00Z',
+  });
+  task.convergence = convergence({
+    cap: 2,
+    stages: {
+      review: { blockingKickbacks: 2 },
+      audit: { blockingKickbacks: 0 },
+    },
+    council: item5ConvenedCouncil([{
+      id: 'F1',
+      summary,
+      source: 'review',
+      blockingVotes: 2,
+      survived: true,
+      followupTaskId: null,
+    }]),
+  });
+  const result = await verdictFor(task);
+  assert.equal(result.ok, true, result.stderr.join('\n'));
+});
+
 /**
  * Item 5: one judgment kickback from `source`. `count` null records a
  * historical kickback that carries no typed findings contract.
