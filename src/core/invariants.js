@@ -208,7 +208,7 @@ function hasTargetedRepairProof(task) {
     && council.verdict === 'block'
     && council.outcome === null
     && lastKickback?.from === council.stage
-    && lastKickback?.to === 'implement'
+    && ['implement', 'plan', 'refactor'].includes(lastKickback?.to)
     && lastKickback?.reason === councilReason
     && lastKickback?.findings === undefined;
   const contractKickbacks = hasPendingCouncilKickback
