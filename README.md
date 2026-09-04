@@ -30,6 +30,16 @@ Jeff is a cooperative protocol for one trusted operator and friendly agents,
 not a security sandbox or hostile-child containment system. It validates the
 method's state and contracts; tool isolation remains a property of each host.
 
+## Status
+
+Jeff is finished and no longer under development. The method works, the gates
+hold, and the code is stable. What it does not have is a maintainer adding to
+it, so read it as a complete system rather than an active project.
+
+[What Jeff built](#what-jeff-built) records where it was used and why its
+author stopped using it. The graph and control-plane track moved to
+[jeff-control](https://github.com/johanthoren/jeff-control), also frozen.
+
 ## Architecture
 
 The kitchen is the interface, not the mechanism. You are the Chef. Jeff is the
@@ -119,7 +129,8 @@ At the cap, Jeff dispatches three fresh, mutually blind inquiry specialists and 
 The detailed contracts and tradeoffs are recorded in the
 [6.0 Graph Engineering slate](https://github.com/johanthoren/jeff/blob/main/docs/specs/graph-slate-6.0.md). The
 [machine projection](skills/cook/reference/jeff-state-schema.md#snapshot-projection)
-is also the boundary for the planned standalone `jeff graph` client.
+is also the boundary [jeff-control](https://github.com/johanthoren/jeff-control)
+reads through, keeping schema knowledge in this repository.
 
 ## Position in the ecosystem
 
@@ -139,6 +150,47 @@ fresh-context judgment, mechanically enforced builder/judge separation, durable
 task evidence, and a deterministic completion gate. Adjacent systems lead in
 execution, durability, observability, and throughput. See the
 [survey and design record](https://github.com/johanthoren/jeff/blob/main/docs/specs/graph-slate-6.0.md).
+
+## What Jeff built
+
+Jeff ran the task flow on three private applications through July and August
+2026: a subscription strength-training app for iPhone and Apple Watch, a
+transcription tool, and a native macOS dashcam footage manager. Between them
+they carry a few thousand commits, and the shape Jeff imposes is visible in
+their history: one issue per branch, a failing test committed before the fix
+that turns it green, and independent review before a merge.
+
+The clearest single record is [issue
+#234](https://github.com/johanthoren/jeff/issues/234), observed on the
+training app on 2026-08-11. Six tasks implemented by an external agent passed
+three distinct reviewer agents, with every red case either traced or proven by
+a constructed vacuous mutation, one task additionally security-audited, zero
+blocking findings, and a green full-suite gate. They still could not reach
+done, because the test author and the implementer were the same identity and
+the invariant refuses that with no recorded escape. The operator had to ratify
+a disclosed deviation by hand.
+
+That episode is the method working and the method costing something at the same
+time. Review caught what the invariant existed to catch, and the invariant
+still blocked. It is a real limit rather than a bug: the gates are mechanical,
+so work whose shape the pipeline did not anticipate needs an operator to
+adjudicate. A typed waiver carrying the verifying reviewer's identity was
+designed and never built.
+
+The identity check had a second, quieter cost. Specialists cannot observe their
+own dispatch id, so the first `cook record` of every stage failed and had to be
+retried, which added six extra dispatches to a single task during the
+context-engineering arc.
+
+All three projects removed Jeff on 2026-08-29 and now track work with GitHub
+issues and in-repo documentation. Their agent instructions say not to recreate
+a `.jeff/` store.
+
+Read that as the honest outcome. The invariants held, the evidence survived
+outside the transcript, and three applications shipped under the method. The
+same record shows what strictness costs per task, and nothing in the design
+makes that cost disappear. Jeff is what taking the strict position seriously
+enough to find where it binds actually produces.
 
 ## Hosts and models
 
@@ -354,6 +406,8 @@ Re-fire until it's worthy.
   design for deletion.
 - [Kitchen voice](docs/brand.md): the persona as a render layer over a fixed
   technical substrate.
+- [jeff-control](https://github.com/johanthoren/jeff-control): the Rust
+  projection daemon and graph client, split out and likewise frozen.
 
 Prefer plain talk? Set `JEFF_FLAVOR=plain`. A per-repository `"flavor"` value
 in `.jeff/config.json` overrides the environment, and a live conversation
