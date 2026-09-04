@@ -1642,7 +1642,7 @@ skill_outside_dispatch_rules() {
   hits="$(skill_outside_dispatch_rules | grep -nEi "$pattern" | grep -viE "$allowance" || true)"
   [ -z "$hits" ] || offenders+="skills/cook/SKILL.md (outside the dispatch rules):"$'\n'"$hits"$'\n'
 
-  for file in README.md AGENTS.md docs/specs/jeff-design.md docs/specs/control-plane-vision.md; do
+  for file in README.md AGENTS.md docs/specs/jeff-design.md; do
     hits="$(grep -nEi "$pattern" "$REPO/$file" | grep -viE "$allowance" || true)"
     [ -z "$hits" ] || offenders+="$file:"$'\n'"$hits"$'\n'
   done

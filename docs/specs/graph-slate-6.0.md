@@ -612,12 +612,12 @@ Audit: **required** (git operations, filesystem, concurrency).
 
 **Motivation.** External read-only consumers need the project's task state
 without parsing ledgers themselves. The first consumer is the Jeff Control
-plane (`docs/specs/control-plane-vision.md`), whose backend is bound by a
-hard constraint: it never learns the task schema. Today the only machine
-surfaces are `cook validate` (legality, not content) and raw `task.json`
-files, so any outside tool would re-implement schema knowledge and silently
-break on schema evolution. One versioned projection command keeps schema
-knowledge in this repo, in one place.
+plane ([jeff-control](https://github.com/johanthoren/jeff-control)), whose
+backend is bound by a hard constraint: it never learns the task schema.
+Today the only machine surfaces are `cook validate` (legality, not content)
+and raw `task.json` files, so any outside tool would re-implement schema
+knowledge and silently break on schema evolution. One versioned projection
+command keeps schema knowledge in this repo, in one place.
 
 **Behavior.** `cook snapshot --json` prints one JSON document for the active
 store and exits. Read-only: the store is byte-identical before and after. It
