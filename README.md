@@ -36,8 +36,8 @@ Jeff is finished and no longer under development. The method works, the gates
 hold, and the code is stable. What it does not have is a maintainer adding to
 it, so read it as a complete system rather than an active project.
 
-[What Jeff built](#what-jeff-built) records where it was used and why its
-author stopped using it. The graph and control-plane track moved to
+[What Jeff built](#what-jeff-built) records where the method ran, what it
+caught, and what it cost. The graph and control-plane track moved to
 [jeff-control](https://github.com/johanthoren/jeff-control), also frozen.
 
 ## Architecture
