@@ -87,8 +87,8 @@ that result from the ledger.
 Jeff 6.0 applied graph-engineering semantics to the work itself without
 adopting a graph runtime or weakening a quality gate:
 
-- **Expose real width.** Capture applies a fake-edge test and splits
   independently shippable outcomes into atomic tasks. `deps` alone schedules;
+- **Expose real width.** Capture applies a fake-edge test and splits
   `discoveredFrom` records provenance without inventing dependencies.
 - **Drain the task DAG.** `cook ready`, `claim`, `claims`, and `release` provide
   deterministic ready-set and atomic-claim primitives. Full-mode `cook all`
@@ -186,11 +186,18 @@ All three projects removed Jeff on 2026-08-29 and now track work with GitHub
 issues and in-repo documentation. Their agent instructions say not to recreate
 a `.jeff/` store.
 
-Read that as the honest outcome. The invariants held, the evidence survived
-outside the transcript, and three applications shipped under the method. The
-same record shows what strictness costs per task, and nothing in the design
-makes that cost disappear. Jeff is what taking the strict position seriously
-enough to find where it binds actually produces.
+The tradeoff is the part worth taking. Jeff buys a completion proof and
+evidence that outlives the transcript, and charges a round trip per stage to
+do it. That is a fair price where someone may later ask what happened and the
+answer has to be checkable rather than remembered. It is a poor price when the
+work is moving quickly and the operator is the only reader it will ever have.
+Fast-moving work is better served by lighter, prompt-level tooling, and that
+is where this author's went:
+[pstack](https://github.com/cursor/plugins/tree/main/pstack).
+
+The invariants held, the evidence survived outside the transcript, and three
+applications shipped under the method. Jeff is what taking the strict position
+seriously enough to find where it binds actually produces.
 
 ## Hosts and models
 
