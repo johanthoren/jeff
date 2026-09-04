@@ -1,6 +1,6 @@
 {
   "name": "@johanthoren/jeff",
-  "version": "6.6.1",
+  "version": "6.7.0",
   "description": "Jeff is a model-native quality control plane and cooperative workflow protocol for trusted operators and friendly agents, not a security sandbox.",
   "type": "module",
   "license": "Apache-2.0",
@@ -47,14 +47,10 @@
     ]
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.10"
+    "@earendil-works/pi-coding-agent": "^0.84.4"
   },
   "devDependencies": {
     "@types/node": "20.19.43",
     "typescript": "5.9.3"
-  },
-  "overrides": {
-    "protobufjs": "^7.6.5",
-    "brace-expansion": "^5.0.8"
   }
 }

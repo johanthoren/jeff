@@ -1,6 +1,6 @@
 {
   "name": "jeff",
-  "version": "6.6.1",
+  "version": "6.7.0",
   "description": "Meet your new sous chef, Jeff: a model-native quality control plane and cooperative workflow protocol for trusted operators and friendly agents, not a security sandbox.",
   "author": {
     "name": "Johan Thorén"
