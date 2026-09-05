@@ -32,13 +32,46 @@ method's state and contracts; tool isolation remains a property of each host.
 
 ## Status
 
-Jeff is finished and no longer under development. The method works, the gates
-hold, and the code is stable. What it does not have is a maintainer adding to
-it, so read it as a complete system rather than an active project.
+Jeff is parked at 6.7.0, with development paused indefinitely. I'm still
+running its pipeline in a few of my projects, but the bulk of the work has moved 
+to pstack and compatibility updates are not promised.
 
-[What Jeff built](#what-jeff-built) records where the method ran, what it
-caught, and what it cost. The graph and control-plane track moved to
-[jeff-control](https://github.com/johanthoren/jeff-control), also frozen.
+The line was forge → malm → bakehouse → Jeff. Each served me exceptionally well
+in the model era it was built for and let me work efficiently with agents.
+I now use [pstack](https://github.com/cursor/plugins/tree/main/pstack).
+It's good enough for me to stop spending time on this part of the tooling and
+focus on building things.
+
+Moving on as models and tooling evolve is part of the
+[maintenance stance](docs/maintaining-jeff.md) behind these systems.
+The method, code, and [engineering record](#what-jeff-built) remain available
+for use and study. The Rust sibling,
+[jeff-control](https://github.com/johanthoren/jeff-control), is likewise parked.
+
+## What Jeff built
+
+I used Jeff on three private applications: a strength-training app for iPhone
+and Apple Watch, a transcription tool, and a macOS dashcam footage manager.
+I also used it to develop Jeff itself.
+
+One example from Jeff's own development is the bundled-skill pointer work in
+[issue #131](https://github.com/johanthoren/jeff/issues/131).
+Removing a required skill pointer could leave tests green, and a relative path
+could resolve to a consumer project's similarly named file.
+[PR #133](https://github.com/johanthoren/jeff/pull/133) bound specialists to the
+absolute paths in their briefs and made one declaration drive checks for
+missing and undeclared pointers. The PR records a deletion mutation that
+passed the old checks and failed the new one. An independent reviewer extended
+that mutation matrix before the change merged.
+
+[Issue #234](https://github.com/johanthoren/jeff/issues/234) records a cost of
+the identity policy. Six externally implemented tasks passed independent
+review and a full-suite gate, with no blocking findings. The done-gate still
+refused them because each task's test author was also its implementer.
+The operator had to ratify a disclosed deviation. Review had accepted the work;
+the recorded identity rule was what blocked completion. The issue proposes a
+typed waiver so that decision would have a place in the schema. It was not
+implemented.
 
 ## Architecture
 
@@ -87,8 +120,8 @@ that result from the ledger.
 Jeff 6.0 applied graph-engineering semantics to the work itself without
 adopting a graph runtime or weakening a quality gate:
 
-  independently shippable outcomes into atomic tasks. `deps` alone schedules;
 - **Expose real width.** Capture applies a fake-edge test and splits
+  independently shippable outcomes into atomic tasks. `deps` alone schedules;
   `discoveredFrom` records provenance without inventing dependencies.
 - **Drain the task DAG.** `cook ready`, `claim`, `claims`, and `release` provide
   deterministic ready-set and atomic-claim primitives. Full-mode `cook all`
@@ -151,58 +184,10 @@ task evidence, and a deterministic completion gate. Adjacent systems lead in
 execution, durability, observability, and throughput. See the
 [survey and design record](https://github.com/johanthoren/jeff/blob/main/docs/specs/graph-slate-6.0.md).
 
-## What Jeff built
-
-Jeff ran the task flow on three private applications through July and August
-2026: a subscription strength-training app for iPhone and Apple Watch, a
-transcription tool, and a native macOS dashcam footage manager. Between them
-they carry a few thousand commits, and the shape Jeff imposes is visible in
-their history: one issue per branch, a failing test committed before the fix
-that turns it green, and independent review before a merge.
-
-The clearest single record is [issue
-#234](https://github.com/johanthoren/jeff/issues/234), observed on the
-training app on 2026-08-11. Six tasks implemented by an external agent passed
-three distinct reviewer agents, with every red case either traced or proven by
-a constructed vacuous mutation, one task additionally security-audited, zero
-blocking findings, and a green full-suite gate. They still could not reach
-done, because the test author and the implementer were the same identity and
-the invariant refuses that with no recorded escape. The operator had to ratify
-a disclosed deviation by hand.
-
-That episode is the method working and the method costing something at the same
-time. Review caught what the invariant existed to catch, and the invariant
-still blocked. It is a real limit rather than a bug: the gates are mechanical,
-so work whose shape the pipeline did not anticipate needs an operator to
-adjudicate. A typed waiver carrying the verifying reviewer's identity was
-designed and never built.
-
-The identity check had a second, quieter cost. Specialists cannot observe their
-own dispatch id, so the first `cook record` of every stage failed and had to be
-retried, which added six extra dispatches to a single task during the
-context-engineering arc.
-
-All three projects removed Jeff on 2026-08-29 and now track work with GitHub
-issues and in-repo documentation. Their agent instructions say not to recreate
-a `.jeff/` store.
-
-The tradeoff is the part worth taking. Jeff buys a completion proof and
-evidence that outlives the transcript, and charges a round trip per stage to
-do it. That is a fair price where someone may later ask what happened and the
-answer has to be checkable rather than remembered. It is a poor price when the
-work is moving quickly and the operator is the only reader it will ever have.
-Fast-moving work is better served by lighter, prompt-level tooling, and that
-is where this author's went:
-[pstack](https://github.com/cursor/plugins/tree/main/pstack).
-
-The invariants held, the evidence survived outside the transcript, and three
-applications shipped under the method. Jeff is what taking the strict position
-seriously enough to find where it binds actually produces.
-
 ## Hosts and models
 
-Claude Code, Codex, Cursor, Grok Build, and Pi are first-class Jeff hosts. Oh My Pi
-installs the Pi package and uses its dispatch bridge. Grok Build consumes
+Jeff 6.7.0 shipped support for Claude Code, Codex, Cursor, Grok Build, and Pi.
+Oh My Pi installs the Pi package and uses its dispatch bridge. Grok Build consumes
 Jeff's Claude Code-compatible plugin surface, including its agents, skills,
 hooks, and marketplace metadata. A Grok Bot loads Jeff through the shipped
 Cursor plugin. The adapters differ; the method, specialist contracts,
@@ -214,8 +199,10 @@ and GPT-5.6 Sol. Jeff defaults specialist model selection to the orchestrator's
 active provider and model and records the actual provider, model, and effort as
 execution evidence.
 
-Current dogfood is stamped GPT-5.6 Sol, July 2026. The stamp records operating
-experience while compatibility remains host-neutral and model-open.
+The recorded dogfood stamp is GPT-5.6 Sol, July 2026. It describes operating
+experience, not verification of later models or host versions. The integrations
+and install instructions here describe what shipped with 6.7.0. Host and model
+behavior can change; this parked repository does not track those changes.
 
 Host-native effort behavior remains explicit:
 
@@ -226,7 +213,7 @@ Host-native effort behavior remains explicit:
 
 ## Install
 
-Jeff is one versioned package with first-class install surfaces for each host.
+Jeff 6.7.0 shipped one versioned package with the host install interfaces below.
 Node.js `>=22.19.0` is required by the Pi dispatch SDK.
 
 ### Claude Code
@@ -414,7 +401,7 @@ Re-fire until it's worthy.
 - [Kitchen voice](docs/brand.md): the persona as a render layer over a fixed
   technical substrate.
 - [jeff-control](https://github.com/johanthoren/jeff-control): the Rust
-  projection daemon and graph client, split out and likewise frozen.
+  projection daemon and control-plane work, split out and likewise parked.
 
 Prefer plain talk? Set `JEFF_FLAVOR=plain`. A per-repository `"flavor"` value
 in `.jeff/config.json` overrides the environment, and a live conversation
