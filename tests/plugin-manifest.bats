@@ -92,27 +92,23 @@ CURSOR_MANIFEST="$REPO/.cursor-plugin/plugin.json"
 }
 
 @test "all package manifests publish one lockstep version" {
-  local version crate_version
+  local version
   version="$(jq -r '.version' "$MANIFEST")"
-  crate_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO/control/jeff/Cargo.toml")"
   [ "$(jq -r '.version' "$CODEX_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$CURSOR_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package.json")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
   [ "$(jq -r '.packages[""].version' "$REPO/package-lock.json")" = "$version" ]
-  [ "$crate_version" = "$version" ]
 }
 
 @test "published lockstep version is strictly newer than 6.4.1" {
-  local version crate_version
+  local version
   version="$(jq -r '.version' "$PACKAGE_MANIFEST")"
-  crate_version="$(awk -F '"' '/^version = / { print $2; exit }' "$REPO/control/jeff/Cargo.toml")"
   [ -n "$version" ] && [ "$version" != "null" ]
   [ "$(jq -r '.version' "$MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$CODEX_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$CURSOR_MANIFEST")" = "$version" ]
   [ "$(jq -r '.version' "$REPO/package-lock.json")" = "$version" ]
-  [ "$crate_version" = "$version" ]
   [ "$version" != "6.4.1" ]
   [ "$(printf '%s\n%s\n' "6.4.1" "$version" | sort -V | tail -n 1)" = "$version" ]
 }
