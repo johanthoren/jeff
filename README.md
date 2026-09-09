@@ -51,8 +51,9 @@ for use and study. The Rust sibling,
 ## What Jeff built
 
 I used Jeff on three private applications: a strength-training app for iPhone
-and Apple Watch, a transcription tool, and a macOS dashcam footage manager.
-I also used it to develop Jeff itself.
+and Apple Watch, a transcription tool for macOS, and a macOS dashcam footage manager.
+I also used it to develop Jeff itself, as well as numerous internal projects
+that I can't talk about due to confidentiality.
 
 One example from Jeff's own development is the bundled-skill pointer work in
 [issue #131](https://github.com/johanthoren/jeff/issues/131).
