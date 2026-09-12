@@ -1,5 +1,18 @@
 # jeff
 
+> [!IMPORTANT]
+> **Maintainer's note (September 2026):** I no longer recommend using Jeff with
+> Astra, Fable 5.1, or later frontier models.
+>
+> Jeff played an important role in my work with earlier models. With Astra and
+> Fable 5.1, my experience is that the tight harness increases spend without
+> proven benefits.
+>
+> The valuable lesson for me is that a harness needs to keep earning its place
+> as models improve. What helped earlier models can become unnecessary overhead.
+
+---
+
 > A model-native quality control plane for agentic software work.
 
 ![Jeff, the sous chef](assets/jeff.png)
@@ -32,15 +45,15 @@ method's state and contracts; tool isolation remains a property of each host.
 
 ## Status
 
-Jeff is parked at 6.7.0, with development paused indefinitely. I'm still
-running its pipeline in a few of my projects, but the bulk of the work has moved 
-to pstack and compatibility updates are not promised.
+Jeff is parked at 6.7.0, with development paused indefinitely. Compatibility
+updates are not promised.
 
 The line was forge → malm → bakehouse → Jeff. Each served me exceptionally well
 in the model era it was built for and let me work efficiently with agents.
-I now use [pstack](https://github.com/cursor/plugins/tree/main/pstack).
-It's good enough for me to stop spending time on this part of the tooling and
-focus on building things.
+
+[pstack](https://github.com/cursor/plugins/tree/main/pstack) works well for me
+with Grok 4.6. I'm taking a more cautious stance with Astra: I'm not using
+pstack in Codex and don't currently recommend it as a default there.
 
 Moving on as models and tooling evolve is part of the
 [maintenance stance](docs/maintaining-jeff.md) behind these systems.
